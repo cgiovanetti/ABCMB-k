@@ -95,7 +95,10 @@ class Background(eqx.Module):
         ### RECOMBINATION RELATED ###
 
         # Run hyrex to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self) # TODO: CG add dict params for reionization
+        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params.get("z_reion", 11.0), 
+                                                                        Delta_z_reion = params.get("Delta_z_reion", 0.5), 
+                                                                        z_reion_He = params.get("z_reion_He", 3.5), 
+                                                                        Delta_z_reion_He = params.get("Delta_z_reion_He", 0.5))
         self.kappa_tab = self._tabulate_optical_depth()
 
         # Find approximate maximum of visibility function.
