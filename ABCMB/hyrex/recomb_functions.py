@@ -150,7 +150,7 @@ def Gamma_compton(xe, TCMB, YHe):
     # Helium to Hydrogen number density ratio. Here we assumed that all Helium are Helium-4.
     # 1) n_H = (1-YHe)*n_b
     # 2) n_He = (YHe/4)*n_b
-    FHe = YHe/4/(1-YHe)
+    FHe = YHe * cnst.mH/cnst.mHe/(1-YHe)
    
     GammaC = xe / (1.+FHe+xe) * 8.*cnst.thomson_xsec*(4.*cnst.stef_bolt)*TCMB**4 / (3.*cnst.me)
     return GammaC

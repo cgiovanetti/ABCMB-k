@@ -137,7 +137,7 @@ class Model(eqx.Module):
             if isinstance(species, AS.AbstractPerturbedFluid):
                 self.perturbations_list = self.perturbations_list + (species, )
 
-        self.RM = hyrex.recomb_model()
+        self.RM = hyrex.recomb_model(z1=1)
         #self.PE = perturbations.PerturbationEvolver(perturbations_list)
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         self.bbn_type = bbn_type
@@ -202,7 +202,7 @@ class Model(eqx.Module):
         PT = PE.full_evolution_scan()
         return PT, BG
 
-    # @eqx.filter_jit
+    @eqx.filter_jit
     def get_BG(self, params : dict):
         """
         Get background for given parameters.

@@ -408,6 +408,16 @@ class helium_model(eqx.Module):
         tauc = dnuline / etacinv
         enh = jnp.sqrt(1 + jnp.pi**2 * tauc) + 7.74 * tauc / (1 + 70 * tauc)
         pesc = enh / tau2p
+
+        # As per HYREC-2 https://github.com/nanoomlee/HYREC-2/blob/09e8243d0e08edd3603a94dfbc445ae06cafe139/helium.c#L163:
+        # Effective increase in escape probability via intercombination line
+        # ratio of optical depth to allowed line = 1.023e-7
+        # 1-e^-tau23 = absorption prob. in intercom line
+        # e^[(E21P-E23P)/T] - e^[-(E21P-E23P)*eta_c] = step in intercom line
+        #   relative to N_line in 21P
+        # divide by tau2p to get effective increase in escape prob.
+        # factor of 0.964525 is phase space factor for intercom vs allowed line -- (584/591)^3
+        pesc = pesc + (1.-jnp.exp(-1.023e-7*tau2p))*(0.964525*jnp.exp(2947./(TCMB/cnst.kB))-enh*jnp.exp(-6.14e13/etacinv))/tau2p
         
         # Total decay rate
         ydown = (50.94 * y2s) + (1.7989e9 * y2p * pesc)

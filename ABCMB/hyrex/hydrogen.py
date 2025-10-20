@@ -4,8 +4,6 @@ import jax.numpy as jnp
 from jax import config, lax, grad
 import equinox as eqx
 
-import jax
-
 from diffrax import diffeqsolve, SaveAt, ODETerm, Tsit5, Kvaerno3, PIDController, ForwardMode, Event
 
 from ABCMB import constants as cnst
@@ -40,7 +38,6 @@ class hydrogen_model(eqx.Module):
     """
     integration_spacing : jnp.float64
     swift : jnp.array
-    lna_axis_late : jnp.array
     concrete_axis_size : jnp.array
 
     xe_4He : jnp.array
@@ -49,7 +46,9 @@ class hydrogen_model(eqx.Module):
     last_4He_lna : jnp.float64
     twog_redshift : jnp.float64
 
-    def __init__(self,xe_4He,lna_4He,lna_axis_late,last_4He_lna,twog_redshift,integration_spacing = 5.0e-4, Nsteps=800,swift = jnp.array(np.loadtxt(file_dir+"/tabs/fit_swift.dat"))):
+    lna_end : jnp.float64
+
+    def __init__(self,xe_4He,lna_4He,lna_end,last_4He_lna,twog_redshift,integration_spacing = 5.0e-4, Nsteps=800,swift = jnp.array(np.loadtxt(file_dir+"/tabs/fit_swift.dat"))):
         """
         Initialize hydrogen recombination model.
 
@@ -59,8 +58,8 @@ class hydrogen_model(eqx.Module):
             Helium ionization fraction from previous calculation
         lna_4He : array_with_padding
             Log scale factor array from helium calculation
-        lna_axis_late : array
-            Late-time log scale factor grid for EMLA-only phase
+        lna_end : array
+            Ending log scale factor
         last_4He_lna : float
             Final log scale factor from helium recombination
         integration_spacing : float, optional
@@ -74,7 +73,7 @@ class hydrogen_model(eqx.Module):
         self.swift = swift
 
         # Define time axes
-        self.lna_axis_late = lna_axis_late
+        self.lna_end = lna_end
         self.concrete_axis_size = jnp.zeros(Nsteps)
 
         # pull in helium
@@ -156,8 +155,7 @@ class hydrogen_model(eqx.Module):
         ### END HYREC2 EMLA + FULL TWO PHOTON PHASE ###
 
         ### HYREC2 EMLA ONLY PHASE ###
-        xe_output_late, Tm_output_late, lna_output_late = self.solve_emla(self.lna_axis_late , xe_4He_post_2g.lastval, BG, rtol, atol, solver)
-
+        xe_output_late, Tm_output_late, lna_output_late = self.solve_emla(lna_4He_post_2g.lastval, xe_4He_post_2g.lastval, BG, rtol, atol, solver)
 
         lna_Tm = array_with_padding(lna_output_late)
         Tm = array_with_padding(Tm_output_late)
@@ -167,7 +165,7 @@ class hydrogen_model(eqx.Module):
         ### END OF HYREC2 EMLA ONLY PHASE ###
 
         ### Begin TLA phase ###
-        xe_output_TLA, Tm_output_TLA, lna_output_TLA = self.solve_TLA(lna_Tm.lastval, self.lna_axis_late, 
+        xe_output_TLA, Tm_output_TLA, lna_output_TLA = self.solve_TLA(lna_Tm.lastval,
                                                                       xe_4He_post_2g_late.lastval, Tm.lastval, 
                                                                       BG)
 
@@ -300,7 +298,7 @@ class hydrogen_model(eqx.Module):
 
         return dxedlna
 
-    def solve_emla_twophoton(self, lna_axis_init, lna_axis_final, xe0, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def solve_emla_twophoton(self, lna_axis_init, lna_axis_final, xe0, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=4096):
         """
         Solve HYREC-2 EMLA evolution with two-photon processes.
 
@@ -324,7 +322,7 @@ class hydrogen_model(eqx.Module):
         solver : diffrax.Solver, optional
             ODE solver (default: Kvaerno3())
         max_steps : int, optional
-            Maximum steps (default: 1024)
+            Maximum steps (default: 4096)
 
         Returns:
         --------
@@ -403,7 +401,7 @@ class hydrogen_model(eqx.Module):
 
         return jnp.array([dxedlna, dTmdlna])
 
-    def solve_emla(self, lna_axis, xe0, BG, rtol=1e-7,atol=1e-9,solver=Tsit5(),max_steps=4096):
+    def solve_emla(self, lna0, xe0, BG, rtol=1e-7,atol=1e-9,solver=Tsit5(),max_steps=4096):
         """
         Solve late-time EMLA evolution without two-photon processes.
 
@@ -412,8 +410,8 @@ class hydrogen_model(eqx.Module):
 
         Parameters:
         -----------
-        lna_axis : array
-            Log scale factor grid
+        lna0 : float
+            Log scale factor at which initial xe is given
         xe0 : float
             Initial ionization fraction
         BG : cosmology.Background
@@ -434,7 +432,7 @@ class hydrogen_model(eqx.Module):
             and lna arrays
         """
         # Initial conditions
-        t0 = lna_axis.min()-self.integration_spacing # need to back up a step since that's where we specified xe0
+        t0 = lna0
         t1 = jnp.inf 
 
         # need to go at least twice max_steps to make sure we catch the t1 we actually want
@@ -456,7 +454,6 @@ class hydrogen_model(eqx.Module):
             TR_MIN = recomb_functions.TR_MIN    # Minimum Tcmb in eV 
             T_RATIO_MIN = recomb_functions.T_RATIO_MIN  # Minimum Tratio 
             ratio = jnp.minimum(Tm / TCMB, TCMB / Tm)
-            # jax.debug.print("{TCMB},{lna}",TCMB=TCMB,lna=lna)
             return jnp.logical_or(TCMB < TR_MIN, ratio < T_RATIO_MIN) # stop when true
         
         event = Event(temperature_check)
@@ -475,7 +472,6 @@ class hydrogen_model(eqx.Module):
         xe_output = sol.ys[:, 0] 
         Tm_output = sol.ys[:, 1] 
 
-        jax.debug.print("{last}",last=sol.ts[-1])
         return xe_output, Tm_output, sol.ts
 
     def dxe_dlna_twophoton(self, xe, TCMB, Tm, H, nH, Delta):
@@ -681,7 +677,7 @@ class hydrogen_model(eqx.Module):
 
         return jnp.array([dxe_dloga, dTm_dloga])
     
-    def solve_TLA(self, lna0, lna_axis, xe0, Tm0, BG, rtol=1e-7, atol=1e-9, solver=Kvaerno3(), max_steps = 4096):
+    def solve_TLA(self, lna0, xe0, Tm0, BG, rtol=1e-7, atol=1e-9, solver=Kvaerno3(), max_steps = 4096):
         """
         Solve late-time TLA evolution.
 
@@ -692,8 +688,6 @@ class hydrogen_model(eqx.Module):
         -----------
         lna0 : float
             Starting log scale factor
-        lna_axis : array
-            Log scale factor grid
         xe0 : float
             Initial ionization fraction
         Tm0: float
@@ -717,7 +711,6 @@ class hydrogen_model(eqx.Module):
         """
         t0 = lna0
         t1 = jnp.inf # lna_axis.max
-        jax.debug.print("{lna}",lna=lna0)
         # need to go at least twice max_steps to make sure we catch t1
         t_arr = jnp.linspace(t0+self.integration_spacing, t0+2*max_steps*self.integration_spacing, 2*max_steps)
 
@@ -729,7 +722,7 @@ class hydrogen_model(eqx.Module):
         adjoint=ForwardMode()
 
         def lna_check(t, y, args, **kwargs):
-            return t > jnp.max(lna_axis) # stop when true
+            return t > self.lna_end # stop when true
         
         event = Event(lna_check)
 
