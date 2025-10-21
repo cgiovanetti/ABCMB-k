@@ -501,6 +501,8 @@ class SpectrumSolver(eqx.Module):
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
         ells = bessel_l_tab[self.ells_indices]
+        return ells, tt_raw, te_raw, ee_raw
+
         tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
         te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
         ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
@@ -549,27 +551,28 @@ class SpectrumSolver(eqx.Module):
         # This is because for k>kmin, the integrand ~jl^2 which experiences asymptotic damping for larger k's.
         # The peak values of the envelope drop by a few orders of magnitude within 3-4 peaks or so, so its
         # only really important to have high resolution near kmin. 
-        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.1, 400) 
+        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.15, 1000) 
         lna_axis = PT.lna
 
         ### TRANSFER FUNCTION ###
         # Background quantities, all Nlna 1D vectors
         tau0 = BG.tau0
         tau = BG.tau(lna_axis)
-        g   = BG.visibility(lna_axis)
+        g   = vmap(BG.visibility)(lna_axis)
         g_prime = vmap(grad(BG.visibility))(lna_axis) # Derivative of g w.r.t. lna
         aH  = BG.aH(lna_axis)
-        kappa = BG.kappa(lna_axis)
+        expmkappa = vmap(BG.expmkappa)(lna_axis)
         aH_dot = BG.aH_prime(lna_axis) * aH # Derivative of aH w.r.t. conformal time tau.
 
-        g        = g[:, None]
-        g_prime  = g_prime[:, None]
-        aH       = aH[:, None]
-        kappa    = kappa[:, None]
-        aH_dot   = aH_dot[:, None]
+        g         = g[:, None]
+        g_prime   = g_prime[:, None]
+        aH        = aH[:, None]
+        expmkappa = expmkappa[:, None]
+        aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        #interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
         delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
@@ -591,7 +594,7 @@ class SpectrumSolver(eqx.Module):
         sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) \
                 + self.switch_isw * (
                     g * (eta - aH*alpha_prime - 2.*aH*alpha) \
-                    + 2.*jnp.exp(-kappa) * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
+                    + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
                 ) \
                 + self.switch_dop * (
                     aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
@@ -599,7 +602,7 @@ class SpectrumSolver(eqx.Module):
                 )
         #sourceT0 = 0.
 
-        sourceT1 = self.switch_isw * jnp.exp(-kappa) * \
+        sourceT1 = self.switch_isw * expmkappa * \
                 ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
         #sourceT1 = 0.
 

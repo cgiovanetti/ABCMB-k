@@ -59,7 +59,7 @@ class PerturbationEvolver(eqx.Module):
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
         #k = jnp.logspace(-4., -0.3, 100, base=10)
-        k = jnp.geomspace(1.e-4, 0.4, 300)
+        k = jnp.geomspace(1.e-4, 0.4, 700)
         #k = jnp.array([1.e-3, 1.e-2, 1.e-1])
         #k = jnp.array([1.e-3, 1.e-2])
         #k = jnp.array([1.e-1])
