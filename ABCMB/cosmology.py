@@ -99,7 +99,7 @@ class Background(eqx.Module):
                                                                         Delta_z_reion = params["Delta_z_reion"], 
                                                                         z_reion_He = params["z_reion_He"], 
                                                                         Delta_z_reion_He = params["Delta_z_reion_He"])
-        self.kappa_tab = self._tabulate_optical_depth()
+        self.kappa_func = self._tabulate_optical_depth()
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
