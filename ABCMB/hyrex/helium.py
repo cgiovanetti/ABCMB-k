@@ -524,4 +524,3 @@ class helium_model(eqx.Module):
 
         return xe_output, lna_output
 
-

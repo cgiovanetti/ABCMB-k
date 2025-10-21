@@ -137,7 +137,7 @@ class Model(eqx.Module):
             if isinstance(species, AS.AbstractPerturbedFluid):
                 self.perturbations_list = self.perturbations_list + (species, )
 
-        self.RM = hyrex.recomb_model(z1=1)
+        self.RM = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
         #self.PE = perturbations.PerturbationEvolver(perturbations_list)
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         self.bbn_type = bbn_type
@@ -195,6 +195,7 @@ class Model(eqx.Module):
             (PerturbationTable, Background) objects
         """
         BG = self.get_BG(params)
+        params = self.add_derived_parameters(params)
         PE = perturbations.PerturbationEvolver(self.perturbations_list, BG, params)
         
         # Specify whether to use full_evolution() or full_evolution_scan()

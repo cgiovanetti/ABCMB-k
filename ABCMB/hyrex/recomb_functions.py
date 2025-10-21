@@ -259,4 +259,3 @@ def effective_coefficients(TCMB, Tm, H, nH, x1s):
         / (Gamma2p_times_x1s - x1s*R2p2s*R2s2p/Gamma2s)
     
     return jnp.array([A2s, A2p, B2s, B2p, C2s, C2p, R2p2s, R2s2p])
-
