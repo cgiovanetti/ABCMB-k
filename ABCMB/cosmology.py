@@ -442,7 +442,8 @@ class Background(eqx.Module):
             jnp.where(
                 lna >= self.lna_Tm_tab.lastval,
                 self.Tm_tab.lastval,
-                tools.fast_interp(lna, self.lna_Tm_tab.arr[0], self.lna_Tm_tab.arr[-1], self.Tm_tab.arr)
+                #tools.fast_interp(lna, self.lna_Tm_tab.arr[0], self.lna_Tm_tab.arr[-1], self.Tm_tab.arr)
+                jnp.interp(lna, self.lna_Tm_tab.arr, self.Tm_tab.arr)
             )
         )
 

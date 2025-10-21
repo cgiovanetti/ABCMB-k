@@ -501,6 +501,8 @@ class SpectrumSolver(eqx.Module):
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
         ells = bessel_l_tab[self.ells_indices]
+        return ells, tt_raw, te_raw, ee_raw
+
         tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
         te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
         ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
@@ -549,7 +551,7 @@ class SpectrumSolver(eqx.Module):
         # This is because for k>kmin, the integrand ~jl^2 which experiences asymptotic damping for larger k's.
         # The peak values of the envelope drop by a few orders of magnitude within 3-4 peaks or so, so its
         # only really important to have high resolution near kmin. 
-        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.1, 400) 
+        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.15, 1000) 
         lna_axis = PT.lna
 
         ### TRANSFER FUNCTION ###
@@ -569,7 +571,8 @@ class SpectrumSolver(eqx.Module):
         aH_dot   = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        #interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
         delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
