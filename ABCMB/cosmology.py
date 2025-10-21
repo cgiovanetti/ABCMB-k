@@ -97,8 +97,8 @@ class Background(eqx.Module):
         # Run hyrex to tabulate recombination output
         self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params["z_reion"], 
                                                                         Delta_z_reion = params["Delta_z_reion"], 
-                                                                        z_reion_He = params["z_reion_He", 3.5], 
-                                                                        Delta_z_reion_He = params["Delta_z_reion_He", 0.5])
+                                                                        z_reion_He = params["z_reion_He"], 
+                                                                        Delta_z_reion_He = params["Delta_z_reion_He"])
         self.kappa_tab = self._tabulate_optical_depth()
 
         # Find approximate maximum of visibility function.
