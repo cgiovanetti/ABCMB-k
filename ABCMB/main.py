@@ -223,7 +223,7 @@ class Model(eqx.Module):
     
 
 
-    def add_derived_parameters(self, params : dict) -> dict:
+    def add_derived_parameters(self, param_in : dict) -> dict:
         """
         Compute derived parameters.
 
@@ -241,6 +241,9 @@ class Model(eqx.Module):
         dict
             Extended parameter dictionary with derived quantities
         """
+        # we do not want to do in-place updates so we can
+        # recycle dicts if LINX option is used
+        params = param_in.copy()
 
         if self.bbn_type=="Table" or self.bbn_type=="table":
             # add default params if user unspecified.  No YHe
