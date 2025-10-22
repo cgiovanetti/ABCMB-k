@@ -326,7 +326,7 @@ class Model(eqx.Module):
 
             if params.get("Neff") is not None:
                 print("You have specified a value of Neff, but LINX instead expects a \n" \
-                    "parameter 'dNnu' which will be used to compute Neff.  Refer to LINX \n" \
+                    "parameter 'Delt_Neff_init' which will be used to compute Neff.  Refer to LINX \n" \
                     "docs or https://arxiv.org/abs/2408.14538 for more information.")
                 sys.exit()
 
@@ -334,7 +334,7 @@ class Model(eqx.Module):
             thermo_model_DNeff = BackgroundModel()
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
-            ) = thermo_model_DNeff(jnp.asarray(params['dNnu']))
+            ) = thermo_model_DNeff(jnp.asarray(params['Delt_Neff_init']))
 
             params['Neff'] = Neff_vec[-1]
 
@@ -352,7 +352,7 @@ class Model(eqx.Module):
                 a_vec=a_vec_ref,  
                 eta_fac = eta_fac,
                 tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
-                nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.ones( len(abundance_model.nuclear_net.reactions) )) )
+                nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
                 )
             
             # number abundance

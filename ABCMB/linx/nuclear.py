@@ -376,7 +376,7 @@ class NuclearRates(eqx.Module):
 
         else: 
 
-            from linx.data.nuclear_rates import key_PArthENoPE as PArth
+            from .data.nuclear_rates import key_PArthENoPE as PArth
 
             key_rxns_dict['npdg'] = Reaction(
                 'npdg', (0, 1), (2, ), 4.7161402e9, 1.5, -25.81502,
