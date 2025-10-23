@@ -1,12 +1,23 @@
 from jax import jit, config
 import jax.numpy as jnp
+from jaxtyping import Array
+import numpy as np
 import equinox as eqx
-import diffrax
 
-from .hyrax import hyrax
+import sys
+import os
+file_dir = os.path.dirname(__file__)
+
+from .hyrex import hyrex
 from . import cosmology, perturbations, spectrum
 from . import constants as cnst
 from . import AbstractSpecies as AS
+from .ABCMBTools import bilinear_interp
+
+from .linx.background import BackgroundModel
+from .linx.abundances import AbundanceModel
+from .linx.nuclear import NuclearRates
+from .linx import const as linxconst
 
 config.update("jax_enable_x64", True)
 
@@ -64,12 +75,19 @@ class Model(eqx.Module):
     add_derived_parameters : Compute derived parameters
     """
 
-    RM : hyrax.recomb_model
+    RM : hyrex.recomb_model
     #PE : perturbations.PerturbationEvolver
     SS : spectrum.SpectrumSolver
 
     species_list       : tuple = ()
     perturbations_list : tuple = ()
+
+    return_PTBG : bool
+
+    bbn_type                : str = ""
+    linx_reaction_net       : str = ""
+    
+    PArthENoPE_CLASS_table  : Array #= eqx.field(converter=jnp.asarray)
 
     ### ADDING SPECIES: add has_ parameter and add condition to append to tuple.
     # In the init, all species that are present within the model should be set to True.
@@ -78,20 +96,31 @@ class Model(eqx.Module):
                  ellmin = 2,
                  ellmax = 2500,
                  lensing = False,
-                 has_MasslessNeutrinos=False, 
-                 has_MassiveNeutrinos=False): 
+                 has_MassiveNeutrinos=False,
+                 return_PTBG=False,
+                 bbn_type = "",
+                 linx_reaction_net = "key_PRIMAT_2023"
+                 ): 
 
         self.SS = spectrum.SpectrumSolver(ellmin, ellmax, lensing, switch_sw=1., switch_isw=1., switch_dop=1., switch_pol=1.)
 
         diffrax_vector_idx = 2 # The first two indices (0 and 1) are always reserved for the metric perturbations.
         perturbations_list = ()
 
+        dark_energy = AS.DarkEnergy()
+        self.species_list = self.species_list + (dark_energy,)
+
+        if has_MassiveNeutrinos:
+            massive_neutrinos = AS.MassiveNeutrinos(diffrax_vector_idx)
+            self.species_list   = self.species_list + (massive_neutrinos,)
+            diffrax_vector_idx += massive_neutrinos.num_ell_modes # Add to total length of Diffrax vector
+
+        # These perturbed species are always present in all runs.
+        # massless neutrinos are last, photons are second to last, baryons third to last, CDM fourth to last.
+
         cold_dark_matter = AS.ColdDarkMatter(diffrax_vector_idx)
         self.species_list = self.species_list + (cold_dark_matter,)
         diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
-
-        dark_energy = AS.DarkEnergy()
-        self.species_list = self.species_list + (dark_energy,)
 
         baryon = AS.Baryon(diffrax_vector_idx, dark_energy)
         diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
@@ -102,24 +131,23 @@ class Model(eqx.Module):
         baryon = eqx.tree_at(lambda b : b.photon, baryon, photon)
         self.species_list = self.species_list + (baryon, photon,)
 
-        if has_MasslessNeutrinos:
-            massless_neutrinos = AS.MasslessNeutrinos(diffrax_vector_idx)
-            self.species_list   = self.species_list + (massless_neutrinos,)
-            diffrax_vector_idx += massless_neutrinos.num_ell_modes # Add to total length of Diffrax vector
-
-        if has_MassiveNeutrinos:
-            massive_neutrinos = AS.MassiveNeutrinos(diffrax_vector_idx)
-            self.species_list   = self.species_list + (massive_neutrinos,)
-            diffrax_vector_idx += massive_neutrinos.num_ell_modes # Add to total length of Diffrax vector
+        massless_neutrinos = AS.MasslessNeutrinos(diffrax_vector_idx)
+        self.species_list   = self.species_list + (massless_neutrinos,)
+        diffrax_vector_idx += massless_neutrinos.num_ell_modes # Add to total length of Diffrax vector
 
         for species in self.species_list:
             if isinstance(species, AS.AbstractPerturbedFluid):
                 self.perturbations_list = self.perturbations_list + (species, )
 
-        self.RM = hyrax.recomb_model()
+        self.RM = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
         #self.PE = perturbations.PerturbationEvolver(perturbations_list)
+        self.return_PTBG = return_PTBG
+        self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
+        self.bbn_type = bbn_type
+        self.linx_reaction_net = linx_reaction_net
     
-    @jit
+    # @jit
+    @eqx.filter_jit
     def run_cosmology(self, params : dict):
         """
         Compute CMB angular power spectra for given parameters.
@@ -144,13 +172,19 @@ class Model(eqx.Module):
         ### COMPUTING POWER SPECTRA ###
         #idxs = jnp.arange(18, 30) # Only compute at tabulated l positions. Future: Adjust l_max # CG: 80 for l = 2000
         #return spectrum.bessel_l_tab[idxs], self.SS.get_Cl(idxs, PT, BG)
+        params = self.add_derived_parameters(params)
         PT, BG = self.get_PTBG(params)
         #return self.SS.Pk_lin(PT.k, 0., PT, BG)
         #return PT.delta_b
-        Cls = self.SS.get_Cl(PT, BG)
-        return Cls
+        Cls = self.SS.get_Cl(PT, BG, params)
+        ells = self.SS.ells
+        if self.return_PTBG:
+            return ells, Cls, PT, BG
+        else:
+            return ells, Cls
 
     # @jit
+    @eqx.filter_jit
     def get_PTBG(self, params : dict):
         """
         Get perturbation table and background.
@@ -168,14 +202,15 @@ class Model(eqx.Module):
             (PerturbationTable, Background) objects
         """
         BG = self.get_BG(params)
-        PE = perturbations.PerturbationEvolver(self.perturbations_list, BG)
+        # params = self.add_derived_parameters(params)
+        PE = perturbations.PerturbationEvolver(self.perturbations_list, BG, params)
         
         # Specify whether to use full_evolution() or full_evolution_scan()
         #PT = PE.full_evolution()
         PT = PE.full_evolution_scan()
         return PT, BG
 
-    # @jit
+    @eqx.filter_jit
     def get_BG(self, params : dict):
         """
         Get background for given parameters.
@@ -190,16 +225,19 @@ class Model(eqx.Module):
         cosmology.Background
             Background object
         """
-        params = self.add_derived_parameters(params)
+        # params = self.add_derived_parameters(params)
         BG = cosmology.Background(params, self.species_list, self.RM)
         return BG
+    
 
-    def add_derived_parameters(self, params : dict) -> dict:
+
+    def add_derived_parameters(self, param_in : dict) -> dict:
         """
         Compute derived parameters.
 
         Calculates derived parameters from the fundamental parameters,
-        including density parameters and ratios.
+        including density parameters and ratios, and fills in default
+        parameter values left unspecified by the user.
 
         Parameters:
         -----------
@@ -211,13 +249,171 @@ class Model(eqx.Module):
         dict
             Extended parameter dictionary with derived quantities
         """
-        params['omega_m']      = params['omega_cdm'] + params['omega_b']
-        params['R_b']          = params['omega_b'] / params['omega_m']
-        params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
-        params['H0']           = params['h'] * cnst.H0_over_h
-        params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-        params['omega_nu']     = 7. / 8. * params['N_ur'] * (4. / 11.)**(4. / 3.) * params['omega_g']
-        params['omega_r']      = params['omega_g'] + params['omega_nu']
-        params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
-        params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+        # we do not want to do in-place updates so we can
+        # recycle dicts if LINX option is used
+        params = param_in.copy()
+
+        if self.bbn_type=="Table" or self.bbn_type=="table":
+            # add default params if user unspecified.  No YHe
+            params['Neff']          = params.get("Neff", jnp.array(3.044))
+            params['h']             = params.get('h', jnp.array(0.7))
+            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
+            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
+            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
+            params['n_s']           = params.get('n_s', jnp.array(0.965))
+            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
+            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
+            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
+            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
+            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
+            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+
+            # other derived params must be specified *before* BBN computation
+            params['omega_m']      = params['omega_cdm'] + params['omega_b']
+            params['R_b']          = params['omega_b'] / params['omega_m']
+            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
+            params['H0']           = params['h'] * cnst.H0_over_h
+            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            params['omega_r']      = params['omega_g'] + params['omega_nu']
+            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
+            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+            
+            # interpolate CLASS ParthENoPE table
+            bbn = self.PArthENoPE_CLASS_table
+            omegab_all = bbn[:, 0]
+            DNeff_all = bbn[:, 1]
+            YHe_all = bbn[:, 2]
+
+            # we have to hardcode these values to be jit safe (alternatively we 
+            # could read them in at runtime, but these tables don't update 
+            # frequently)
+            n2 = 13 
+            n1 = 701
+
+            omegab = omegab_all[:n1]
+            DNeff = DNeff_all[::n1] 
+
+            YHe_grid = YHe_all.reshape(n2, n1)
+            
+            # Neff = params["Neff"] # less extensible option
+            a_bbn = cnst.TCMB_today*1e-6/0.01   # neutrino decoupling is well over by 10 keV, so 
+                                                # compute Neff at a scale factor approximately 
+                                                # corresponding to this temperature
+            lna_bbn = jnp.log(a_bbn)
+
+            # this is more extensible than just using params['Neff']; if the user includes i.e. interacting
+            # dark radiation, the input parameter Neff tracks only the scaling of the neutrino
+            # energy density
+            Neff_BBN = (jnp.sum(jnp.asarray([s.rho(lna_bbn, params) for s in self.species_list])) - 
+                    self.species_list[-2].rho(lna_bbn,params))/(self.species_list[-1].rho(lna_bbn,params)/params['Neff'])
+            
+            # last two args are user input omega_b and (Neff_BBN - 3.046) (MUST be 3.046 as 
+            # this was assumed when constructing the PArthENoPE table)
+            res_YHe = bilinear_interp(omegab, DNeff,YHe_grid, params['omega_b'],Neff_BBN - 3.046)
+
+            # tabulated result is Yp_CMB
+            params['YHe'] = res_YHe
+
+        elif self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
+            # first add params not specified by user.  No Neff or YHe
+            params['h']             = params.get('h', jnp.array(0.7))
+            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
+            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
+            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
+            params['n_s']           = params.get('n_s', jnp.array(0.965))
+            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
+            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
+            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
+            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
+            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
+            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+
+            if params.get("Neff") is not None:
+                print("You have specified a value of Neff, but LINX instead expects a \n" \
+                    "parameter 'Delt_Neff_init' which will be used to compute Neff.  Refer to LINX \n" \
+                    "docs or https://arxiv.org/abs/2408.14538 for more information.")
+                sys.exit()
+
+
+            thermo_model_DNeff = BackgroundModel()
+            (
+                t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
+            ) = thermo_model_DNeff(jnp.asarray(params['Delt_Neff_init']))
+
+            params['Neff'] = Neff_vec[-1]
+
+            # convert user input omega_b to eta_fac LINX expects
+            eta_fac = params['omega_b'] * linxconst.Omegabh2_to_eta0/linxconst.eta0
+
+            abundance_model = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
+
+            abundances = abundance_model(
+                rho_g_vec,
+                rho_nu_vec,
+                rho_NP_vec,
+                P_NP_vec,
+                t_vec=t_vec_ref,
+                a_vec=a_vec_ref,  
+                eta_fac = eta_fac,
+                tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
+                nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
+                )
+            
+            # number abundance
+            YHe_BBN = 4*abundances[5]
+        
+            # CMB uses real mass fraction
+            Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)
+            params['YHe'] = Yp_CMB
+
+            # other derived params must be specified *after* BBN computation
+            params['omega_m']      = params['omega_cdm'] + params['omega_b']
+            params['R_b']          = params['omega_b'] / params['omega_m']
+            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
+            params['H0']           = params['h'] * cnst.H0_over_h
+            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            # params['omega_nu']     = 7. / 8. * params['N_ur'] * (4. / 11.)**(4. / 3.) * params['omega_g']
+            params['omega_r']      = params['omega_g'] + params['omega_nu']
+            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
+            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+        
+        else:
+            # if neither is specified, fill out the dict as usual.  
+            # input params defaults
+            params['Neff']          = params.get("Neff", jnp.array(3.044))
+            params['h']             = params.get('h', jnp.array(0.7))
+            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
+            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
+            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
+            params['n_s']           = params.get('n_s', jnp.array(0.965))
+            params['YHe']           = params.get('YHe', jnp.array(0.245))
+            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
+            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
+            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
+            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
+            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
+            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+
+            # derived params
+            params['omega_m']      = params['omega_cdm'] + params['omega_b']
+            params['R_b']          = params['omega_b'] / params['omega_m']
+            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
+            params['H0']           = params['h'] * cnst.H0_over_h
+            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            params['omega_r']      = params['omega_g'] + params['omega_nu']
+            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
+            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+
         return params

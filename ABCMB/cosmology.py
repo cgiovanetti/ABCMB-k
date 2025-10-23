@@ -6,8 +6,8 @@ import equinox as eqx
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, Tsit5, SaveAt, PIDController, ForwardMode
 
 import ABCMB.AbstractSpecies as AS
-from .hyrax.array_with_padding import array_with_padding
-from .hyrax import recomb_functions
+from .hyrex.array_with_padding import array_with_padding
+from .hyrex import recomb_functions
 from . import ABCMBTools as tools
 from . import constants as cnst
 
@@ -60,7 +60,7 @@ class Background(eqx.Module):
     lna_xe_tab : "array_with_padding"
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
-    kappa_tab  : jnp.array
+    kappa_func : "diffrax.solution"
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
     rs_d       : float # Sound horizon at baryon decoupling
@@ -94,13 +94,16 @@ class Background(eqx.Module):
         
         ### RECOMBINATION RELATED ###
 
-        # Run hyrax to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self)
-        self.kappa_tab = self._tabulate_optical_depth()
+        # Run hyrex to tabulate recombination output
+        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params["z_reion"], 
+                                                                        Delta_z_reion = params["Delta_z_reion"], 
+                                                                        z_reion_He = params["z_reion_He"], 
+                                                                        Delta_z_reion_He = params["Delta_z_reion_He"])
+        self.kappa_func = self._tabulate_optical_depth()
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
-        vis_vals = self.visibility(lna_vals)
+        vis_vals = vmap(self.visibility)(lna_vals)
         self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
@@ -133,7 +136,7 @@ class Background(eqx.Module):
         """
         rho_tot = 0.
         for i in range(len(self.species_list)):
-            rho_tot += self.species_list[i].rho(lna, self)
+            rho_tot += self.species_list[i].rho(lna, self.params)
         return rho_tot
     
     def P_tot(self, lna):
@@ -158,7 +161,7 @@ class Background(eqx.Module):
         """
         P_tot = 0.
         for i in range(len(self.species_list)):
-            P_tot += self.species_list[i].P(lna, self)
+            P_tot += self.species_list[i].P(lna, self.params)
         return P_tot
 
     def H(self, lna):
@@ -439,7 +442,8 @@ class Background(eqx.Module):
             jnp.where(
                 lna >= self.lna_Tm_tab.lastval,
                 self.Tm_tab.lastval,
-                tools.fast_interp(lna, self.lna_Tm_tab.arr[0], self.lna_Tm_tab.arr[-1], self.Tm_tab.arr)
+                #tools.fast_interp(lna, self.lna_Tm_tab.arr[0], self.lna_Tm_tab.arr[-1], self.Tm_tab.arr)
+                jnp.interp(lna, self.lna_Tm_tab.arr, self.Tm_tab.arr)
             )
         )
 
@@ -520,24 +524,23 @@ class Background(eqx.Module):
         """
         integrand = lambda lna, y, args: -1./self.tau_c(lna)/self.aH(lna)
         term = ODETerm(integrand)
-        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
+        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
         adjoint=ForwardMode()
-        solution = diffeqsolve(
+        sol = diffeqsolve(
             term,
             solver=Kvaerno5(),            # Higher order integrator for more accuracy
             stepsize_controller=stepsize_controller,
-            t0=self.lna_tau_tab[-1],                 # Initial x value (~0 in this case)
-            t1=self.lna_tau_tab[0],                  # Final x value (smallest x value)
-            dt0=-1e-3,                  # Initial step size
+            t0=0.,                 # Initial x value (~0 in this case)
+            t1=-10.,                  # Final x value (smallest x value)
+            dt0=-1.e-3,                  # Initial step size
             max_steps=2048,
             y0=0.0,                     # Initial value tau(x=0) = 0
-            saveat=SaveAt(ts=self.lna_tau_tab[::-1]), # Save at all points in x, reverse order since integrating backwards
+            saveat=SaveAt(dense=True), # Save at all points in x, reverse order since integrating backwards
             adjoint=adjoint
         )
-        result = solution.ys[::-1]
-        return result
+        return sol
 
-    def kappa(self, lna):
+    def expmkappa(self, lna):
         """
         Compute optical depth.
 
@@ -553,7 +556,17 @@ class Background(eqx.Module):
         float
             Optical depth (units: dimensionless)
         """
-        return tools.fast_interp(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1], self.kappa_tab)
+        
+        # return jnp.where(
+        #     lna < self.lna_kappa_tab[0],
+        #     0.,
+        #     jnp.exp(-tools.fast_interp(lna, self.lna_kappa_tab[0], self.lna_kappa_tab[-1], self.kappa_tab))
+        # )
+        return jnp.where(
+            lna < -10.,
+            0.,
+            jnp.exp(-self.kappa_func.evaluate(lna))
+        )
 
     def visibility(self, lna):
         """
@@ -577,7 +590,8 @@ class Background(eqx.Module):
         ------
         Used in computing source functions for CMB anisotropies.
         """
-        return 1./self.tau_c(lna)*jnp.exp(-self.kappa(lna))
+        #return 1./self.tau_c(lna)*jnp.exp(-self.kappa(lna))
+        return self.expmkappa(lna)/self.tau_c(lna)
 
     ###########################################
     ### tools for computing decoupling time ###
@@ -651,8 +665,8 @@ class Background(eqx.Module):
         float
             Baryon drag ratio (units: dimensionless)
         """
-        rho_b = self.species_list[3].rho(lna,self)
-        rho_g = self.species_list[4].rho(lna,self)
+        rho_b = self.species_list[-3].rho(lna,self.params)
+        rho_g = self.species_list[-2].rho(lna,self.params)
         return 3. * rho_b / (4 * rho_g)
 
     @jax.named_scope("tabulate kappa d")

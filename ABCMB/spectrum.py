@@ -195,7 +195,7 @@ class SpectrumSolver(eqx.Module):
         self.switch_dop = switch_dop
         self.switch_pol = switch_pol
 
-    def primordial_spectrum(self, k, BG):
+    def primordial_spectrum(self, k, params):
         """
         Compute primordial curvature power spectrum.
 
@@ -203,17 +203,17 @@ class SpectrumSolver(eqx.Module):
         -----------
         k : float or array
             Wavenumber (units: Mpc^{-1})
-        BG : cosmology.Background
-            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns:
         --------
         float or array
             Primordial power spectrum P_R(k), units Mpc^3
         """
-        return BG.params['A_s']*(k/self.k_pivot)**(BG.params['n_s']-1.) * (2*jnp.pi**2/k**3)
+        return params['A_s']*(k/self.k_pivot)**(params['n_s']-1.) * (2*jnp.pi**2/k**3)
 
-    def Pk_lin(self, k, z, PT, BG):
+    def Pk_lin(self, k, z, PT, params):
         """
         Compute linear matter power spectrum at wavenumbers k and redshift z.
 
@@ -225,8 +225,8 @@ class SpectrumSolver(eqx.Module):
             Redshift to evaluate.
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
-            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns
         -------
@@ -251,13 +251,13 @@ class SpectrumSolver(eqx.Module):
 
         # total matter overdensity
         delta_m = (
-            BG.params['omega_b']   * delta_b +
-            BG.params['omega_cdm'] * delta_cdm
-        ) / BG.params['omega_m']
+            params['omega_b']   * delta_b +
+            params['omega_cdm'] * delta_cdm
+        ) / params['omega_m']
 
-        return delta_m**2 * self.primordial_spectrum(k, BG)
+        return delta_m**2 * self.primordial_spectrum(k, params)
 
-    def lensing_power_spectrum(self, k, lna, PT, BG):
+    def lensing_power_spectrum(self, k, lna, PT, BG, params):
         """
         Computes the lensing power spectrum at wavenumbers k and redshift z.
         Eq.(3.15) in astro-ph/0601594
@@ -272,6 +272,8 @@ class SpectrumSolver(eqx.Module):
             Perturbation evolution table
         BG : cosmology.Background
             Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns
         -------
@@ -282,17 +284,17 @@ class SpectrumSolver(eqx.Module):
         z = 1./a - 1.
         aH = BG.aH(lna)
 
-        Omega_m = BG.params["omega_m"]/BG.params["h"]**2
-        Omega_L = BG.params["omega_Lambda"]/BG.params["h"]**2
+        Omega_m = params["omega_m"]/params["h"]**2
+        Omega_L = params["omega_Lambda"]/params["h"]**2
 
         # Matter fraction over time after equality. 1 at early times and becomes Om0 today. 
         Om = (Omega_m * (1.+z)**3)/ ((Omega_m * (1.+z)**3) + Omega_L)
 
-        Pk = self.Pk_lin(k, z, PT, BG) # Mpc^3
+        Pk = self.Pk_lin(k, z, PT, params) # Mpc^3
 
         return 9./8./jnp.pi**2 * Om**2 * aH**4 * Pk / k
 
-    def lensing_Cl(self, ells, PT, BG):
+    def lensing_Cl(self, ells, PT, BG, params):
         """
         Angular lensing power spectrum at multipole ell.
 
@@ -308,6 +310,8 @@ class SpectrumSolver(eqx.Module):
             Perturbation evolution table
         BG : cosmology.Background
             Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns
         -------
@@ -321,20 +325,20 @@ class SpectrumSolver(eqx.Module):
         def integrand_func(lna):
             k = (ells+0.5)/chi(lna)
             window = (chi(BG.lna_rec) - chi(lna))/chi(BG.lna_rec)/chi(lna)
-            res = chi(lna)/BG.aH(lna) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG)
+            res = chi(lna)/BG.aH(lna) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
             return res
 
         lna_axis = jnp.linspace(BG.lna_rec, 0., 4000)
         integrand = vmap(integrand_func)(lna_axis)
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
 
-    def lensed_Cls(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, PT, BG):
+    def lensed_Cls(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, PT, BG, params):
         #beta = jnp.linspace(0., jnp.pi/16., 5000)
         #mu = jnp.cos(beta)
         mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 1000)
 
         # Compute lensing Cl
-        Clpp = self.lensing_Cl(ells, PT, BG)
+        Clpp = self.lensing_Cl(ells, PT, BG, params)
 
         # Wigner matrices needed in general and for temperature
         # Note that for all wigner matrices, the symmetry relation is dnm = (-1)^(m-n) x dmn
@@ -453,13 +457,13 @@ class SpectrumSolver(eqx.Module):
 
     #     return 0.
 
-    def get_Cl(self, PT, BG):
+    def get_Cl(self, PT, BG, params):
         """
         Compute angular power spectra for multiple multipoles using lax.scan.
         """
 
         def scan_fun(_, idx):
-            cltt, clte, clee = self.Cl_one_ell(idx, PT, BG)
+            cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
             return None, jnp.array([cltt, clte, clee])
 
         _, Cls_raw = lax.scan(scan_fun, None, self.ells_indices)
@@ -476,7 +480,7 @@ class SpectrumSolver(eqx.Module):
         ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
 
         def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG)
+            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
 
         def get_unlensed_Cls():
             return (tt_unlensed, te_unlensed, ee_unlensed)
@@ -489,20 +493,22 @@ class SpectrumSolver(eqx.Module):
         )
         #return get_lensed_Cls()
 
-    def get_Cl_vmap(self, PT, BG):
+    def get_Cl_vmap(self, PT, BG, params):
         """
         Compute angular power spectra for multiple multipoles using lax.scan.
         """
 
-        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None))(self.ells_indices, PT, BG)
+        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
         ells = bessel_l_tab[self.ells_indices]
+        return ells, tt_raw, te_raw, ee_raw
+
         tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
         te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
         ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
 
         def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG)
+            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
 
         def get_unlensed_Cls():
             return (tt_unlensed, te_unlensed, ee_unlensed)
@@ -515,9 +521,9 @@ class SpectrumSolver(eqx.Module):
         )
         #return get_lensed_Cls()
 
-    def Cl_one_ell(self, idx, PT, BG):
+    def Cl_one_ell(self, idx, PT, BG, params):
         """
-        Compute angular power spectrum for single multipole.
+        Computes angular power spectrum for single multipole.
 
         Integrates transfer functions over wavenumber.
 
@@ -529,6 +535,8 @@ class SpectrumSolver(eqx.Module):
             Perturbation evolution table
         BG : cosmology.Background
             Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns:
         --------
@@ -543,27 +551,28 @@ class SpectrumSolver(eqx.Module):
         # This is because for k>kmin, the integrand ~jl^2 which experiences asymptotic damping for larger k's.
         # The peak values of the envelope drop by a few orders of magnitude within 3-4 peaks or so, so its
         # only really important to have high resolution near kmin. 
-        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.1, 400) 
+        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.15, 1000) 
         lna_axis = PT.lna
 
         ### TRANSFER FUNCTION ###
         # Background quantities, all Nlna 1D vectors
         tau0 = BG.tau0
         tau = BG.tau(lna_axis)
-        g   = BG.visibility(lna_axis)
+        g   = vmap(BG.visibility)(lna_axis)
         g_prime = vmap(grad(BG.visibility))(lna_axis) # Derivative of g w.r.t. lna
         aH  = BG.aH(lna_axis)
-        kappa = BG.kappa(lna_axis)
+        expmkappa = vmap(BG.expmkappa)(lna_axis)
         aH_dot = BG.aH_prime(lna_axis) * aH # Derivative of aH w.r.t. conformal time tau.
 
-        g        = g[:, None]
-        g_prime  = g_prime[:, None]
-        aH       = aH[:, None]
-        kappa    = kappa[:, None]
-        aH_dot   = aH_dot[:, None]
+        g         = g[:, None]
+        g_prime   = g_prime[:, None]
+        aH        = aH[:, None]
+        expmkappa = expmkappa[:, None]
+        aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        #interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
         delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
@@ -585,7 +594,7 @@ class SpectrumSolver(eqx.Module):
         sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) \
                 + self.switch_isw * (
                     g * (eta - aH*alpha_prime - 2.*aH*alpha) \
-                    + 2.*jnp.exp(-kappa) * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
+                    + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
                 ) \
                 + self.switch_dop * (
                     aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
@@ -593,7 +602,7 @@ class SpectrumSolver(eqx.Module):
                 )
         #sourceT0 = 0.
 
-        sourceT1 = self.switch_isw * jnp.exp(-kappa) * \
+        sourceT1 = self.switch_isw * expmkappa * \
                 ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
         #sourceT1 = 0.
 
@@ -630,13 +639,13 @@ class SpectrumSolver(eqx.Module):
         ### END OF TRANSFER FUNCTION ###
 
         ### LINE OF SIGHT INTEGRAL ###
-        integrandTT = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT**2 / k_T0_axis
-        integrandTE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT*transferE / k_T0_axis
-        integrandEE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferE**2 / k_T0_axis
+        integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
+        integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
+        integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
         #return k_T0_axis, (integrandTT, integrandTE, integrandEE)
         return (jnp.trapezoid(integrandTT, k_T0_axis), jnp.trapezoid(integrandTE, k_T0_axis), jnp.trapezoid(integrandEE, k_T0_axis))
 
-    def Cl_one_ell_split(self, idx, PT, BG):
+    def Cl_one_ell_split(self, idx, PT, BG, params):
         """
         Compute angular power spectrum for single multipole.
 
@@ -650,6 +659,8 @@ class SpectrumSolver(eqx.Module):
             Perturbation evolution table
         BG : cosmology.Background
             Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
 
         Returns:
         --------
@@ -766,15 +777,15 @@ class SpectrumSolver(eqx.Module):
         ### END OF TRANSFER FUNCTION ###
 
         ### LINE OF SIGHT INTEGRAL ###
-        integrandTT = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT**2 / k_T0_axis
-        integrandTE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT*transferE / k_T0_axis
-        integrandEE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferE**2 / k_T0_axis
+        integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
+        integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
+        integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
         return k_T0_axis, (integrandTT, integrandTE, integrandEE)
         return (jnp.trapezoid(integrandTT, k_T0_axis), jnp.trapezoid(integrandTE, k_T0_axis), jnp.trapezoid(integrandEE, k_T0_axis))
 
-        # integrandTT = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT**2 / k_T0_axis
-        # integrandTE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT*transferE / k_T0_axis
-        # integrandEE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferE**2 / k_T0_axis
+        # integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
+        # integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
+        # integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
         #return k_T0_axis, (integrandTT, integrandTE, integrandEE)
         #return (jnp.trapezoid(integrandTT, jnp.log10(k_T0_axis)), jnp.trapezoid(integrandTE, jnp.log10(k_T0_axis)), jnp.trapezoid(integrandEE, jnp.log10(k_T0_axis)))
 
@@ -862,9 +873,9 @@ class SpectrumSolver(eqx.Module):
         #transferT = transferT0 + tools.fast_interp(k_T0_axis, k_T1_axis[0], k_T1_axis[-1], transferT1) + tools.fast_interp(k_T0_axis, k_T2_axis[0], k_T2_axis[-1], transferT2)
         #transferE = tools.fast_interp(k_T0_axis, k_E_axis[0], k_E_axis[-1], transferE)
 
-        integrandTT = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT**2 / k_T0_axis
-        #integrandTE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferT*transferE / k_T0_axis
-        #integrandEE = 4.*jnp.pi * BG.params['A_s'] * (k_T0_axis/self.k_pivot)**(BG.params['n_s']-1.) * transferE**2 / k_T0_axis
+        integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
+        #integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
+        #integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
         #return (jnp.trapezoid(integrandTT, k_T0_axis), jnp.trapezoid(integrandTE, k_T0_axis), jnp.trapezoid(integrandEE, k_T0_axis))
         return (jnp.trapezoid(integrandTT, k_T0_axis), 0., 0.)
 
@@ -1188,7 +1199,7 @@ class SpectrumSolver(eqx.Module):
                 in_axes=0  # k will be vectorized over its first axis
             )
         transfer = vec_transfer_T0(k_integral_axis) #+ vec_transfer_T1(k_integral_axis)
-        integrand = 4.*jnp.pi * BG.params['A_s'] * (k_integral_axis/self.k_pivot)**(BG.params['n_s']-1.) * transfer**2 / k_integral_axis
+        integrand = 4.*jnp.pi * params['A_s'] * (k_integral_axis/self.k_pivot)**(params['n_s']-1.) * transfer**2 / k_integral_axis
         return jnp.trapezoid(integrand, k_integral_axis)
 
     def scalar_T0_transfer(self, k, ell, PT, BG):
@@ -1390,7 +1401,7 @@ class SpectrumSolver(eqx.Module):
     def ClTT_diffrax(self, ell, PT, BG):
         def integrand_func(k, y, args):
             transfer = self.scalar_T0_transfer(k, ell, PT, BG) + self.scalar_T1_transfer(k, ell, PT, BG)
-            integrand = 4.*jnp.pi * BG.params['A_s'] * (k/self.k_pivot)**(BG.params['n_s']-1.) * transfer**2 / k
+            integrand = 4.*jnp.pi * params['A_s'] * (k/self.k_pivot)**(params['n_s']-1.) * transfer**2 / k
             return integrand
         
         term = ODETerm(integrand_func)
