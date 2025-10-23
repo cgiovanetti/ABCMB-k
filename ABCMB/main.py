@@ -82,6 +82,8 @@ class Model(eqx.Module):
     species_list       : tuple = ()
     perturbations_list : tuple = ()
 
+    return_PTBG : bool
+
     bbn_type                : str = ""
     linx_reaction_net       : str = ""
     
@@ -95,6 +97,7 @@ class Model(eqx.Module):
                  ellmax = 2500,
                  lensing = False,
                  has_MassiveNeutrinos=False,
+                 return_PTBG=False,
                  bbn_type = "",
                  linx_reaction_net = "key_PRIMAT_2023"
                  ): 
@@ -138,6 +141,7 @@ class Model(eqx.Module):
 
         self.RM = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
         #self.PE = perturbations.PerturbationEvolver(perturbations_list)
+        self.return_PTBG = return_PTBG
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         self.bbn_type = bbn_type
         self.linx_reaction_net = linx_reaction_net
@@ -173,7 +177,11 @@ class Model(eqx.Module):
         #return self.SS.Pk_lin(PT.k, 0., PT, BG)
         #return PT.delta_b
         Cls = self.SS.get_Cl(PT, BG, params)
-        return Cls
+        ells = self.SS.ells
+        if self.return_PTBG:
+            return ells, Cls, PT, BG
+        else:
+            return ells, Cls
 
     # @jit
     @eqx.filter_jit
