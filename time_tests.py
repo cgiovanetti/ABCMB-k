@@ -46,14 +46,14 @@ for i in range(2):
         'YHe': 0.245,
         'TCMB0': 2.34865418e-4,
         'T_nu': (4. / 11.)**(1. / 3.) * 2.34865418e-4,
-        'N_ncdm': 0,
+        'N_ncdm': 1.,
         'T_ncdm': 0.71611 * 2.34865418e-4,
+        'm_ncdm': 1.
     }
 
-    model = Model(ellmin=2, ellmax=2500, lensing=False)
+    model = Model(ellmin=2, ellmax=2500, lensing=False, has_MassiveNeutrinos=False)
 
-    ABC_Cl = model.run_cosmology(params)[0]
-    ABC_ell = model.SS.ells
+    ell, ABC_Cl = model.run_cosmology(params)
 
-    print(ABC_Cl)
+    print(ABC_Cl[0])
     print(time.time()-start)

@@ -95,10 +95,10 @@ class Background(eqx.Module):
         ### RECOMBINATION RELATED ###
 
         # Run hyrex to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params.get("z_reion", 11.0), 
-                                                                        Delta_z_reion = params.get("Delta_z_reion", 0.5), 
-                                                                        z_reion_He = params.get("z_reion_He", 3.5), 
-                                                                        Delta_z_reion_He = params.get("Delta_z_reion_He", 0.5))
+        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params["z_reion"], 
+                                                                        Delta_z_reion = params["Delta_z_reion"], 
+                                                                        z_reion_He = params["z_reion_He"], 
+                                                                        Delta_z_reion_He = params["Delta_z_reion_He"])
         self.kappa_func = self._tabulate_optical_depth()
 
         # Find approximate maximum of visibility function.
@@ -442,8 +442,9 @@ class Background(eqx.Module):
             jnp.where(
                 lna >= self.lna_Tm_tab.lastval,
                 self.Tm_tab.lastval,
-                #tools.fast_interp(lna, self.lna_Tm_tab.arr[0], self.lna_Tm_tab.arr[-1], self.Tm_tab.arr)
-                jnp.interp(lna, self.lna_Tm_tab.arr, self.Tm_tab.arr)
+                tools.fast_interp(lna, self.lna_Tm_tab.arr[0],
+                self.lna_Tm_tab.arr[0] + len(self.lna_Tm_tab.arr) * (self.lna_Tm_tab.arr[1]-self.lna_Tm_tab.arr[0]),
+                self.Tm_tab.arr)
             )
         )
 
@@ -665,8 +666,8 @@ class Background(eqx.Module):
         float
             Baryon drag ratio (units: dimensionless)
         """
-        rho_b = self.species_list[-3].rho(lna,self)
-        rho_g = self.species_list[-2].rho(lna,self)
+        rho_b = self.species_list[-3].rho(lna,self.params)
+        rho_g = self.species_list[-2].rho(lna,self.params)
         return 3. * rho_b / (4 * rho_g)
 
     @jax.named_scope("tabulate kappa d")

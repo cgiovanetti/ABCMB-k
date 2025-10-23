@@ -41,11 +41,11 @@ def test_accuracy_checker(h = 0.6762):
         }
 
         model = Model(ellmin=ellmin, ellmax=ellmax, lensing=False) # ZZ: model now takes ellmin, ellmax for Cls, and want_lensing
-        ABC_Cls = model.run_cosmology(params)
+        ABE_ell, ABC_Cls = model.run_cosmology(params)
         ABC_tt = ABC_Cls[0] 
         ABC_te = ABC_Cls[1] 
         ABC_ee = ABC_Cls[2] 
-        ABC_ell = model.SS.ells # SpectrumSolver now automatically computes ells between specified ellmin and ellmax
+        # ABC_ell = model.SS.ells # SpectrumSolver now automatically computes ells between specified ellmin and ellmax
 
 
         # CLASS:
