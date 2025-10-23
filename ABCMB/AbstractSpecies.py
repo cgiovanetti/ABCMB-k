@@ -797,8 +797,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         dlogf0_dlogq = self.q_3p / (1.+jnp.exp(-self.q_3p)) # Log derivative of the fermi-dirac distribution.
 
         idx_q1 = 0 # Psi0 index of first q
-        idx_q2 = idx_q1 + 7 # Psi0 index of second q
-        idx_q3 = idx_q2 + 7 # Psi0 index of third q
+        idx_q2 = idx_q1 + self.num_ells_per_bin # Psi0 index of second q
+        idx_q3 = idx_q2 + self.num_ells_per_bin # Psi0 index of third q
 
         for i in range(3):
             q  = self.q_3p[i] # This momentum bin.
@@ -845,13 +845,13 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         for i in range(3):
             q = self.q_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
-            dlnf0_dlnq = -q / (q+jnp.exp(-q))
+            dlnf0_dlnq = -q / (1+jnp.exp(-q))
 
             # NOTE: The entries are [Psi0, k * Psi1, Psi2, ...]. If accessing Psi1 make sure to divide out k
             L = jnp.arange(self.num_ells_per_bin) + self.delta_idx + i*self.num_ells_per_bin
             Psi = y[L]
 
-            Psi0_prime = -q*k/epsilon/aH*Psi[1] + metric_h_prime/6. * dlnf0_dlnq
+            Psi0_prime = -q/epsilon/aH*Psi[1] + metric_h_prime/6. * dlnf0_dlnq
             kPsi1_prime = q*k**2/3./epsilon/aH * (Psi[0] - 2.*Psi[2])
             Psi2_prime = q*k/5./epsilon/aH * (2.*Psi[1]/k - 3.*Psi[3]) - (metric_h_prime/15. + 2.*metric_eta_prime/5.) * dlnf0_dlnq
             

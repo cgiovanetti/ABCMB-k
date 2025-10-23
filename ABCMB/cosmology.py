@@ -326,8 +326,6 @@ class Background(eqx.Module):
 
         return tau_tab
 
-
-
     def tau(self, lna):
         """
         Compute conformal time.
