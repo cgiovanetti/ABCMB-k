@@ -1,4 +1,4 @@
-from jax import jit, config, default_backend
+from jax import jit, config
 import jax.numpy as jnp
 from jaxtyping import Array
 import numpy as np
@@ -178,7 +178,12 @@ class Model(eqx.Module):
         PT, BG = self.get_PTBG(params)
         #return self.SS.Pk_lin(PT.k, 0., PT, BG)
         #return PT.delta_b
-        Cls = self.SS.get_Cl(PT, BG, params)
+        if jax.default_backend() =='gpu':
+            # vmap for GPU
+            Cls = self.SS.get_Cl_vmap(PT, BG, params)
+        else:
+            # lax.scan for CPU
+            Cls = self.SS.get_Cl(PT, BG, params)
         ells = self.SS.ells
         if self.return_PTBG:
             return ells, Cls, PT, BG
@@ -208,10 +213,11 @@ class Model(eqx.Module):
         PE = perturbations.PerturbationEvolver(self.perturbations_list, BG, params)
         
         # Specify whether to use full_evolution() or full_evolution_scan()
-        if default_backend=='gpu':
-            jax.debug.print('in')
+        if jax.default_backend() =='gpu':
+            # vmap on GPU
             PT = PE.full_evolution()
         else:
+            # lax.scan on CPU
             PT = PE.full_evolution_scan()
         return PT, BG
 
