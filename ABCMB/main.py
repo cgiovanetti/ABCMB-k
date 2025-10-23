@@ -1,8 +1,10 @@
-from jax import jit, config
+from jax import jit, config, default_backend
 import jax.numpy as jnp
 from jaxtyping import Array
 import numpy as np
 import equinox as eqx
+
+import jax
 
 import sys
 import os
@@ -206,8 +208,11 @@ class Model(eqx.Module):
         PE = perturbations.PerturbationEvolver(self.perturbations_list, BG, params)
         
         # Specify whether to use full_evolution() or full_evolution_scan()
-        #PT = PE.full_evolution()
-        PT = PE.full_evolution_scan()
+        if default_backend=='gpu':
+            jax.debug.print('in')
+            PT = PE.full_evolution()
+        else:
+            PT = PE.full_evolution_scan()
         return PT, BG
 
     @eqx.filter_jit
