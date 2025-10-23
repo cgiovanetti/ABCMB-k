@@ -500,25 +500,26 @@ class SpectrumSolver(eqx.Module):
 
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
-        ells = bessel_l_tab[self.ells_indices]
-        return ells, tt_raw, te_raw, ee_raw
+        # ells = bessel_l_tab[self.ells_indices]
+        # return ells, tt_raw, te_raw, ee_raw
+        return tt_raw, te_raw, ee_raw
 
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
+        # tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
+        # te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
+        # ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
 
-        def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+        # def get_lensed_Cls():
+        #     return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
 
-        def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
+        # def get_unlensed_Cls():
+        #     return (tt_unlensed, te_unlensed, ee_unlensed)
 
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
-        return lax.cond(
-            self.lensing,
-            get_lensed_Cls,
-            get_unlensed_Cls
-        )
+        # #return (tt_unlensed, te_unlensed, ee_unlensed)
+        # return lax.cond(
+        #     self.lensing,
+        #     get_lensed_Cls,
+        #     get_unlensed_Cls
+        # )
         #return get_lensed_Cls()
 
     def Cl_one_ell(self, idx, PT, BG, params):
@@ -571,7 +572,7 @@ class SpectrumSolver(eqx.Module):
         aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        #interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        # interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
