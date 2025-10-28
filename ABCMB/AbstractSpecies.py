@@ -615,7 +615,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_ell_modes-3)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, params, BG):
-        aH    = BG.aH(lna)
+        aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
 
         L = jnp.arange(self.num_ell_modes) + self.delta_idx
@@ -838,7 +838,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         a = jnp.exp(lna)
         T = params['T_ncdm'] / a
         x = params['m_ncdm'] / T
-        aH  = BG.aH(lna)
+        aH  = BG.aH(lna, params)
         tau = BG.tau(lna)
 
         # Iterate through momentum bins
@@ -1048,12 +1048,12 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         during recombination. During reionization this cs2 is negative. This is not physical
         but it should not matter for cosmology.
         """
-        Tm = BG.Tm(lna) # Baryon temp
-        Tg = BG.TCMB(lna) # Photon temp
+        Tm = BG.Tm(lna, params) # Baryon temp
+        Tg = BG.TCMB(lna, params) # Photon temp
         mu = self.mean_mass(lna, params, BG)
         R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
 
-        return Tm/mu * (5./3. - 2./3.*mu*R/cnst.me/BG.aH(lna)/BG.tau_c(lna) * (Tg/Tm - 1.))
+        return Tm/mu * (5./3. - 2./3.*mu*R/cnst.me/BG.aH(lna, params)/BG.tau_c(lna, params) * (Tg/Tm - 1.))
 
     def mean_mass(self, lna, params, BG):
         """
@@ -1126,10 +1126,10 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        aH = BG.aH(lna)
+        aH = BG.aH(lna, params)
         cs2 = self.cs2(lna, params, BG)
         R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
-        tau_c = BG.tau_c(lna)
+        tau_c = BG.tau_c(lna, params)
 
         delta = y[self.delta_idx]
         theta = y[self.delta_idx+1]
@@ -1272,8 +1272,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        aH    = BG.aH(lna)
-        tau_c = BG.tau_c(lna)
+        aH    = BG.aH(lna, params)
+        tau_c = BG.tau_c(lna, params)
         tau   = BG.tau(lna)
 
         Flmax = self.num_F_ell_modes-1

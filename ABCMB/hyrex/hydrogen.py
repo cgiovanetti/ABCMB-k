@@ -83,7 +83,7 @@ class hydrogen_model(eqx.Module):
         self.last_4He_lna = last_4He_lna
         self.twog_redshift = twog_redshift
 
-    def __call__(self, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def __call__(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute hydrogen recombination history.
 
@@ -106,9 +106,9 @@ class hydrogen_model(eqx.Module):
             (xe_full, lna_full, Tm, lna_Tm) - ionization fraction, log scale factor,
             matter temperature, and temperature grid
         """
-        return self.get_hydrogen_history(BG, rtol, atol, solver, max_steps)
+        return self.get_hydrogen_history(args, rtol, atol, solver, max_steps)
     
-    def get_hydrogen_history(self, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def get_hydrogen_history(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete hydrogen recombination history through all phases.
 
@@ -140,7 +140,7 @@ class hydrogen_model(eqx.Module):
         ################## move to H ################## 
 
         ### POST SAHA EXPANSION PHASE ###
-        xe_output_post, lna_output_post = self.post_Saha_expansion(self.last_4He_lna+self.integration_spacing, BG)
+        xe_output_post, lna_output_post = self.post_Saha_expansion(self.last_4He_lna+self.integration_spacing, args)
 
         xe_4He_and_post = self.xe_4He.concat(array_with_padding(xe_output_post))
         lna_4He_and_post = self.lna_4He.concat(array_with_padding(lna_output_post))
@@ -148,14 +148,14 @@ class hydrogen_model(eqx.Module):
         ### END OF POST SAHA EXPANSION PHASE ###
 
         ### HYREC2 EMLA + FULL TWO PHOTON PHASE ###
-        xe_output_2g, lna_output_2g = self.solve_emla_twophoton(lna_4He_and_post.lastval, -jnp.log(self.twog_redshift), xe_4He_and_post.lastval, BG, rtol, atol, solver, max_steps)
+        xe_output_2g, lna_output_2g = self.solve_emla_twophoton(lna_4He_and_post.lastval, -jnp.log(self.twog_redshift), xe_4He_and_post.lastval, args, rtol, atol, solver, max_steps)
 
         xe_4He_post_2g = xe_4He_and_post.concat(array_with_padding(xe_output_2g))
         lna_4He_post_2g = lna_4He_and_post.concat(array_with_padding(lna_output_2g))
         ### END HYREC2 EMLA + FULL TWO PHOTON PHASE ###
 
         ### HYREC2 EMLA ONLY PHASE ###
-        xe_output_late, Tm_output_late, lna_output_late = self.solve_emla(lna_4He_post_2g.lastval, xe_4He_post_2g.lastval, BG, rtol, atol, solver)
+        xe_output_late, Tm_output_late, lna_output_late = self.solve_emla(lna_4He_post_2g.lastval, xe_4He_post_2g.lastval, args, rtol, atol, solver)
 
         lna_Tm = array_with_padding(lna_output_late)
         Tm = array_with_padding(Tm_output_late)
@@ -167,7 +167,7 @@ class hydrogen_model(eqx.Module):
         ### Begin TLA phase ###
         xe_output_TLA, Tm_output_TLA, lna_output_TLA = self.solve_TLA(lna_Tm.lastval,
                                                                       xe_4He_post_2g_late.lastval, Tm.lastval, 
-                                                                      BG)
+                                                                      args)
 
         xe_all = xe_4He_post_2g_late.concat(array_with_padding(xe_output_TLA))
         lna_all = lna_4He_post_2g_late.concat(array_with_padding(lna_output_TLA))
@@ -179,7 +179,7 @@ class hydrogen_model(eqx.Module):
 
 
 
-    def post_Saha_expansion(self, starting_lna, BG, threshold=1e-5):
+    def post_Saha_expansion(self, starting_lna, args, threshold=1e-5):
         """
         Compute post-Saha expansion phase with two-photon corrections.
 
@@ -201,10 +201,10 @@ class hydrogen_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-
+        BG, params = args
         # Initial conditions
-        TCMB = BG.TCMB(starting_lna)
-        nH = BG.nH(starting_lna)
+        TCMB = BG.TCMB(starting_lna, params)
+        nH = BG.nH(starting_lna, params)
         xe0, _ = recomb_functions.xe_Saha(TCMB, nH)  # Saha equilibrium is our intial condition
 
         # Pre-allocate xe_output 
@@ -220,9 +220,9 @@ class hydrogen_model(eqx.Module):
             lna = starting_lna + iz*self.integration_spacing
 
             # Cosmological parameters
-            TCMB = BG.TCMB(lna)
-            nH = BG.nH(lna)
-            H = BG.H(lna)
+            TCMB = BG.TCMB(lna, params)
+            nH = BG.nH(lna, params)
+            H = BG.H(lna, params)
 
             # Saha equilibrium for xe
             xe_Saha, s = recomb_functions.xe_Saha(TCMB, nH)
@@ -283,22 +283,22 @@ class hydrogen_model(eqx.Module):
         float
             Time derivative dxe/dlna (units: dimensionless)
         """
-        BG = args
+        BG, params = args
     
         x1s = 1. - xe                # fraction of neutral hydrogen
-        TCMB = BG.TCMB(lna)          # eV
-        nH = BG.nH(lna)              # hydrogen number density, 1/cm^3
-        H = BG.H(lna)                # Hubble parameter, 1/s
-        GammaC = recomb_functions.Gamma_compton(xe, TCMB, BG.params['YHe'])  # Compton scattering rate, 1/s
+        TCMB = BG.TCMB(lna, params)          # eV
+        nH = BG.nH(lna, params)              # hydrogen number density, 1/cm^3
+        H = BG.H(lna, params)                # Hubble parameter, 1/s
+        GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         Tm = TCMB * (1.-H/GammaC)
 
-        Delta = self.get_current_correction_func(TCMB, BG)
+        Delta = self.get_current_correction_func(TCMB, args)
         dxedlna = self.dxe_dlna_twophoton(xe, TCMB, Tm, H, nH, Delta)
 
         return dxedlna
 
-    def solve_emla_twophoton(self, lna_axis_init, lna_axis_final, xe0, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=4096):
+    def solve_emla_twophoton(self, lna_axis_init, lna_axis_final, xe0, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=4096):
         """
         Solve HYREC-2 EMLA evolution with two-photon processes.
 
@@ -329,9 +329,10 @@ class hydrogen_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
+        BG, params = args
 
         # Initial conditions
-        TCMB_init = BG.TCMB(lna_axis_init)  # Initial CMB temperature
+        TCMB_init = BG.TCMB(lna_axis_init, params)  # Initial CMB temperature
         initial_state = xe0
         term = ODETerm(self.xe_derivative_twophoton)
 
@@ -355,7 +356,7 @@ class hydrogen_model(eqx.Module):
         sol = diffeqsolve(
             term, solver, t0=t0, t1=t1, dt0=1e-3, 
             y0=initial_state, 
-            args=BG,
+            args=args,
             stepsize_controller=PIDController(rtol, atol),saveat=save_at,
             event = event,
             adjoint=adjoint
@@ -388,12 +389,12 @@ class hydrogen_model(eqx.Module):
             Time derivatives [dxe/dlna, dTm/dlna] (units: dimensionless, eV)
         """
         xe, Tm = state
-        BG = args
+        BG, params = args
         
-        TCMB = BG.TCMB(lna)          # eV
-        nH = BG.nH(lna)              # hydrogen number density, 1/cm^3
-        H = BG.H(lna)                # Hubble parameter, 1/s
-        GammaC = recomb_functions.Gamma_compton(xe, TCMB, BG.params['YHe'])  # Compton scattering rate, 1/s
+        TCMB = BG.TCMB(lna, params)          # eV
+        nH = BG.nH(lna, params)              # hydrogen number density, 1/cm^3
+        H = BG.H(lna, params)                # Hubble parameter, 1/s
+        GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         Delta = 0.0
         dxedlna = self.dxe_dlna_twophoton(xe, TCMB, Tm, H, nH, Delta)
@@ -401,7 +402,7 @@ class hydrogen_model(eqx.Module):
 
         return jnp.array([dxedlna, dTmdlna])
 
-    def solve_emla(self, lna0, xe0, BG, rtol=1e-7,atol=1e-9,solver=Tsit5(),max_steps=4096):
+    def solve_emla(self, lna0, xe0, args, rtol=1e-7,atol=1e-9,solver=Tsit5(),max_steps=4096):
         """
         Solve late-time EMLA evolution without two-photon processes.
 
@@ -435,13 +436,15 @@ class hydrogen_model(eqx.Module):
         t0 = lna0
         t1 = jnp.inf 
 
+        BG,params = args
+
         # need to go at least twice max_steps to make sure we catch the t1 we actually want
         t_arr = jnp.linspace(t0+self.integration_spacing, t0+2*max_steps*self.integration_spacing, 2*max_steps)
 
         save_at = SaveAt(ts=t_arr) 
         
-        TCMB_init = BG.TCMB(t0)  # Initial CMB temperature
-        Tm0 = TCMB_init * (1.-BG.H(t0)/recomb_functions.Gamma_compton(xe0, TCMB_init, BG.params['YHe']))
+        TCMB_init = BG.TCMB(t0, params)  # Initial CMB temperature
+        Tm0 = TCMB_init * (1.-BG.H(t0, params)/recomb_functions.Gamma_compton(xe0, TCMB_init, params['YHe']))
 
         initial_state = jnp.array([xe0, Tm0])
         term = ODETerm(self.xe_tm_derivative)
@@ -450,7 +453,7 @@ class hydrogen_model(eqx.Module):
         def temperature_check(t, y, args, **kwargs):
             lna = t
             _, Tm = y
-            TCMB = BG.TCMB(lna) 
+            TCMB = BG.TCMB(lna, params) 
             TR_MIN = recomb_functions.TR_MIN    # Minimum Tcmb in eV 
             T_RATIO_MIN = recomb_functions.T_RATIO_MIN  # Minimum Tratio 
             ratio = jnp.minimum(Tm / TCMB, TCMB / Tm)
@@ -462,7 +465,7 @@ class hydrogen_model(eqx.Module):
         sol = diffeqsolve(
             term, solver, t0=t0, t1=t1, dt0=1e-3, 
             y0=initial_state, 
-            args=BG,
+            args=args,
             stepsize_controller=PIDController(rtol, atol),saveat=save_at,
             adjoint=adjoint,
             max_steps=max_steps,
@@ -515,7 +518,7 @@ class hydrogen_model(eqx.Module):
 
         return (x2s*B2s + x2p*B2p - xe**2*nH*(A2s+A2p)) / H
 
-    def get_current_correction_func(self, TCMB, BG):
+    def get_current_correction_func(self, TCMB, args):
         """
         Interpolate correction function for current cosmology.
 
@@ -539,17 +542,19 @@ class hydrogen_model(eqx.Module):
         omega_cb_fid = 0.14175
         Neff_fid     = 3.046
 
+        BG, params = args
+
 
         # For the user inputed cosmology currently scanned over.
-        omega_H  = BG.params['omega_b']*(1-BG.params['YHe'])
-        omega_cb = BG.params['omega_b'] + BG.params['omega_cdm']
+        omega_H  = params['omega_b']*(1-params['YHe'])
+        omega_cb = params['omega_b'] + params['omega_cdm']
 
         Delta        = jnp.interp(TCMB, cnst.kB*self.swift[:, 0], self.swift[:, 1])
         dDelta_domcb = jnp.interp(TCMB, cnst.kB*self.swift[:, 0], self.swift[:, 2])
         dDelta_domH  = jnp.interp(TCMB, cnst.kB*self.swift[:, 0], self.swift[:, 3])
         dDelta_dNeff = jnp.interp(TCMB, cnst.kB*self.swift[:, 0], self.swift[:, 4])
         
-        return Delta + (omega_cb-omega_cb_fid)*dDelta_domcb + (omega_H-omega_H_fid)*dDelta_domH + (BG.params['Neff']-Neff_fid)*dDelta_dNeff
+        return Delta + (omega_cb-omega_cb_fid)*dDelta_domcb + (omega_H-omega_H_fid)*dDelta_domH + (params['Neff']-Neff_fid)*dDelta_dNeff
 
     def steady_state_equations(self, xe, H, nH, TCMB, A2s, A2p, B2s, B2p, R2p2s, R2s2p, Delta):
         """
@@ -658,14 +663,14 @@ class hydrogen_model(eqx.Module):
             Time derivatives [dxe/dlna, dTm/dlna] (units: dimensionless, eV)
         """
         xe, Tm  = state
-        BG = args
+        BG, params = args
 
         xHII = xe # since everything else is fully recombined
-        nH = BG.nH(lna)
-        TCMB = BG.TCMB(lna)          # eV
-        H = BG.H(lna)  
+        nH = BG.nH(lna, params)
+        TCMB = BG.TCMB(lna, params)          # eV
+        H = BG.H(lna, params)  
 
-        C = recomb_functions.peebles_C(jnp.exp(-lna) - 1.0, xHII, H, nH, BG)
+        C = recomb_functions.peebles_C(jnp.exp(-lna) - 1.0, xHII, H, nH, args)
         alpha = recomb_functions.alpha_H(Tm)                     
         beta  = recomb_functions.beta_H(Tm)                  
 
@@ -673,11 +678,11 @@ class hydrogen_model(eqx.Module):
         dxe_dt = C * (beta * (1.0 - xe) - alpha * nH * xe**2)
         dxe_dloga = dxe_dt / H
 
-        dTm_dloga = -2.0 * Tm + (recomb_functions.Gamma_compton(xe, TCMB, BG.params['YHe']) / H) * (TCMB - Tm)
+        dTm_dloga = -2.0 * Tm + (recomb_functions.Gamma_compton(xe, TCMB, params['YHe']) / H) * (TCMB - Tm)
 
         return jnp.array([dxe_dloga, dTm_dloga])
     
-    def solve_TLA(self, lna0, xe0, Tm0, BG, rtol=1e-7, atol=1e-9, solver=Kvaerno3(), max_steps = 4096):
+    def solve_TLA(self, lna0, xe0, Tm0, args, rtol=1e-7, atol=1e-9, solver=Kvaerno3(), max_steps = 4096):
         """
         Solve late-time TLA evolution.
 
@@ -729,7 +734,7 @@ class hydrogen_model(eqx.Module):
         sol = diffeqsolve(
             term, solver, t0=t0, t1=t1, dt0=1e-3, 
             y0=initial_state, 
-            args=BG,
+            args=args,
             stepsize_controller=PIDController(rtol, atol),saveat=save_at,
             adjoint=adjoint,
             max_steps=max_steps,

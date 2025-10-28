@@ -92,7 +92,7 @@ def beta_H(TCMB):
 
     return beta_H
 
-def peebles_C(z, xHII, H, nH, BG):
+def peebles_C(z, xHII, H, nH, args):
     """
     Peebles C factor, probability for an n=2 hydrogen atom to reach the ground state before becoming photoionized, a function of redshift and ionized proton fraction.
     
@@ -116,6 +116,7 @@ def peebles_C(z, xHII, H, nH, BG):
     C : float/jnp.array
         Peebles C factor.
     """
+    BG, params = args
     # (2p to 1s rate) x (1 - xHII), in s^{-1}
     rate_2p1s_times_x1s = 8*jnp.pi*H / (3 * (nH*(cnst.c/cnst.lya_freq)**3))
 
@@ -123,7 +124,7 @@ def peebles_C(z, xHII, H, nH, BG):
     rate_exc = 3. * rate_2p1s_times_x1s/4. + (1.-xHII) * cnst.R2s1s/4.
     
     # Ionization rate, in s^{-1}
-    rate_ion = (1-xHII) * beta_H( BG.TCMB( jnp.log(1/(1+z)) ) )
+    rate_ion = (1-xHII) * beta_H( BG.TCMB( jnp.log(1/(1+z)) , params ) )
 
     return rate_exc / (rate_exc + rate_ion)
 

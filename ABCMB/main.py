@@ -210,15 +210,15 @@ class Model(eqx.Module):
         """
         BG = self.get_BG(params)
         # params = self.add_derived_parameters(params)
-        PE = perturbations.PerturbationEvolver(self.perturbations_list, BG, params)
+        PE = perturbations.PerturbationEvolver(self.perturbations_list)
         
         # Specify whether to use full_evolution() or full_evolution_scan()
         if jax.default_backend() =='gpu':
             # vmap on GPU
-            PT = PE.full_evolution()
+            PT = PE.full_evolution((BG, params))
         else:
             # lax.scan on CPU
-            PT = PE.full_evolution_scan()
+            PT = PE.full_evolution_scan((BG, params))
         return PT, BG
 
     @eqx.filter_jit

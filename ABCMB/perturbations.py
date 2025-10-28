@@ -38,10 +38,9 @@ class PerturbationEvolver(eqx.Module):
     """
 
     perturbations_list : tuple  #= eqx.static_field()
-    BG : "cosmology.Background" #= eqx.static_field()
-    params : dict
 
-    def full_evolution(self):
+
+    def full_evolution(self, args):
         """
         Evolve perturbations for multiple wavenumber modes.
 
@@ -58,24 +57,25 @@ class PerturbationEvolver(eqx.Module):
         Uses logarithmic k spacing from 10^-4 to ~0.5 Mpc^-1 with 100 points.
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
+        BG, params = args
         #k = jnp.logspace(-4., -0.3, 100, base=10)
         k = jnp.geomspace(1.e-4, 0.4, 700)
         #k = jnp.array([1.e-3, 1.e-2, 1.e-1])
         #k = jnp.array([1.e-3, 1.e-2])
         #k = jnp.array([1.e-1])
-        sols = vmap(self.evolution_one_k)(k)
+        sols = vmap(self.evolution_one_k,in_axes=[0,None])(k,args)
 
-        lna = jnp.linspace(self.BG.lna_transfer_start,  0., 500) # lna_end hardcoded
+        lna = jnp.linspace(BG.lna_transfer_start,  0., 500) # lna_end hardcoded
         # lna = jnp.linspace(-15., 0., 1000)
         #lna = jnp.linspace(-15., -7.0, 500)
         res = vmap(lambda arr: vmap(arr.evaluate)(lna))(sols) # Right now the shape is (Nk, Nlna, Ny)
         res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
         #return lna, k, res
 
-        PT = self.make_output_table(k, lna, res)
+        PT = self.make_output_table(k, lna, res, args)
         return PT
 
-    def full_evolution_scan(self):
+    def full_evolution_scan(self, args):
         """
         Evolve perturbations for multiple wavenumber modes.
 
@@ -87,6 +87,7 @@ class PerturbationEvolver(eqx.Module):
         PerturbationTable
             Interpolatable table of perturbation evolution
         """
+        BG, params = args
         lna = jnp.linspace(self.BG.lna_transfer_start, 0., 500)  # lna_end hardcoded
         #lna = jnp.linspace(-14., 0., 1000)
         k = jnp.geomspace(1.e-4, 0.4, 300)
@@ -94,16 +95,16 @@ class PerturbationEvolver(eqx.Module):
 
         def body_fun(_, ki):
             # evolution_one_k returns shape (Nlna, Ny)
-            y = self.evolution_one_k_scan(ki, lna)    # (Nlna, Ny)
+            y = self.evolution_one_k_scan(ki, lna, args)    # (Nlna, Ny)
             return None, y
 
         _, res = lax.scan(body_fun, None, k)      # res has shape (Nk, Nlna, Ny)
         res = res.transpose(2, 1, 0)              # -> (Ny, Nlna, Nk)
 
-        PT = self.make_output_table(k, lna, res)
+        PT = self.make_output_table(k, lna, res, args)
         return PT
 
-    def get_tca_on_off(self, k):
+    def get_tca_on_off(self, k, args):
         """
         Determine tight coupling approximation time range.
 
@@ -126,6 +127,7 @@ class PerturbationEvolver(eqx.Module):
         Uses thresholds: τc/τh < 0.0015 (start), τh/τk < 0.07 (start),
         τc/τh > 0.015 (end), τc/τk > 0.01 (end).
         """
+        BG, params = args
         # thresholds
         thr1 = 0.0015   # start_small_k_at_tau_c_over_tau_h
         thr2 = 0.07     # start_large_k_at_tau_h_over_tau_k
@@ -136,13 +138,13 @@ class PerturbationEvolver(eqx.Module):
         lna_start_range = jnp.linspace(-20.0, -10.0, 10000)
 
         # a) τc/τh  →  f1(lna) = BG.tau_c * BG.aH
-        f1 = self.BG.tau_c(lna_start_range) * self.BG.aH(lna_start_range)
+        f1 = BG.tau_c(lna_start_range, params) * BG.aH(lna_start_range, params)
         # invert f1(lna) = thr1  →  lna = interp(thr1, f1, lna_range)
         lna1 = jnp.interp(thr1, f1, lna_start_range)    # jnp.interp ends up being 
                                                         # faster than fast_interp through here
 
         # b) τh/τk  →  f2(lna) = k / BG.aH
-        f2 = k / self.BG.aH(lna_start_range)
+        f2 = k / BG.aH(lna_start_range, params)
         # invert f2(lna) = thr2
         lna2 = jnp.interp(thr2, f2, lna_start_range)
 
@@ -152,18 +154,18 @@ class PerturbationEvolver(eqx.Module):
         lna_end_range = jnp.linspace(-15.0, -6.0, 10000)
 
         # a) τc/τh  →  f3(lna) = BG.tau_c * BG.aH
-        f3 = self.BG.tau_c(lna_end_range) * self.BG.aH(lna_end_range)
+        f3 = BG.tau_c(lna_end_range, params) * BG.aH(lna_end_range, params)
         lna3 = jnp.interp(thr3, f3, lna_end_range) 
 
         # b) τc/τk  →  f4(lna) = k * BG.tau_c
-        f4 = k * self.BG.tau_c(lna_end_range)
+        f4 = k * BG.tau_c(lna_end_range, params)
         lna4 = jnp.interp(thr4, f4, lna_end_range)
 
         lna_end = jnp.minimum(lna3, lna4)
 
         return lna_ini, lna_end
 
-    def initial_conditions_one_k(self, k, lna_ini):
+    def initial_conditions_one_k(self, k, lna_ini, args):
         """
         Compute initial conditions for perturbation evolution.
 
@@ -187,20 +189,21 @@ class PerturbationEvolver(eqx.Module):
         Uses CLASS-style initial conditions with metric perturbations h and η.
         Assumes adiabatic initial conditions with vanishing isocurvature modes.
         """
+        BG, params = args
         ### CLASS Initial Conditions ###
         a = jnp.exp(lna_ini)
-        tau_ini = self.BG.tau(lna_ini)
+        tau_ini = BG.tau(lna_ini)
  
-        rho_crit = 3*self.params["H0"]**2 / 8. / jnp.pi / cnst.G # Crit density today, eV/cm^3
-        rho_m = self.params["omega_m"]/self.params["h"]**2 * rho_crit / a**3
-        rho_r = self.params["omega_r"]/self.params["h"]**2 * rho_crit / a**4
+        rho_crit = 3*params["H0"]**2 / 8. / jnp.pi / cnst.G # Crit density today, eV/cm^3
+        rho_m = params["omega_m"]/params["h"]**2 * rho_crit / a**3
+        rho_r = params["omega_r"]/params["h"]**2 * rho_crit / a**4
 
         om = a*rho_m/jnp.sqrt(rho_r) * jnp.sqrt(8.*jnp.pi*cnst.G/3.) / cnst.c_Mpc_over_s # In units of 1/Mpc
 
-        metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*self.params['R_nu'])*(5.+4.*self.params['R_nu'] - (16.*self.params['R_nu']*self.params['R_nu']+280.*self.params['R_nu']+325)/10./(2.*self.params['R_nu']+15.)*tau_ini*om))
+        metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*params['R_nu'])*(5.+4.*params['R_nu'] - (16.*params['R_nu']*params['R_nu']+280.*params['R_nu']+325)/10./(2.*params['R_nu']+15.)*tau_ini*om))
         metric_h_ini   = 0.5 * (k * tau_ini)**2 * (1.-om*tau_ini/5.)
 
-        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, self.params) for p in self.perturbations_list])
+        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, params) for p in self.perturbations_list])
         y_ini = jnp.concatenate((jnp.array([metric_h_ini, metric_eta_ini]), all_fluid_ini))
         
         return y_ini
@@ -226,9 +229,9 @@ class PerturbationEvolver(eqx.Module):
         array
             Time derivatives of perturbation state
         """
-        k = args
+        k, BG, params = args # CG: !!
         a  = jnp.exp(lna)
-        aH = self.BG.aH(lna)
+        aH = BG.aH(lna, params)
         metric_h   = y[0]
         metric_eta = y[1]
 
@@ -239,9 +242,9 @@ class PerturbationEvolver(eqx.Module):
         for i in range(len(self.perturbations_list)):
             species = self.perturbations_list[i]
             # If species has density perturbation, add to total.
-            sum_rho_delta += species.rho_delta(lna, y, self.params)
+            sum_rho_delta += species.rho_delta(lna, y, params)
             # If species has velocity perturbation, add to total.
-            sum_rho_plus_P_theta += species.rho_plus_P_theta(lna, y, self.params)
+            sum_rho_plus_P_theta += species.rho_plus_P_theta(lna, y, params)
 
         metric_h_prime   = 2./aH**2 * (k**2*metric_eta + 4.*jnp.pi*cnst.G*a**2/cnst.c_Mpc_over_s**2 * sum_rho_delta)
         metric_eta_prime = 4.*jnp.pi*cnst.G*a**2/aH/k**2 * sum_rho_plus_P_theta / cnst.c_Mpc_over_s**2
@@ -250,12 +253,11 @@ class PerturbationEvolver(eqx.Module):
         y_prime = jnp.array([metric_h_prime, metric_eta_prime])
         for i in range(len(self.perturbations_list)):
             species = self.perturbations_list[i]
-            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, self.params, self.BG)))
+            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, params, BG)))
 
         return y_prime
 
-    @jax.named_scope("evolution_one_k_no_tca")
-    def evolution_one_k(self, k):
+    def evolution_one_k(self, k, args):
         """
         Evolve perturbations for single wavenumber mode.
 
@@ -273,9 +275,10 @@ class PerturbationEvolver(eqx.Module):
             Dense solution object for interpolation
 
         """
+        BG, params = args
         ### DIFFRAX INTEGRATION ###
 
-        lna_start, lna_tca_off = self.get_tca_on_off(k) # Start and end times from tight coupling settings
+        lna_start, lna_tca_off = self.get_tca_on_off(k, args) # Start and end times from tight coupling settings
         lna_end = 0.0
 
         # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
@@ -283,7 +286,7 @@ class PerturbationEvolver(eqx.Module):
         lna_start = jnp.minimum(lna_start,-10.0)
     
         # Initial conditions for tight coupling
-        y_ini = self.initial_conditions_one_k(k, lna_start)
+        y_ini = self.initial_conditions_one_k(k, lna_start, args)
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
@@ -299,7 +302,7 @@ class PerturbationEvolver(eqx.Module):
             stepsize_controller=stepsize_controller,
             max_steps=2048,
             saveat=saveat,
-            args=k,
+            args=(k,*args),
             adjoint=adjoint
         )
 
@@ -308,7 +311,7 @@ class PerturbationEvolver(eqx.Module):
         return sol
         #return vmap(sol.evaluate)(lna)
 
-    def evolution_one_k_scan(self, k, lna):
+    def evolution_one_k_scan(self, k, lna, args):
         """
         Evolve perturbations for single wavenumber mode.
 
@@ -328,7 +331,7 @@ class PerturbationEvolver(eqx.Module):
         """
         ### DIFFRAX INTEGRATION ###
 
-        lna_start, lna_tca_off = self.get_tca_on_off(k) # Start and end times from tight coupling settings
+        lna_start, lna_tca_off = self.get_tca_on_off(k, args) # Start and end times from tight coupling settings
         lna_end = 0.0
 
         # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
@@ -353,7 +356,7 @@ class PerturbationEvolver(eqx.Module):
             stepsize_controller=stepsize_controller,
             max_steps=2048,
             saveat=saveat,
-            args=k,
+            args=(k,*args),
             adjoint=adjoint
         )
 
@@ -361,7 +364,7 @@ class PerturbationEvolver(eqx.Module):
 
         return vmap(sol.evaluate)(lna)
 
-    def make_output_table(self, k, lna, modes):
+    def make_output_table(self, k, lna, modes, args):
         """
         Create interpolatable perturbation table from evolution results.
 
@@ -382,6 +385,7 @@ class PerturbationEvolver(eqx.Module):
             Organized perturbation data for interpolation
 
         """
+        BG, params = args
         CDM    = self.perturbations_list[-4]
         Baryon = self.perturbations_list[-3]
         Photon = self.perturbations_list[-2]
@@ -401,10 +405,10 @@ class PerturbationEvolver(eqx.Module):
         # Now the stuff that needs to be backwards calculated.
         karr = k[None, :]
         a  = jnp.exp(lna)[:, None]
-        aH = self.BG.aH(lna)[:, None]
-        cs2 = Baryon.cs2(lna, self.params, self.BG)[:, None]
-        R = 4.*Photon.rho(lna, self.params)[:, None]/3./Baryon.rho(lna, self.params)[:, None]
-        tau_c = self.BG.tau_c(lna)[:, None]
+        aH = BG.aH(lna, params)[:, None]
+        cs2 = Baryon.cs2(lna, params, BG)[:, None]
+        R = 4.*Photon.rho(lna, params)[:, None]/3./Baryon.rho(lna, params)[:, None]
+        tau_c = BG.tau_c(lna, params)[:, None]
 
         # Baryon velocity derivative is needed for CMB
         theta_b_prime = -theta_b + cs2/aH*(karr**2*delta_b) + R/aH/tau_c*(theta_g-theta_b)
@@ -416,9 +420,9 @@ class PerturbationEvolver(eqx.Module):
         sum_rho_plus_P_sigma = jnp.zeros_like(modes[0])
 
         for s in self.perturbations_list:
-            sum_rho_delta += vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, self.params)
-            sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, self.params)
-            sum_rho_plus_P_sigma += vmap(s.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, self.params)
+            sum_rho_delta += vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, params)
+            sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)
+            sum_rho_plus_P_sigma += vmap(s.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, params)
 
         # Metric perturbation derivatives
         metric_h_prime = 2./aH**2 * (karr**2*metric_eta + 4.*jnp.pi*cnst.G*a**2/cnst.c_Mpc_over_s**2 * sum_rho_delta)
