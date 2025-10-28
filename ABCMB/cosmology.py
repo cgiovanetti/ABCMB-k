@@ -48,7 +48,7 @@ class Background(eqx.Module):
     visibility : Compute visibility function (units: Mpc^{-1})
     """
 
-    params : dict
+    # params : dict
     species_list : tuple
  
     lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000) # Axis for tabulating conformal time.
@@ -70,7 +70,7 @@ class Background(eqx.Module):
     lna_transfer_start : float # Time where transfer functions start integrating.
     lna_visibility_stop : float # Time to stop integrating T1, T2, and E sources due to small visibility functions. Only used for l<400
 
-    def __init__(self, params, species_list, RM):
+    def __init__(self,params, species_list, RM):
         """
         Initialize Background cosmology module.
 
@@ -86,35 +86,35 @@ class Background(eqx.Module):
         RM : callable
             Recombination module for computing xe and Tm histories
         """
-        self.params = params
+        # self.params = params
         self.species_list = species_list
 
-        self.tau_tab = self._tabulate_conformal_time()
+        self.tau_tab = self._tabulate_conformal_time(params)
         self.tau0 = self.tau(0.)
         
         ### RECOMBINATION RELATED ###
 
         # Run hyrex to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM(self,z_reion = params["z_reion"], 
+        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
                                                                         Delta_z_reion = params["Delta_z_reion"], 
                                                                         z_reion_He = params["z_reion_He"], 
                                                                         Delta_z_reion_He = params["Delta_z_reion_He"])
-        self.kappa_func = self._tabulate_optical_depth()
+        self.kappa_func = self._tabulate_optical_depth(params)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
-        vis_vals = vmap(self.visibility)(lna_vals)
+        vis_vals = vmap(self.visibility,in_axes=[0,None])(lna_vals, params)
         self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
 
         # Find approximate early time when aH x tau_c = 0.008
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
-        aH_tau_c_vals = vmap(self.aH)(lna_vals)*self.tau_c(lna_vals)
+        aH_tau_c_vals = vmap(self.aH,in_axes=[0,None])(lna_vals,params)*self.tau_c(lna_vals,params)
         self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
 
 
-    def rho_tot(self, lna):
+    def rho_tot(self, lna, params):
         """
         Compute total energy density.
 
@@ -136,10 +136,10 @@ class Background(eqx.Module):
         """
         rho_tot = 0.
         for i in range(len(self.species_list)):
-            rho_tot += self.species_list[i].rho(lna, self.params)
+            rho_tot += self.species_list[i].rho(lna, params)
         return rho_tot
     
-    def P_tot(self, lna):
+    def P_tot(self, lna, params):
         """
         Compute total pressure.
 
@@ -161,10 +161,10 @@ class Background(eqx.Module):
         """
         P_tot = 0.
         for i in range(len(self.species_list)):
-            P_tot += self.species_list[i].P(lna, self.params)
+            P_tot += self.species_list[i].P(lna, params)
         return P_tot
 
-    def H(self, lna):
+    def H(self, lna, params):
         """
         Compute Hubble parameter.
 
@@ -181,9 +181,9 @@ class Background(eqx.Module):
         float
             Hubble parameter (units: s^{-1})
         """
-        return jnp.sqrt(8.*jnp.pi*cnst.G*self.rho_tot(lna)/3.)
+        return jnp.sqrt(8.*jnp.pi*cnst.G*self.rho_tot(lna, params)/3.)
 
-    def aH(self, lna):
+    def aH(self, lna, params):
         """
         Compute conformal Hubble parameter.
 
@@ -200,9 +200,9 @@ class Background(eqx.Module):
         float
             Conformal Hubble parameter (units: Mpc^{-1})
         """
-        return jnp.exp(lna)*self.H(lna) / cnst.c_Mpc_over_s
+        return jnp.exp(lna)*self.H(lna, params) / cnst.c_Mpc_over_s
     
-    def aH_prime(self, lna):
+    def aH_prime(self, lna, params):
         """
         Compute derivative of conformal Hubble parameter.
 
@@ -219,9 +219,9 @@ class Background(eqx.Module):
         float
             Derivative of conformal Hubble (units: Mpc^{-1})
         """
-        return -4.*jnp.pi*cnst.G*jnp.exp(lna)**2/3./self.aH(lna) * (self.rho_tot(lna)+3.*self.P_tot(lna)) / cnst.c_Mpc_over_s**2
+        return -4.*jnp.pi*cnst.G*jnp.exp(lna)**2/3./self.aH(lna, params) * (self.rho_tot(lna,params)+3.*self.P_tot(lna, params)) / cnst.c_Mpc_over_s**2
 
-    def d2adtau2_over_a(self, lna):
+    def d2adtau2_over_a(self, lna, params):
         """
         Compute second derivative of scale factor.
 
@@ -239,7 +239,7 @@ class Background(eqx.Module):
             Second derivative of scale factor (units: Mpc^{-2})
         """
 
-        return self.aH(lna)**2 + self.aH(lna)*self.aH_prime(lna)
+        return self.aH(lna, params)**2 + self.aH(lna, params)*self.aH_prime(lna, params)
     
     def _dtau_dlna(self, lna, y, args):
         """
@@ -259,9 +259,10 @@ class Background(eqx.Module):
         float
             Derivative dτ/d(ln a) (units: Mpc)
         """
-        return 1./self.aH(lna)
+        params = args
+        return 1./self.aH(lna, params)
 
-    def _tabulate_conformal_time(self):
+    def _tabulate_conformal_time(self, params):
         """
         Tabulate conformal time as function of ln(a).
 
@@ -281,7 +282,7 @@ class Background(eqx.Module):
         lna_cut = -16.1  # use analytic approx before this
         # Analytic early-time approximation
         tau_approx = lambda lna: (
-            jnp.exp(lna) / (cnst.H0_over_h / cnst.c_Mpc_over_s) / jnp.sqrt(self.params["omega_r"])
+            jnp.exp(lna) / (cnst.H0_over_h / cnst.c_Mpc_over_s) / jnp.sqrt(params["omega_r"])
         )
 
         lna_end = self.lna_tau_tab[-1]
@@ -301,6 +302,7 @@ class Background(eqx.Module):
             y0=tau_approx(lna_cut),
             saveat=saveat,
             stepsize_controller=controller,
+            args=params,
             adjoint=adjoint
         )
 
@@ -396,7 +398,7 @@ class Background(eqx.Module):
             )
         )
 
-    def _Tm_early_approx(self, lna):
+    def _Tm_early_approx(self, lna, params):
         """
         Compute matter temperature using post-equilibrium approximation.
 
@@ -413,11 +415,11 @@ class Background(eqx.Module):
         float
             Matter temperature (units: eV)
         """
-        TCMB = self.TCMB(lna)
+        TCMB = self.TCMB(lna, params)
         xe   = self.xe(lna)
-        return TCMB * (1.-self.H(lna)/recomb_functions.Gamma_compton(xe, TCMB, self.params['YHe']))
+        return TCMB * (1.-self.H(lna,params)/recomb_functions.Gamma_compton(xe, TCMB, params['YHe']))
 
-    def Tm(self, lna):
+    def Tm(self, lna, params):
         """
         Compute matter temperature.
 
@@ -436,7 +438,7 @@ class Background(eqx.Module):
         """
         return jnp.where(
             lna < self.lna_Tm_tab.arr[0],
-            self._Tm_early_approx(lna),
+            self._Tm_early_approx(lna, params),
             jnp.where(
                 lna >= self.lna_Tm_tab.lastval,
                 self.Tm_tab.lastval,
@@ -446,7 +448,7 @@ class Background(eqx.Module):
             )
         )
 
-    def nH(self, lna):
+    def nH(self, lna, params):
         """
         Compute hydrogen number density.
 
@@ -462,9 +464,9 @@ class Background(eqx.Module):
         float
             Hydrogen number density (units: cm^{-3})
         """
-        return (1-self.params['YHe']) * 3. * self.params['omega_b'] * cnst.H0_over_h**2 / 8 / jnp.pi / cnst.G / cnst.mH / jnp.exp(lna)**3
+        return (1-params['YHe']) * 3. * params['omega_b'] * cnst.H0_over_h**2 / 8 / jnp.pi / cnst.G / cnst.mH / jnp.exp(lna)**3
 
-    def TCMB(self,lna):
+    def TCMB(self,lna, params):
         """
         Compute CMB temperature.
 
@@ -480,9 +482,9 @@ class Background(eqx.Module):
         float
             CMB temperature (units: eV)
         """
-        return self.params['TCMB0'] / jnp.exp(lna)
+        return params['TCMB0'] / jnp.exp(lna)
 
-    def tau_c(self, lna):
+    def tau_c(self, lna, params):
         """
         Compute Thomson scattering time.
 
@@ -499,12 +501,11 @@ class Background(eqx.Module):
             Thomson scattering time (units: Mpc)
         """
         a = jnp.exp(lna)
-        nH = self.nH(lna)
+        nH = self.nH(lna, params)
         ne = nH * self.xe(lna)
         return 1./a/ne/cnst.thomson_xsec/cnst.c*cnst.c_Mpc_over_s
 
-    @jax.named_scope("tabulate optical depth")
-    def _tabulate_optical_depth(self):
+    def _tabulate_optical_depth(self, params):
         """
         Tabulate optical depth from given scale factor to today.
 
@@ -521,7 +522,7 @@ class Background(eqx.Module):
         Also computes time derivative of optical depth, which is the
         integrand involving the free electron fraction.
         """
-        integrand = lambda lna, y, args: -1./self.tau_c(lna)/self.aH(lna)
+        integrand = lambda lna, y, args: -1./self.tau_c(lna, params)/self.aH(lna, params)
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
         adjoint=ForwardMode()
@@ -567,7 +568,7 @@ class Background(eqx.Module):
             jnp.exp(-self.kappa_func.evaluate(lna))
         )
 
-    def visibility(self, lna):
+    def visibility(self, lna, params):
         """
         Compute visibility function.
 
@@ -589,8 +590,8 @@ class Background(eqx.Module):
         ------
         Used in computing source functions for CMB anisotropies.
         """
-        #return 1./self.tau_c(lna)*jnp.exp(-self.kappa(lna))
-        return self.expmkappa(lna)/self.tau_c(lna)
+        #return 1./self.tau_c(lna, params)*jnp.exp(-self.kappa(lna))
+        return self.expmkappa(lna)/self.tau_c(lna, params)
 
     ###########################################
     ### tools for computing decoupling time ###
@@ -647,7 +648,7 @@ class Background(eqx.Module):
         rs_sorted = r_s[idx]
         return jnp.interp(z_d, z_sorted, rs_sorted)
 
-    def R_ratio_lna(self,lna):
+    def R_ratio_lna(self,lna, params):
         """
         Compute baryon drag ratio.
 
@@ -664,12 +665,12 @@ class Background(eqx.Module):
         float
             Baryon drag ratio (units: dimensionless)
         """
-        rho_b = self.species_list[-3].rho(lna,self.params)
-        rho_g = self.species_list[-2].rho(lna,self.params)
+        rho_b = self.species_list[-3].rho(lna,params)
+        rho_g = self.species_list[-2].rho(lna,params)
         return 3. * rho_b / (4 * rho_g)
 
     @jax.named_scope("tabulate kappa d")
-    def _tabulate_kappa_d(self):
+    def _tabulate_kappa_d(self, params):
         """
         Tabulate baryon optical depth.
 
@@ -681,7 +682,7 @@ class Background(eqx.Module):
         array
             Tabulated baryon optical depth values (units: dimensionless)
         """
-        integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna)/self.aH(lna)/(self.R_ratio_lna(lna)))
+        integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna, params)/self.aH(lna, params)/(self.R_ratio_lna(lna)))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=ForwardMode()
@@ -702,7 +703,7 @@ class Background(eqx.Module):
         return result
 
     @jax.named_scope("tabulate rs")
-    def _tabulate_rs(self):
+    def _tabulate_rs(self, params):
         """
         Tabulate sound horizon evolution.
 
@@ -715,9 +716,9 @@ class Background(eqx.Module):
             Tabulated sound horizon values (units: Mpc)
         """
          # initial condition assuming cs**2 = 1/3 at early times
-        rs0 = 1./jnp.sqrt(3) / (self.aH( self.lna_tau_tab[0] ))
+        rs0 = 1./jnp.sqrt(3) / (self.aH( self.lna_tau_tab[0], params ))
 
-        integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna))) / (self.aH( lna ))
+        integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna))) / (self.aH(lna, params))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=ForwardMode()

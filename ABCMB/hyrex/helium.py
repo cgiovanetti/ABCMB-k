@@ -61,7 +61,7 @@ class helium_model(eqx.Module):
         self.lna_axis_4Heequil = lna_axis_4Heequil
         self.concrete_axis_size = jnp.zeros(Nsteps)
 
-    def __call__(self, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def __call__(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute helium recombination history.
 
@@ -83,9 +83,9 @@ class helium_model(eqx.Module):
         tuple
             (xe_4He, lna_4He) - helium ionization fraction and log scale factor
         """
-        return self.get_helium_history(BG, rtol, atol, solver, max_steps)
+        return self.get_helium_history(args, rtol, atol, solver, max_steps)
     
-    def get_helium_history(self, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def get_helium_history(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete helium recombination history through all phases.
 
@@ -117,19 +117,19 @@ class helium_model(eqx.Module):
         # Compute xe at different phases
 
         # Give it a large enough array of lna to work with
-        xe_output_4He_equil, lna_output_4He_equil = self.xesaha_HeII_III(self.lna_axis_4Heequil, BG)
+        xe_output_4He_equil, lna_output_4He_equil = self.xesaha_HeII_III(self.lna_axis_4Heequil, args)
         
         xe_output_4He_equil_obj = array_with_padding(xe_output_4He_equil)
         lna_output_4He_equil_obj = array_with_padding(lna_output_4He_equil)
 
         # this one MUST start shifted by one redshift bin to avoid overlapping redshifts
-        xe_output_4He_postSaha, lna_output_4He_postSaha = self.post_saha_xHeII(lna_output_4He_equil_obj.lastval + self.integration_spacing, BG)
+        xe_output_4He_postSaha, lna_output_4He_postSaha = self.post_saha_xHeII(lna_output_4He_equil_obj.lastval + self.integration_spacing, args)
 
         xe_4He_equil_post = xe_output_4He_equil_obj.concat(array_with_padding(xe_output_4He_postSaha))
         lna_4He_equil_post = lna_output_4He_equil_obj.concat(array_with_padding(lna_output_4He_postSaha))
 
         xe_output_4He_full, lna_output_4He_full = self.solve_HeII_full(
-            lna_4He_equil_post.lastval, xe_4He_equil_post.lastval, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=4096)
+            lna_4He_equil_post.lastval, xe_4He_equil_post.lastval, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=4096)
 
         xe_4He = xe_4He_equil_post.concat(array_with_padding(xe_output_4He_full))
         lna_4He = lna_4He_equil_post.concat(array_with_padding(lna_output_4He_full))
@@ -145,7 +145,7 @@ class helium_model(eqx.Module):
 
     # High tempateratures (z >~ 4000).  Function to calculate xe in He II + III equilibrium
     # We use this form until xHeIII is 1e-9
-    def xesaha_HeII_III(self, lna_axis, BG, threshold=1e-9):
+    def xesaha_HeII_III(self, lna_axis, args, threshold=1e-9):
         """
         Compute xe in HeII+III equilibrium phase.
 
@@ -166,6 +166,7 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
+        BG, params = args
         # Pre-allocate xe_output
         xe_output = jnp.ones_like(lna_axis)*jnp.inf
         lna_output = jnp.ones_like(lna_axis)*jnp.inf
@@ -179,11 +180,11 @@ class helium_model(eqx.Module):
             lna = lna_axis[iz]
 
             # Cosmological parameters
-            TCMB = BG.TCMB(lna)
-            nH = BG.nH(lna)
+            TCMB = BG.TCMB(lna, params)
+            nH = BG.nH(lna, params)
  
             # compute xHeIII
-            fHe = BG.params['YHe']/(1.-BG.params['YHe'])/3.97153 # abundance of helium by number
+            fHe = params['YHe']/(1.-params['YHe'])/3.97153 # abundance of helium by number
             # Saha ratio xe * xHeIII / xHeII
             s = 2.414194e15 * TCMB/cnst.kB * jnp.sqrt(TCMB/cnst.kB) * jnp.exp(-631462.7 / (TCMB/cnst.kB)) / nH
             xHeIII = 2 * s * fHe / (1 + s + fHe) / (1 + jnp.sqrt(1 + 4 * s * fHe / (1 + s + fHe)**2))
@@ -218,7 +219,7 @@ class helium_model(eqx.Module):
         return xe_output_final, lna_output_final
 
 
-    def xHeII_post_Saha(self, lna, BG):
+    def xHeII_post_Saha(self, lna, args):
         """
         Compute HeII fraction in post-Saha regime.
 
@@ -236,10 +237,11 @@ class helium_model(eqx.Module):
         float
             HeII fraction (units: dimensionless)
         """
-        fHe = BG.params['YHe']/(1.-BG.params['YHe'])/3.97153
+        BG, params = args
+        fHe = params['YHe']/(1.-params['YHe'])/3.97153
 
-        TCMB = BG.TCMB(lna)
-        nH = BG.nH(lna)
+        TCMB = BG.TCMB(lna, params)
+        nH = BG.nH(lna, params)
 
         # Saha ratio xe * xHeII / xHeI
         s = 4 * 2.414194e15 * TCMB/cnst.kB * jnp.sqrt(TCMB/cnst.kB) * jnp.exp(-285325. / (TCMB/cnst.kB)) / nH
@@ -247,7 +249,7 @@ class helium_model(eqx.Module):
 
         return xHeII
 
-    def xH1_Saha(self, lna, BG):
+    def xH1_Saha(self, lna, args):
         """
         Compute neutral hydrogen fraction in Saha equilibrium.
 
@@ -266,9 +268,10 @@ class helium_model(eqx.Module):
         float
             Neutral hydrogen fraction (units: dimensionless)
         """
-        TCMB = BG.TCMB(lna)
-        nH = BG.nH(lna)    
-        xHeII = self.xHeII_post_Saha(lna, BG)
+        BG, params = args
+        TCMB = BG.TCMB(lna, params)
+        nH = BG.nH(lna, params)    
+        xHeII = self.xHeII_post_Saha(lna, args)
         s = 2.4127161187130e15* TCMB/cnst.kB * jnp.sqrt(TCMB/cnst.kB)*jnp.exp(-157801.37882/(TCMB/cnst.kB))/nH
         xH1 = jnp.where(s>1e5,(1.+xHeII)/s - (xHeII**2 + 3.*xHeII + 2.)/s**2,\
             jnp.where(s==0,1,1.-2./(1.+ xHeII/s + jnp.sqrt((1.+ xHeII/s)*(1.+ xHeII/s) +4./s))))
@@ -276,7 +279,7 @@ class helium_model(eqx.Module):
 
     # xHeII near equilibrium
     # Returns xHeII-->xe (98 of 1011.3758).  Integrate until delta x_e ~ 1e-5
-    def post_saha_xHeII(self, starting_lna, BG, threshold=1e-5):
+    def post_saha_xHeII(self, starting_lna, args, threshold=1e-5):
         """
         Compute post-Saha HeII expansion phase.
 
@@ -297,6 +300,7 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
+        BG, params = args
         # Pre-allocate xe_output
         xe_output = jnp.ones_like(self.concrete_axis_size_postSahaHe)*jnp.inf
         lna_output = jnp.ones_like(self.concrete_axis_size_postSahaHe)*jnp.inf
@@ -309,14 +313,14 @@ class helium_model(eqx.Module):
 
             lna = starting_lna + iz*self.integration_spacing
             
-            xHeII = self.xHeII_post_Saha(lna, BG)
-            xH1 = self.xH1_Saha(lna, BG)
+            xHeII = self.xHeII_post_Saha(lna, args)
+            xH1 = self.xH1_Saha(lna, args)
             xe_saha = 1 - xH1 + xHeII
             
             # Do post saha expansion.  Assume all hydrogen is ionized.
             grad_dxedlna_func = grad(self.helium_dxHeIIdlna, argnums=0) 
-            grad_dxedlna = grad_dxedlna_func(xe_saha, lna, BG)
-            dxe_Saha_dlna = grad(self.xHeII_post_Saha,argnums=0)(lna, BG)
+            grad_dxedlna = grad_dxedlna_func(xe_saha, lna, args)
+            dxe_Saha_dlna = grad(self.xHeII_post_Saha,argnums=0)(lna, args)
             xe = xe_saha + dxe_Saha_dlna / grad_dxedlna
 
             # Store current xe value in the output array
@@ -348,7 +352,7 @@ class helium_model(eqx.Module):
         # Return the electron fraction array and the stopping `lna` value
         return xe_output_final, lna_output_final
 
-    def helium_dxHeIIdlna(self, xe, lna, BG):
+    def helium_dxHeIIdlna(self, xe, lna, args):
         """
         Compute HeII recombination rate.
 
@@ -369,18 +373,19 @@ class helium_model(eqx.Module):
         float
             HeII recombination rate dxHeII/dlna (units: dimensionless)
         """
+        BG, params = args
 
-        fHe = BG.params['YHe']/(1.-BG.params['YHe'])/3.97153 # abundance of helium by number
+        fHe = params['YHe']/(1.-params['YHe'])/3.97153 # abundance of helium by number
 
         # cosmology
         #lna = -jnp.log(1+z)
-        TCMB = BG.TCMB(lna)      # eV
-        nH = BG.nH(lna)  # hydrogen number density, 1/cm^3
-        H = BG.H(lna)  # Hubble parameter, 1/s
-        GammaC = recomb_functions.Gamma_compton(xe, TCMB, BG.params['YHe'])  # Compton scattering rate, 1/s
+        TCMB = BG.TCMB(lna, params)      # eV
+        nH = BG.nH(lna, params)  # hydrogen number density, 1/cm^3
+        H = BG.H(lna, params)  # Hubble parameter, 1/s
+        GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         # compute xH1 in Saha equilibrium, xHeII in post-saha
-        xH1 = self.xH1_Saha(lna, BG)
+        xH1 = self.xH1_Saha(lna, args)
         # use xe  = xHeII + (1.-xH1)
         xHeII = xe - (1.-xH1)
 
@@ -448,14 +453,14 @@ class helium_model(eqx.Module):
             Time derivative of HeII fraction (units: dimensionless)
         """
         
-        BG = args
+        BG, params = args
         #z = 1. / jnp.exp(lna) - 1.
         # use xe  = xHeII + (1.-xH1)
-        xe = state + self.xH1_Saha(lna, BG)
+        xe = state + self.xH1_Saha(lna, args)
 
-        return self.helium_dxHeIIdlna(xe, lna, BG)
+        return self.helium_dxHeIIdlna(xe, lna, args)
 
-    def solve_HeII_full(self, starting_lna, xe0, BG, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def solve_HeII_full(self, starting_lna, xe0, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Solve full HeII recombination evolution.
 
@@ -484,9 +489,10 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
+        BG, params = args
 
         # Initial conditions
-        TCMB_init = BG.TCMB(starting_lna)  # Initial matter temperature
+        TCMB_init = BG.TCMB(starting_lna, params)  # Initial matter temperature
         initial_state = jnp.array([xe0])
         term = ODETerm(self.xe_derivative_HeII)
 
@@ -501,7 +507,7 @@ class helium_model(eqx.Module):
 
         def He_check(t, y, args, **kwargs):
             lna = t
-            xH1 = self.xH1_Saha(lna, BG)
+            xH1 = self.xH1_Saha(lna, args)
 
             # use xe  = xHeII + (1.-xH1)
             # y is current state, [0] flattens jnp.array
@@ -513,7 +519,7 @@ class helium_model(eqx.Module):
         sol = diffeqsolve(
             term, solver, t0=t0, t1=t1, dt0=1e-3, 
             y0=initial_state, 
-            args=BG,
+            args=args,
             stepsize_controller=PIDController(rtol, atol),saveat=save_at,
             event = event,
             adjoint=adjoint

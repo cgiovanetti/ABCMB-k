@@ -282,7 +282,7 @@ class SpectrumSolver(eqx.Module):
         """
         a = jnp.exp(lna)
         z = 1./a - 1.
-        aH = BG.aH(lna)
+        aH = BG.aH(lna, params)
 
         Omega_m = params["omega_m"]/params["h"]**2
         Omega_L = params["omega_Lambda"]/params["h"]**2
@@ -325,7 +325,7 @@ class SpectrumSolver(eqx.Module):
         def integrand_func(lna):
             k = (ells+0.5)/chi(lna)
             window = (chi(BG.lna_rec) - chi(lna))/chi(BG.lna_rec)/chi(lna)
-            res = chi(lna)/BG.aH(lna) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
+            res = chi(lna)/BG.aH(lna, params) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
             return res
 
         lna_axis = jnp.linspace(BG.lna_rec, 0., 4000)
@@ -500,25 +500,26 @@ class SpectrumSolver(eqx.Module):
 
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
-        ells = bessel_l_tab[self.ells_indices]
-        return ells, tt_raw, te_raw, ee_raw
+        # ells = bessel_l_tab[self.ells_indices]
+        # return ells, tt_raw, te_raw, ee_raw
+        return tt_raw, te_raw, ee_raw
 
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
+        # tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
+        # te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
+        # ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
 
-        def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+        # def get_lensed_Cls():
+        #     return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
 
-        def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
+        # def get_unlensed_Cls():
+        #     return (tt_unlensed, te_unlensed, ee_unlensed)
 
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
-        return lax.cond(
-            self.lensing,
-            get_lensed_Cls,
-            get_unlensed_Cls
-        )
+        # #return (tt_unlensed, te_unlensed, ee_unlensed)
+        # return lax.cond(
+        #     self.lensing,
+        #     get_lensed_Cls,
+        #     get_unlensed_Cls
+        # )
         #return get_lensed_Cls()
 
     def Cl_one_ell(self, idx, PT, BG, params):
@@ -558,11 +559,11 @@ class SpectrumSolver(eqx.Module):
         # Background quantities, all Nlna 1D vectors
         tau0 = BG.tau0
         tau = BG.tau(lna_axis)
-        g   = vmap(BG.visibility)(lna_axis)
-        g_prime = vmap(grad(BG.visibility))(lna_axis) # Derivative of g w.r.t. lna
-        aH  = BG.aH(lna_axis)
+        g   = vmap(BG.visibility,in_axes=[0,None])(lna_axis, params)
+        g_prime = vmap(grad(BG.visibility,argnums=0),in_axes=[0,None])(lna_axis, params) # Derivative of g w.r.t. lna
+        aH  = BG.aH(lna_axis, params)
         expmkappa = vmap(BG.expmkappa)(lna_axis)
-        aH_dot = BG.aH_prime(lna_axis) * aH # Derivative of aH w.r.t. conformal time tau.
+        aH_dot = BG.aH_prime(lna_axis, params) * aH # Derivative of aH w.r.t. conformal time tau.
 
         g         = g[:, None]
         g_prime   = g_prime[:, None]
@@ -571,7 +572,7 @@ class SpectrumSolver(eqx.Module):
         aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        #interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        # interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator

@@ -67,7 +67,7 @@ class recomb_model(eqx.Module):
 
         self.idx_4He_equil = jnp.where(self.lna_axis_full <= -jnp.log(self.He4equil_redshift))[0]
 
-    def __call__(self, BG,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def __call__(self, args,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
 
@@ -100,9 +100,9 @@ class recomb_model(eqx.Module):
             (xe_full_reion, lna_full, Tm, lna_Tm) - complete ionization history
             with reionization, log scale factor, matter temperature, and temperature grid
         """
-        return self.get_history(BG, z_reion, Delta_z_reion, z_reion_He, Delta_z_reion_He, exp_reion, rtol, atol, solver, max_steps)
+        return self.get_history(args, z_reion, Delta_z_reion, z_reion_He, Delta_z_reion_He, exp_reion, rtol, atol, solver, max_steps)
     
-    def get_history(self, BG,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5,rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def get_history(self, args,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5,rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
 
@@ -140,14 +140,15 @@ class recomb_model(eqx.Module):
             matter temperature, and temperature grid
         """
 
+        BG, params = args
         lna_axis_4Heequil  = self.lna_axis_full[self.idx_4He_equil]
 
-        xe_4He, lna_4He = helium_model(lna_axis_4Heequil)(BG)
-        xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift)(BG)
+        xe_4He, lna_4He = helium_model(lna_axis_4Heequil)(args)
+        xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift)(args)
 
         ### Hydrogen Reionization ###
         # We patch a simple tanh solution to the tail of the electron fraction result.
-        fHe = BG.params['YHe'] / 4 / (1-BG.params['YHe'])
+        fHe = params['YHe'] / 4 / (1-params['YHe'])
         z = 1/jnp.exp(lna_full.arr) - 1
         y = (1+z)**(exp_reion)
 
