@@ -88,7 +88,7 @@ class PerturbationEvolver(eqx.Module):
             Interpolatable table of perturbation evolution
         """
         BG, params = args
-        lna = jnp.linspace(self.BG.lna_transfer_start, 0., 500)  # lna_end hardcoded
+        lna = jnp.linspace(BG.lna_transfer_start, 0., 500)  # lna_end hardcoded
         #lna = jnp.linspace(-14., 0., 1000)
         k = jnp.geomspace(1.e-4, 0.4, 300)
         #k = jnp.array([1.e-3, 1.e-2, 1.e-1])
@@ -340,7 +340,7 @@ class PerturbationEvolver(eqx.Module):
         lna_start = jnp.minimum(lna_start, -10.)
     
         # Initial conditions for tight coupling
-        y_ini = self.initial_conditions_one_k(k, lna_start)
+        y_ini = self.initial_conditions_one_k(k, lna_start, args)
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
