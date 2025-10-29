@@ -47,6 +47,11 @@ class PerturbationEvolver(eqx.Module):
         Integrates perturbation equations for a range of k modes,
         then interpolates results onto common time grid.
 
+        Parameters:
+        -----------
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
+
         Returns:
         --------
         PerturbationTable
@@ -82,6 +87,11 @@ class PerturbationEvolver(eqx.Module):
         Integrates perturbation equations for a range of k modes,
         then interpolates results onto common time grid.
 
+        Parameters:
+        -----------
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
+
         Returns:
         --------
         PerturbationTable
@@ -116,6 +126,8 @@ class PerturbationEvolver(eqx.Module):
         -----------
         k : float
             Wavenumber (units: Mpc^{-1})
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -178,6 +190,8 @@ class PerturbationEvolver(eqx.Module):
             Wavenumber (units: Mpc^{-1})
         lna_ini : float
             Initial logarithm of scale factor
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -221,8 +235,8 @@ class PerturbationEvolver(eqx.Module):
             Logarithm of scale factor
         y : array
             Current perturbation state vector
-        args : float
-            Wavenumber k (units: Mpc^{-1})
+        args : tuple
+            Wavenumber k and background cosmology (k, BG, params)
 
         Returns:
         --------
@@ -268,6 +282,8 @@ class PerturbationEvolver(eqx.Module):
         -----------
         k : float
             Wavenumber (units: Mpc^{-1})
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -322,6 +338,10 @@ class PerturbationEvolver(eqx.Module):
         -----------
         k : float
             Wavenumber (units: Mpc^{-1})
+        lna : array
+            Logarithm of scale factor grid for output
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -378,6 +398,8 @@ class PerturbationEvolver(eqx.Module):
             Logarithm of scale factor grid
         modes : array
             Perturbation evolution results
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -520,6 +542,12 @@ class PerturbationTable(eqx.Module):
 class MockPerturbationTable(PerturbationTable):
 
     def __init__(self):
+        """
+        Initialize mock perturbation table from saved test data.
+
+        Loads pre-computed perturbation evolution from Module_Tests directory
+        for testing and validation purposes.
+        """
         data = np.load(file_dir+"/../Module_Tests/perturbations.npz")
 
         super().__init__(

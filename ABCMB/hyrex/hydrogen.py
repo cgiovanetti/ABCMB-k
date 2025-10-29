@@ -89,8 +89,8 @@ class hydrogen_model(eqx.Module):
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -112,14 +112,14 @@ class hydrogen_model(eqx.Module):
         """
         Compute complete hydrogen recombination history through all phases.
 
-        Sequentially computes hydrogen ionization fraction through post-Saha 
-        expansion, HYREC-2 EMLA with two-photon processes, and late-time 
+        Sequentially computes hydrogen ionization fraction through post-Saha
+        expansion, HYREC-2 EMLA with two-photon processes, and late-time
         EMLA-only evolution phases.
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -191,8 +191,8 @@ class hydrogen_model(eqx.Module):
         -----------
         starting_lna : float
             Initial log scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         threshold : float, optional
             Threshold for deviation from Saha (default: 1e-5)
 
@@ -275,8 +275,8 @@ class hydrogen_model(eqx.Module):
             Log scale factor
         xe : float
             Current ionization fraction
-        args : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -313,8 +313,8 @@ class hydrogen_model(eqx.Module):
             Final log scale factor
         xe0 : float
             Initial ionization fraction
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance (default: 1e-6)
         atol : float, optional
@@ -380,8 +380,8 @@ class hydrogen_model(eqx.Module):
             Log scale factor
         state : array
             Current state [xe, Tm]
-        args : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -415,8 +415,8 @@ class hydrogen_model(eqx.Module):
             Log scale factor at which initial xe is given
         xe0 : float
             Initial ionization fraction
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance (default: 1e-7)
         atol : float, optional
@@ -429,7 +429,7 @@ class hydrogen_model(eqx.Module):
         Returns:
         --------
         tuple
-            (xe_output, Tm_output, lna_output) - ionization fraction, matter temperature, 
+            (xe_output, Tm_output, lna_output) - ionization fraction, matter temperature,
             and lna arrays
         """
         # Initial conditions
@@ -529,8 +529,8 @@ class hydrogen_model(eqx.Module):
         -----------
         TCMB : float
             CMB temperature (units: eV)
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -654,8 +654,8 @@ class hydrogen_model(eqx.Module):
             Log scale factor
         state : array
             Current state [xe, Tm]
-        args : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -697,8 +697,8 @@ class hydrogen_model(eqx.Module):
             Initial ionization fraction
         Tm0: float
             Starting matter temperature
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance (default: 1e-7)
         atol : float, optional
@@ -711,7 +711,7 @@ class hydrogen_model(eqx.Module):
         Returns:
         --------
         tuple
-            (xe_output, Tm_output, lna_output) - ionization fraction, matter temperature, 
+            (xe_output, Tm_output, lna_output) - ionization fraction, matter temperature,
             and log scale factor arrays
         """
         t0 = lna0

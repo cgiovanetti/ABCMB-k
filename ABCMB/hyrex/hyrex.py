@@ -73,8 +73,8 @@ class recomb_model(eqx.Module):
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         z_reion : float, optional
             Reionization redshift (default: 11)
         Delta_z_reion : float, optional
@@ -111,8 +111,8 @@ class recomb_model(eqx.Module):
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         z_reion : float, optional
             Reionization redshift of hydorgen and neutral helium (default: 11)
         Delta_z_reion : float, optional

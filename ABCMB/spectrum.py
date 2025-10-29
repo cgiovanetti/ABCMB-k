@@ -181,6 +181,31 @@ class SpectrumSolver(eqx.Module):
                  switch_isw=1,
                  switch_dop=1,
                  switch_pol=1):
+        """
+        Initialize CMB spectrum solver.
+
+        Sets up multipole range, lensing configuration, and source term switches
+        for computing angular power spectra.
+
+        Parameters:
+        -----------
+        ellmin : int, optional
+            Minimum multipole (default: 2)
+        ellmax : int, optional
+            Maximum multipole (default: 2500)
+        lensing : bool, optional
+            Whether to include lensing effects (default: True)
+        k_pivot : float, optional
+            Pivot scale for primordial spectrum (units: Mpc^{-1}, default: 0.05)
+        switch_sw : float, optional
+            Switch for Sachs-Wolfe term (default: 1)
+        switch_isw : float, optional
+            Switch for integrated Sachs-Wolfe term (default: 1)
+        switch_dop : float, optional
+            Switch for Doppler term (default: 1)
+        switch_pol : float, optional
+            Switch for polarization term (default: 1)
+        """
 
         self.ells = jnp.arange(ellmin, ellmax+1)
         ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
@@ -333,6 +358,34 @@ class SpectrumSolver(eqx.Module):
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
 
     def lensed_Cls(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, PT, BG, params):
+        """
+        Compute lensed CMB power spectra.
+
+        Applies gravitational lensing corrections to unlensed temperature
+        and polarization power spectra using Wigner rotation matrices.
+
+        Parameters:
+        -----------
+        ells : array
+            Multipole values
+        ClTT_unlensed : array
+            Unlensed temperature power spectrum
+        ClTE_unlensed : array
+            Unlensed temperature-E-mode cross spectrum
+        ClEE_unlensed : array
+            Unlensed E-mode polarization power spectrum
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        BG : cosmology.Background
+            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns:
+        --------
+        tuple
+            (ClTT, ClTE, ClEE) lensed power spectra
+        """
         #beta = jnp.linspace(0., jnp.pi/16., 5000)
         #mu = jnp.cos(beta)
         mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 1000)
@@ -460,6 +513,20 @@ class SpectrumSolver(eqx.Module):
     def get_Cl(self, PT, BG, params):
         """
         Compute angular power spectra for multiple multipoles using lax.scan.
+
+        Parameters:
+        -----------
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        BG : cosmology.Background
+            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns:
+        --------
+        tuple
+            (ClTT, ClTE, ClEE) angular power spectra
         """
 
         def scan_fun(_, idx):
@@ -495,7 +562,21 @@ class SpectrumSolver(eqx.Module):
 
     def get_Cl_vmap(self, PT, BG, params):
         """
-        Compute angular power spectra for multiple multipoles using lax.scan.
+        Compute angular power spectra for multiple multipoles using vmap.
+
+        Parameters:
+        -----------
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        BG : cosmology.Background
+            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns:
+        --------
+        tuple
+            (ClTT, ClTE, ClEE) angular power spectra
         """
 
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)

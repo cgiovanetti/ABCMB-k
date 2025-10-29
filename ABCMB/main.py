@@ -102,7 +102,30 @@ class Model(eqx.Module):
                  return_PTBG=False,
                  bbn_type = "",
                  linx_reaction_net = "key_PRIMAT_2023"
-                 ): 
+                 ):
+        """
+        Initialize Model instance.
+
+        Sets up fluid species, recombination model, and spectrum solver
+        based on configuration parameters.
+
+        Parameters:
+        -----------
+        ellmin : int, optional
+            Minimum multipole for CMB spectrum (default: 2)
+        ellmax : int, optional
+            Maximum multipole for CMB spectrum (default: 2500)
+        lensing : bool, optional
+            Whether to include lensing effects (default: False)
+        has_MassiveNeutrinos : bool, optional
+            Whether to include massive neutrinos (default: False)
+        return_PTBG : bool, optional
+            Whether to return perturbation table and background (default: False)
+        bbn_type : str, optional
+            BBN calculation method: "Table", "LINX", or "" for manual (default: "")
+        linx_reaction_net : str, optional
+            Nuclear reaction network for LINX (default: "key_PRIMAT_2023")
+        """
 
         self.SS = spectrum.SpectrumSolver(ellmin, ellmax, lensing, switch_sw=1., switch_isw=1., switch_dop=1., switch_pol=1.)
 

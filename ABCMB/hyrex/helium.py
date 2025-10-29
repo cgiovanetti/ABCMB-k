@@ -67,8 +67,8 @@ class helium_model(eqx.Module):
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -94,8 +94,8 @@ class helium_model(eqx.Module):
 
         Parameters:
         -----------
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -156,8 +156,8 @@ class helium_model(eqx.Module):
         -----------
         lna_axis : array
             Log scale factor grid
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         threshold : float, optional
             Threshold for HeIII fraction to stop calculation (default: 1e-9)
 
@@ -229,8 +229,8 @@ class helium_model(eqx.Module):
         -----------
         lna : float
             Log scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -260,8 +260,8 @@ class helium_model(eqx.Module):
         -----------
         lna : float
             Log scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -290,8 +290,8 @@ class helium_model(eqx.Module):
         -----------
         starting_lna : float
             Initial log scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         threshold : float, optional
             Threshold for deviation from Saha (default: 1e-5)
 
@@ -365,8 +365,8 @@ class helium_model(eqx.Module):
             Current total ionization fraction
         lna : float
             Log scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -444,8 +444,8 @@ class helium_model(eqx.Module):
             Log scale factor
         state : float
             Current HeII ionization state
-        args : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -473,8 +473,8 @@ class helium_model(eqx.Module):
             Initial log scale factor
         xe0 : float
             Initial ionization fraction
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
         rtol : float, optional
             Relative tolerance (default: 1e-6)
         atol : float, optional

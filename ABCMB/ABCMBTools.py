@@ -15,8 +15,26 @@ config.update("jax_enable_x64", True)
 
 def wigner_d_matrix(mu, ells, m, n):
     """
-    m, n are integers. m must be positive and greater than n.
-    ells an array ([m, m+1, m+2, ..., ellmax])
+    Compute Wigner d-matrix elements for rotation.
+
+    Recursively computes reduced Wigner d-matrix elements d^ell_{mn}(beta)
+    for CMB lensing calculations using three-term recurrence relation.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle beta
+    ells : array
+        Multipole values [m, m+1, m+2, ..., ellmax]
+    m : int
+        First index (must be positive and >= |n|)
+    n : int
+        Second index (must satisfy |n| <= m)
+
+    Returns:
+    --------
+    array
+        Wigner d-matrix elements, shape (len(mu), len(ells))
     """
     
     # base case: ell = m
@@ -54,42 +72,152 @@ def wigner_d_matrix(mu, ells, m, n):
     return vmap(one_mu)(mu)
 
 def d00(mu, ells):
+    """
+    Compute Wigner d-matrix elements d^ell_{00}.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle
+    ells : array
+        Multipole values starting from ell=2
+
+    Returns:
+    --------
+    array
+        d^ell_{00} elements for ells >= 2
+    """
     # ells go from (2, 3, 4, ..., ellmax)
     ells_patched = jnp.concatenate((jnp.array([0, 1]), ells))
     res = wigner_d_matrix(mu, ells_patched, 0, 0)
     return res[:, 2:] # Return only the ells >= 2
 
 def d1n(mu, ells, n):
+    """
+    Compute Wigner d-matrix elements d^ell_{1n}.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle
+    ells : array
+        Multipole values
+    n : int
+        Second index (|n| <= 1)
+
+    Returns:
+    --------
+    array
+        d^ell_{1n} elements
+    """
     # Wigner matrices where m=1, and |n|<=m.
     ells_patched = jnp.concatenate((jnp.array([1]), ells))
     res = wigner_d_matrix(mu, ells_patched, 1, n)
-    return res[:, 1:] 
+    return res[:, 1:]
 
 def d2n(mu, ells, n):
+    """
+    Compute Wigner d-matrix elements d^ell_{2n}.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle
+    ells : array
+        Multipole values
+    n : int
+        Second index (|n| <= 2)
+
+    Returns:
+    --------
+    array
+        d^ell_{2n} elements
+    """
     # Wigner matrices where m=2, and |n|<=m.
     res = wigner_d_matrix(mu, ells, 2, n)
     return res
 
 def d3n(mu, ells, n):
+    """
+    Compute Wigner d-matrix elements d^ell_{3n}.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle
+    ells : array
+        Multipole values
+    n : int
+        Second index (|n| <= 3)
+
+    Returns:
+    --------
+    array
+        d^ell_{3n} elements, zero-padded for ell < 3
+    """
     # Wigner matrices where m=3, and |n|<=m.
     ells_sliced = ells[1:] # Compute starting at ell=3
     res = wigner_d_matrix(mu, ells_sliced, 3, n)
     res_patched = jnp.concatenate((jnp.zeros((mu.size, 1)), res), axis=1) # Pad zeros for ell<3.
-    return res_patched 
+    return res_patched
 
 def d4n(mu, ells, n):
+    """
+    Compute Wigner d-matrix elements d^ell_{4n}.
+
+    Parameters:
+    -----------
+    mu : array
+        Cosine of rotation angle
+    ells : array
+        Multipole values
+    n : int
+        Second index (|n| <= 4)
+
+    Returns:
+    --------
+    array
+        d^ell_{4n} elements, zero-padded for ell < 4
+    """
     # Wigner matrices where m=4, and |n|<=m.
     ells_sliced = ells[2:] # Compute starting at ell=4
     res = wigner_d_matrix(mu, ells_sliced, 4, n)
     res_patched = jnp.concatenate((jnp.zeros((mu.size, 2)), res), axis=1) # Pad zeros for ell<4.
-    return res_patched 
+    return res_patched
 
 ### END OF WIGNER ROTATION FOR LENSING ###
 
 
 
 def fast_interp(x, xp_min, xp_max, fp):
-    # TODO : GIVE CREDITS TO https://github.com/jax-ml/jax/issues/16182!!!!!
+    """
+    Fast 1D linear interpolation for uniformly-spaced grids.
+
+    Optimized interpolation that avoids searchsorted by exploiting
+    uniform grid spacing. Significantly faster than jnp.interp for
+    large arrays.
+
+    Parameters:
+    -----------
+    x : float or array
+        Query points for interpolation
+    xp_min : float
+        Minimum value of interpolation grid
+    xp_max : float
+        Maximum value of interpolation grid
+    fp : array
+        Function values on uniform grid
+
+    Returns:
+    --------
+    float or array
+        Interpolated values at query points
+
+    Notes:
+    ------
+    Credit: JAX issue #16182 (https://github.com/jax-ml/jax/issues/16182)
+    Assumes fp is uniformly spaced between xp_min and xp_max.
+    """
     # The official jnp.interp is very slow becuase it uses searchsorted.
     # Therefore, we leverage the fact that the fp is linearly increasing, evenly spaced, and has a known range
     # to make this operation much faster.
@@ -105,6 +233,35 @@ def fast_interp(x, xp_min, xp_max, fp):
 
 
 def bilinear_interp(x, y, z, xq, yq):
+    """
+    Bilinear interpolation on 2D regular grid.
+
+    Performs bilinear interpolation to evaluate function at query point
+    (xq, yq) given values on a regular 2D grid.
+
+    Parameters:
+    -----------
+    x : array
+        1D array of x-coordinates (must be sorted)
+    y : array
+        1D array of y-coordinates (must be sorted)
+    z : array
+        2D array of function values, shape (len(y), len(x))
+    xq : float
+        Query x-coordinate
+    yq : float
+        Query y-coordinate
+
+    Returns:
+    --------
+    float
+        Interpolated value at (xq, yq)
+
+    Notes:
+    ------
+    Uses standard bilinear interpolation formula with four nearest
+    grid points.
+    """
     # find indices for x and y
     ix = jnp.clip(jnp.searchsorted(x, xq) - 1, 0, x.size - 2)
     iy = jnp.clip(jnp.searchsorted(y, yq) - 1, 0, y.size - 2)

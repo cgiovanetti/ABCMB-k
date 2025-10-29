@@ -34,8 +34,8 @@ class AbstractFluid(eqx.Module, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -56,8 +56,8 @@ class AbstractFluid(eqx.Module, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -78,8 +78,8 @@ class AbstractFluid(eqx.Module, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -99,8 +99,8 @@ class AbstractFluid(eqx.Module, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -145,8 +145,8 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
             Initial conformal time (units: Mpc)
         om : float
             Matter density parameter
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -174,8 +174,8 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
             Derivative of metric eta
         y : array
             Current perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -195,8 +195,8 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -216,8 +216,8 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -237,8 +237,8 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -271,8 +271,8 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -292,8 +292,8 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -317,8 +317,8 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -354,8 +354,8 @@ class DarkEnergy(AbstractFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -373,8 +373,8 @@ class DarkEnergy(AbstractFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -392,8 +392,8 @@ class DarkEnergy(AbstractFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -429,8 +429,8 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -448,8 +448,8 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -470,8 +470,8 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -497,8 +497,8 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
             Initial conformal time (units: Mpc)
         om : float
             Matter density parameter
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -524,8 +524,8 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
             Derivative of metric eta
         y : array
             Current perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params) - Note: BG parameter is unused in this implementation
 
         Returns:
         --------
@@ -557,8 +557,8 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -576,8 +576,8 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -595,8 +595,8 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -611,6 +611,25 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         return 1./3.
 
     def y_ini(self, k, tau_ini, om, args):
+        """
+        Compute initial conditions for massless neutrino perturbations.
+
+        Parameters:
+        ------------
+        k : float
+            Wavenumber (units: Mpc^{-1})
+        tau_ini : float
+            Initial conformal time (units: Mpc)
+        om : float
+            Matter density parameter
+        args : dict
+            Cosmological parameters (params)
+
+        Returns:
+        --------
+        array
+            Initial perturbation mode values (units: dimensionless)
+        """
         params = args
         R_nu = params['R_nu']
 
@@ -624,6 +643,29 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_ell_modes-3)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
+        """
+        Compute time derivatives of massless neutrino perturbations.
+
+        Parameters:
+        ------------
+        k : float
+            Wavenumber (units: Mpc^{-1})
+        lna : float
+            Logarithm of scale factor
+        metric_h_prime : float
+            Derivative of metric h
+        metric_eta_prime : float
+            Derivative of metric eta
+        y : array
+            Current perturbation mode values
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
+
+        Returns:
+        --------
+        array
+            Time derivatives of perturbation modes (units: dimensionless)
+        """
         BG, params = args
         aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
@@ -678,6 +720,18 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
     w_5p = jnp.array([0.0081201, 0.689407, 2.8063, 2.05156, 0.12681])
 
     def __init__(self, delta_idx, num_q_bins=3, num_ells_per_bin=18):
+        """
+        Initialize massive neutrino species.
+
+        Parameters:
+        ------------
+        delta_idx : int
+            Index of first perturbation mode in state vector
+        num_q_bins : int
+            Number of momentum bins (default: 3)
+        num_ells_per_bin : int
+            Number of angular momentum modes per bin (default: 18)
+        """
         self.delta_idx = delta_idx
         self.num_q_bins = num_q_bins
         self.num_ells_per_bin = num_ells_per_bin
@@ -691,8 +745,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         ------------
         lna : float or ArrayLike
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -727,8 +781,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         ------------
         lna : float or ArrayLike
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -762,8 +816,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         ------------
         lna : float or ArrayLike
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -792,8 +846,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
             Initial conformal time (units: Mpc)
         om : float
             Matter density parameter
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -842,8 +896,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
             Derivative of metric eta
         y : array
             Current perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -897,8 +951,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -930,8 +984,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -962,8 +1016,8 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
             Logarithm of scale factor
         y : array
             Perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1014,8 +1068,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1033,8 +1087,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1055,8 +1109,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -1086,8 +1140,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -1114,8 +1168,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
             Initial conformal time (units: Mpc)
         om : float
             Matter density parameter
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1143,8 +1197,8 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
             Derivative of metric eta
         y : array
             Current perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------
@@ -1186,6 +1240,20 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
     num_ell_modes : int = eqx.field(static=True)
 
     def __init__(self, delta_idx, baryon, num_F_ell_modes=13, num_G_ell_modes=11):
+        """
+        Initialize photon species.
+
+        Parameters:
+        ------------
+        delta_idx : int
+            Index of first perturbation mode in state vector
+        baryon : AbstractPerturbedFluid
+            Baryon species for coupling
+        num_F_ell_modes : int
+            Number of temperature multipole modes (default: 13)
+        num_G_ell_modes : int
+            Number of polarization multipole modes (default: 11)
+        """
         self.delta_idx = delta_idx
         self.baryon = baryon
         self.num_F_ell_modes = num_F_ell_modes
@@ -1200,8 +1268,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1219,8 +1287,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1238,8 +1306,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         ------------
         lna : float
             Logarithm of scale factor
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1264,8 +1332,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
             Initial conformal time (units: Mpc)
         om : float
             Matter density parameter
-        BG : cosmology.Background
-            Background cosmology module
+        args : dict
+            Cosmological parameters (params)
 
         Returns:
         --------
@@ -1293,8 +1361,8 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
             Derivative of metric eta
         y : array
             Current perturbation mode values
-        BG : cosmology.Background
-            Background cosmology module
+        args : tuple
+            Background cosmology and cosmological parameters (BG, params)
 
         Returns:
         --------

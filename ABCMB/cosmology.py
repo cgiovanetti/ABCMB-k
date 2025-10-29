@@ -124,6 +124,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -149,6 +151,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -175,6 +179,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -194,6 +200,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -213,6 +221,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -232,6 +242,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -251,8 +263,8 @@ class Background(eqx.Module):
             Logarithm of scale factor
         y : float
             Current conformal time value
-        args : tuple
-            Additional arguments (unused)
+        args : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -267,16 +279,19 @@ class Background(eqx.Module):
         Tabulate conformal time as function of ln(a).
 
         Integrates dτ/d(ln a) = 1/aH from early times to today
-        using radiation-dominated initial conditions. We stitch an 
-        analytic early-time solution to a Diffrax dense 
+        using radiation-dominated initial conditions. We stitch an
+        analytic early-time solution to a Diffrax dense
         interpolation, taking care not to evaluate out of bounds.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
         array
             Tabulated conformal time values (units: Mpc)
- 
-        Tabulate conformal time τ(ln a).
         """
 
         lna_cut = -16.1  # use analytic approx before this
@@ -409,6 +424,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -430,6 +447,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -458,6 +477,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -476,6 +497,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -494,6 +517,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -511,6 +536,11 @@ class Background(eqx.Module):
 
         Integrates dκ/d(ln a) = -1/(τc × aH) backwards from today
         to compute optical depth κ(a) = ∫[a to 1] dκ/da' da'.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -580,6 +610,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -597,7 +629,7 @@ class Background(eqx.Module):
     ### tools for computing decoupling time ###
     ###########################################
 
-    def find_z_at_kappad_equals_one(self,z, kappa_d):
+    def find_z_at_kappad_equals_one(self, z, kappa_d):
         """
         Find redshift where baryon optical depth equals unity.
 
@@ -625,7 +657,7 @@ class Background(eqx.Module):
         z_d = jnp.interp(1.0, kappa_d_sorted, z_sorted)
         return z_d
 
-    def interp_rs_at_z(self,z_bg, r_s, z_d):
+    def interp_rs_at_z(self, z_bg, r_s, z_d):
         """
         Interpolate sound horizon at decoupling redshift.
 
@@ -648,7 +680,7 @@ class Background(eqx.Module):
         rs_sorted = r_s[idx]
         return jnp.interp(z_d, z_sorted, rs_sorted)
 
-    def R_ratio_lna(self,lna, params):
+    def R_ratio_lna(self, lna, params):
         """
         Compute baryon drag ratio.
 
@@ -659,6 +691,8 @@ class Background(eqx.Module):
         -----------
         lna : float
             Logarithm of scale factor
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -676,6 +710,11 @@ class Background(eqx.Module):
 
         Integrates dκ_d/d(ln a) = -1/(τc × aH × R) backwards from today
         to compute baryon optical depth including drag effects.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -710,6 +749,11 @@ class Background(eqx.Module):
         Integrates drs/d(ln a) = cs/aH from early times to today
         where cs = 1/√(3(1+R)) accounts for baryon loading.
 
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
+
         Returns:
         --------
         array
@@ -740,12 +784,17 @@ class Background(eqx.Module):
         
         rs = get_rs(self)
 
-    def z_d(self):
+    def z_d(self, params):
         """
         Compute baryon decoupling redshift.
 
         Finds redshift where κ_d = 1 as estimate of when baryons
         decouple from photons.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -754,11 +803,16 @@ class Background(eqx.Module):
         """
         return self.find_z_at_kappad_equals_one(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_kappa_d())
 
-    def rs_d(self):
+    def rs_d(self, params):
         """
         Compute sound horizon at decoupling.
 
         Finds value of sound horizon at baryon decoupling redshift z_d.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
 
         Returns:
         --------
@@ -772,6 +826,12 @@ class MockBackground(Background):
     H_tab : jnp.array
 
     def __init__(self):
+        """
+        Initialize MockBackground for testing.
+
+        Loads pre-computed background quantities from test data files
+        for validation and testing purposes.
+        """
         self.species_list = (AS.ColdDarkMatter(0), AS.DarkEnergy(), AS.Baryon(0, None), AS.Photon(0, None))
         self.params = {k: float(v) for k, v in np.loadtxt(file_dir+"/../Module_Tests/params.txt", dtype=str)}
 
@@ -801,6 +861,19 @@ class MockBackground(Background):
         self.rA_rec = 13899.20802848
 
     def H(self, lna):
+        """
+        Compute Hubble parameter from tabulated values.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+
+        Returns:
+        --------
+        float
+            Hubble parameter (units: s^{-1})
+        """
         return jnp.interp(lna, self.lna_tau_tab, self.H_tab)
 
     # def xe(self, lna):
@@ -814,6 +887,12 @@ class ClassBackground(Background):
     H_tab : jnp.array
 
     def __init__(self):
+        """
+        Initialize ClassBackground for CLASS integration.
+
+        Loads background and thermodynamics data from CLASS output
+        for comparison and validation with CLASS Boltzmann code.
+        """
         self.species_list = (AS.ColdDarkMatter(0), AS.DarkEnergy(), AS.Baryon(0, None), AS.Photon(0, None))
         self.params = {k: float(v) for k, v in np.loadtxt(file_dir+"/../Module_Tests/params.txt", dtype=str)}
 
@@ -842,10 +921,49 @@ class ClassBackground(Background):
         self.rA_rec = 13899.20802848
 
     def H(self, lna):
+        """
+        Compute Hubble parameter from CLASS tabulated values.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+
+        Returns:
+        --------
+        float
+            Hubble parameter (units: s^{-1})
+        """
         return jnp.interp(lna, self.lna_tau_tab, self.H_tab)
 
     def xe(self, lna):
+        """
+        Compute free electron fraction from CLASS tabulated values.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+
+        Returns:
+        --------
+        float
+            Free electron fraction (units: dimensionless)
+        """
         return jnp.interp(lna, self.lna_xe_tab.arr, self.xe_tab.arr)
 
     def Tm(self, lna):
+        """
+        Compute matter temperature from CLASS tabulated values.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+
+        Returns:
+        --------
+        float
+            Matter temperature (units: eV)
+        """
         return jnp.interp(lna, self.lna_Tm_tab.arr, self.Tm_tab.arr)
