@@ -253,7 +253,7 @@ class PerturbationEvolver(eqx.Module):
         y_prime = jnp.array([metric_h_prime, metric_eta_prime])
         for i in range(len(self.perturbations_list)):
             species = self.perturbations_list[i]
-            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, params, BG)))
+            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, (BG, params))))
 
         return y_prime
 
@@ -406,7 +406,7 @@ class PerturbationEvolver(eqx.Module):
         karr = k[None, :]
         a  = jnp.exp(lna)[:, None]
         aH = BG.aH(lna, params)[:, None]
-        cs2 = Baryon.cs2(lna, params, BG)[:, None]
+        cs2 = Baryon.cs2(lna, (BG, params))[:, None]
         R = 4.*Photon.rho(lna, params)[:, None]/3./Baryon.rho(lna, params)[:, None]
         tau_c = BG.tau_c(lna, params)[:, None]
 
