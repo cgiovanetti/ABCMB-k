@@ -10,5 +10,4 @@ ABCMB
    ABCMB.cosmology
    ABCMB.main
    ABCMB.perturbations
-   ABCMB.setup
    ABCMB.spectrum
