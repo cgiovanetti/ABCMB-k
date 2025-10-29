@@ -31,7 +31,7 @@ class AbstractFluid(eqx.Module, strict=True):
         cosmological epoch using the logarithm of the scale factor.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -53,7 +53,7 @@ class AbstractFluid(eqx.Module, strict=True):
         cosmological epoch using the logarithm of the scale factor.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -75,7 +75,7 @@ class AbstractFluid(eqx.Module, strict=True):
         cosmological epoch using the logarithm of the scale factor.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -96,7 +96,7 @@ class AbstractFluid(eqx.Module, strict=True):
         the equation of state for the fluid species.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -138,7 +138,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         Calculates the initial state of perturbation modes at early cosmological times.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -163,7 +163,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         Calculates how perturbation modes evolve with cosmological time.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float
@@ -190,7 +190,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         Compute density perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -211,7 +211,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         Compute velocity perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -232,7 +232,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         Compute shear perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -266,7 +266,7 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
         Compute density perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -287,7 +287,7 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
         Compute velocity perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -312,7 +312,7 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
         Compute shear perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -351,7 +351,7 @@ class DarkEnergy(AbstractFluid, strict=True):
         Compute dark energy density.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -370,7 +370,7 @@ class DarkEnergy(AbstractFluid, strict=True):
         Compute dark energy pressure.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -389,7 +389,7 @@ class DarkEnergy(AbstractFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -426,7 +426,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         Compute cold dark matter density.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -445,7 +445,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         Compute cold dark matter pressure.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -467,7 +467,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -490,7 +490,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         Compute initial conditions for cold dark matter perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -513,7 +513,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         Compute time derivatives of cold dark matter perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float
@@ -554,7 +554,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         Compute neutrino density.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -573,7 +573,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         Compute neutrino pressure.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -592,7 +592,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -615,7 +615,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         Compute initial conditions for massless neutrino perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -647,7 +647,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         Compute time derivatives of massless neutrino perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float
@@ -724,7 +724,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Initialize massive neutrino species.
 
         Parameters:
-        ------------
+        -----------
         delta_idx : int
             Index of first perturbation mode in state vector
         num_q_bins : int
@@ -742,7 +742,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute massive neutrino density.
 
         Parameters:
-        ------------
+        -----------
         lna : float or ArrayLike
             Logarithm of scale factor
         args : dict
@@ -778,7 +778,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute massive neutrino pressure.
 
         Parameters:
-        ------------
+        -----------
         lna : float or ArrayLike
             Logarithm of scale factor
         args : dict
@@ -813,7 +813,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float or ArrayLike
             Logarithm of scale factor
         args : dict
@@ -839,7 +839,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute initial conditions for massive neutrino perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -885,7 +885,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute time derivatives of massive neutrino perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float
@@ -946,7 +946,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute massive neutrino density perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -979,7 +979,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute massive neutrino velocity perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -1011,7 +1011,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         Compute massive neutrino shear perturbation.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         y : array
@@ -1065,7 +1065,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         Compute baryon density.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -1106,7 +1106,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : tuple
@@ -1137,7 +1137,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         Compute mean baryon mass at given redshift.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : tuple
@@ -1161,7 +1161,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         Compute initial conditions for baryon perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -1186,7 +1186,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         Compute time derivatives of baryon perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float
@@ -1244,7 +1244,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Initialize photon species.
 
         Parameters:
-        ------------
+        -----------
         delta_idx : int
             Index of first perturbation mode in state vector
         baryon : AbstractPerturbedFluid
@@ -1265,7 +1265,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Compute photon density.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -1284,7 +1284,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Compute photon pressure.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -1303,7 +1303,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Compute sound speed squared.
 
         Parameters:
-        ------------
+        -----------
         lna : float
             Logarithm of scale factor
         args : dict
@@ -1325,7 +1325,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Compute initial conditions for photon perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
@@ -1350,7 +1350,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         Compute time derivatives of photon perturbations.
 
         Parameters:
-        ------------
+        -----------
         k : float
             Wavenumber (units: Mpc^{-1})
         lna : float

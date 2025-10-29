@@ -2,6 +2,13 @@ ABCMB
 =====
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
-   ABCMB
+   constants
+   ABCMB.ABCMBTools
+   ABCMB.AbstractSpecies
+   ABCMB.cosmology
+   ABCMB.main
+   ABCMB.perturbations
+   ABCMB.setup
+   ABCMB.spectrum
