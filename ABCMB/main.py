@@ -143,6 +143,7 @@ class Model(eqx.Module):
 
         # user species must be defined before CDM, since ABCMB expects
         # fixed indices for CDM, baryons, photons, and massive neutrinos
+
         if user_species is not None:
             for species in user_species:
                 fn = lambda spec: spec.delta_idx
