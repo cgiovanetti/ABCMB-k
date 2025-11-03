@@ -147,6 +147,8 @@ class Model(eqx.Module):
         self.species_list = self.species_list + (cold_dark_matter,)
         diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
 
+        # self.species_list = self.species_list + (user_species,)
+
         baryon = AS.Baryon(diffrax_vector_idx, dark_energy)
         diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
 

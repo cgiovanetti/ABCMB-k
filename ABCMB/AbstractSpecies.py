@@ -127,7 +127,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
     # Some abstract fields that won't be instanced until a child class calls __init__
     # All subclasses must have these fields
     # Declared abstract for now since some methods still reference these fields.
-    delta_idx     : eqx.AbstractVar[int]
+    delta_idx     : int = eqx.field(default=0)
     num_ell_modes : eqx.AbstractVar[int]
 
     @abc.abstractmethod
@@ -418,7 +418,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
 
-    delta_idx : int
+    # delta_idx : int
     num_ell_modes = 1
 
     def rho(self, lna, args):
@@ -546,7 +546,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
     P : Compute neutrino pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     """
-    delta_idx : int
+    # delta_idx : int
     num_ell_modes : int = eqx.field(default=18, static=True)
 
     def rho(self, lna, args):
@@ -708,7 +708,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
     rho_plus_P_sigma : Compute shear perturbation (units: eV cm^{-3})
     """
 
-    delta_idx : int
+    # delta_idx : int
 
     num_q_bins : int = eqx.field(static=True)
     num_ells_per_bin : int = eqx.field(static=True)
@@ -1055,7 +1055,7 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
-    delta_idx : int
+    # delta_idx : int
     #coupled_delta_idx : int # Index of coupled photon
     photon : AbstractPerturbedFluid
     num_ell_modes = 2
@@ -1233,7 +1233,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
-    delta_idx : int
+    # delta_idx : int
     baryon : AbstractPerturbedFluid 
     num_F_ell_modes : int = eqx.field(static=True)
     num_G_ell_modes : int = eqx.field(static=True)
