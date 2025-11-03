@@ -99,6 +99,7 @@ class Model(eqx.Module):
                  ellmax = 2500,
                  lensing = False,
                  has_MassiveNeutrinos=False,
+                 user_species=None,
                  return_PTBG=False,
                  bbn_type = "",
                  linx_reaction_net = "key_PRIMAT_2023"
@@ -140,6 +141,17 @@ class Model(eqx.Module):
             self.species_list   = self.species_list + (massive_neutrinos,)
             diffrax_vector_idx += massive_neutrinos.num_ell_modes # Add to total length of Diffrax vector
 
+        # user species must be defined before CDM, since ABCMB expects
+        # fixed indices for CDM, baryons, photons, and massive neutrinos
+        if user_species is not None:
+            for species in user_species:
+                fn = lambda spec: spec.delta_idx
+                # update delta_idx, for which the user probably used default
+                # value 0
+                updated_species = eqx.tree_at(fn, species, diffrax_vector_idx)
+                self.species_list = self.species_list + (updated_species,)
+                diffrax_vector_idx += updated_species.num_ell_modes
+
         # These perturbed species are always present in all runs.
         # massless neutrinos are last, photons are second to last, baryons third to last, CDM fourth to last.
 
@@ -147,9 +159,7 @@ class Model(eqx.Module):
         self.species_list = self.species_list + (cold_dark_matter,)
         diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
 
-        # self.species_list = self.species_list + (user_species,)
-
-        baryon = AS.Baryon(diffrax_vector_idx, dark_energy)
+        baryon = AS.Baryon(dark_energy, diffrax_vector_idx) # CG switched order
         diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
 
         photon = AS.Photon(diffrax_vector_idx, baryon)
