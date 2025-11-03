@@ -316,7 +316,7 @@ class PerturbationEvolver(eqx.Module):
             term, solver,
             t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
             stepsize_controller=stepsize_controller,
-            max_steps=2048,
+            max_steps=4096,
             saveat=saveat,
             args=(k,*args),
             adjoint=adjoint
