@@ -523,7 +523,7 @@ class helium_model(eqx.Module):
             stepsize_controller=PIDController(rtol, atol),saveat=save_at,
             event = event,
             adjoint=adjoint,
-            max_steps = 8192,
+            max_steps = 4096,
         )
         
         xe_output = sol.ys[:, 0]  
