@@ -312,7 +312,7 @@ class Model(eqx.Module):
             params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
             params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
             params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
-            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
+            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.6))
             params['z_reion']       = params.get('z_reion', jnp.array(11.0))
             params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
             params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
