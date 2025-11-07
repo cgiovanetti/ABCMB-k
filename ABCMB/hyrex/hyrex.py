@@ -25,8 +25,6 @@ class recomb_model(eqx.Module):
 
     integration_spacing : jnp.float64
     lna_axis_full : jnp.array
-    concrete_axis_size : jnp.array
-    concrete_axis_size_postSahaHe : jnp.array
 
     z1 : jnp.float64
 
@@ -34,7 +32,7 @@ class recomb_model(eqx.Module):
     He4equil_redshift : jnp.float64
     idx_4He_equil : jnp.array
 
-    def __init__(self,integration_spacing = 5.0e-4, Nsteps=800, Nsteps_postSahaHe=4000, z0=8000., z1=0.):
+    def __init__(self,integration_spacing = 5.0e-4, z0=8000., z1=0.):
         """
         Initialize complete recombination model.
 
@@ -45,10 +43,6 @@ class recomb_model(eqx.Module):
         -----------
         integration_spacing : float, optional
             Step size for integration (default: 5.0e-4)
-        Nsteps : int, optional
-            Maximum integration steps (default: 800)
-        Nsteps_postSahaHe : int, optional
-            Maximum steps for post-Saha helium phase (default: 4000)
         z0 : float, optional
             Initial redshift (default: 8000.)
         z1 : float, optional
@@ -59,8 +53,6 @@ class recomb_model(eqx.Module):
 
         # Define time axes
         self.lna_axis_full  = jnp.arange(-jnp.log(1+z0), -jnp.log(1+z1), self.integration_spacing)
-        self.concrete_axis_size = jnp.zeros(Nsteps)
-        self.concrete_axis_size_postSahaHe = jnp.zeros(Nsteps_postSahaHe)
 
         self.twog_redshift = 701.
         self.He4equil_redshift = 3601. # generous
