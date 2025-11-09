@@ -11,7 +11,7 @@ import os
 file_dir = os.path.dirname(__file__)
 
 from .hyrex import hyrex
-from . import cosmology, perturbations, spectrum, preparations
+from . import cosmology, perturbations, spectrum, model_specs
 from . import constants as cnst
 from . import AbstractSpecies as AS
 from .ABCMBTools import bilinear_interp
@@ -88,16 +88,16 @@ class Model(eqx.Module):
         """
 
         # Fill in all user defined and missing precision parameters
-        precision = preparations.load_precision(precision_in)
+        precision = model_specs.load_specs(precision_in)
 
         # Populate all species
-        self.species_list, self.perturbations_list = preparations.populate_species(
+        self.species_list, self.perturbations_list = model_specs.populate_species(
             user_species,
             precision,
         )   
 
         # Initialize perturbation evolver
-        k_axis_perturbations = preparations.get_k_axis_perturbations(precision)
+        k_axis_perturbations = model_specs.get_k_axis_perturbations(precision)
         self.PE = perturbations.PerturbationEvolver(
             self.perturbations_list, 
             k_axis_perturbations,
@@ -106,7 +106,7 @@ class Model(eqx.Module):
         )
 
         # Intialize spectrum solver
-        k_axis_transfer = preparations.get_k_axis_transfer(precision)
+        k_axis_transfer = model_specs.get_k_axis_transfer(precision)
         self.SS = spectrum.SpectrumSolver(
             precision["l_min"],
             precision["l_max"],

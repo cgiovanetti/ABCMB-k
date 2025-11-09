@@ -371,7 +371,8 @@ class SpectrumSolver(eqx.Module):
             window = (chi(BG.lna_rec) - chi(lna))/chi(BG.lna_rec)/chi(lna)
             res = chi(lna)/BG.aH(lna, params) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
             return res
-        lna_axis = jnp.linspace(BG.lna_rec, 0., 2000)
+
+        lna_axis = jnp.linspace(BG.lna_rec, 0., 500)
         integrand = vmap(integrand_func)(lna_axis)
         integrand = jnp.nan_to_num(integrand, nan=0.)
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
@@ -408,9 +409,11 @@ class SpectrumSolver(eqx.Module):
         #beta = jnp.linspace(0., jnp.pi/16., 5000)
         #mu = jnp.cos(beta)
         # CLASS samples angle uniformly
-        theta = jnp.linspace(0., jnp.pi/16., 375)
+        # 500 points is enough for lmax < 4000
+        theta = jnp.linspace(0., jnp.pi/16., 500)
+
+        # Flip mu so that mu is in ascending order, works better for trapz.
         mu = jnp.flip(jnp.cos(theta))
-        #mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 2000)
 
         # Compute lensing Cl
         Clpp = self.lensing_Cl(ells, PT, BG, params)
@@ -442,7 +445,6 @@ class SpectrumSolver(eqx.Module):
         Cgl2 = 1./4./jnp.pi * jnp.sum(
             (2.*ells+1)*ells*(ells+1)*Clpp*dm11, axis=1
         ) # Nmu
-        #sigma2     = Cgl[0] - Cgl
         sigma2     = Cgl[-1] - Cgl
         Cgl    = Cgl[:, None]
         Cgl2   = Cgl2[:, None]
@@ -500,7 +502,6 @@ class SpectrumSolver(eqx.Module):
             axis=1
         )
         
-        #ClTT = 2.*jnp.pi * jnp.trapezoid(corTT[:, None]*d00*jnp.sin(beta)[:, None], beta, axis=0) # Integrand becomes (Nmu, Nells), result is Nells
         ClTT = 2.*jnp.pi * jnp.trapezoid(ksi[:, None]*d00, mu, axis=0) + ClTT_unlensed
         ClTE = 2.*jnp.pi * jnp.trapezoid(ksix[:, None]*d20, mu, axis=0) + ClTE_unlensed
         ClEE = 1./2. * 2.*jnp.pi * jnp.trapezoid(ksip[:, None]*d22+ksim[:, None]*d2m2, mu, axis=0) + ClEE_unlensed
@@ -550,13 +551,11 @@ class SpectrumSolver(eqx.Module):
         def get_unlensed_Cls():
             return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2])
 
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
         return lax.cond(
             self.lensing,
             get_lensed_Cls,
             get_unlensed_Cls
         )
-        #return get_lensed_Cls()
 
     def get_Cl_vmap(self, PT, BG, params):
         """
@@ -580,8 +579,6 @@ class SpectrumSolver(eqx.Module):
         tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
 
         ells = bessel_l_tab[self.ells_indices]
-        # return ells, tt_raw, te_raw, ee_raw
-        # return tt_raw, te_raw, ee_raw
 
         tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
         te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
@@ -593,13 +590,11 @@ class SpectrumSolver(eqx.Module):
         def get_unlensed_Cls():
             return (tt_unlensed, te_unlensed, ee_unlensed)
 
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
         return lax.cond(
             self.lensing,
             get_lensed_Cls,
             get_unlensed_Cls
         )
-        #return get_lensed_Cls()
 
     def Cl_one_ell(self, idx, PT, BG, params):
         """
@@ -623,15 +618,6 @@ class SpectrumSolver(eqx.Module):
         tuple
             (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE) angular power spectra
         """
-        # Beyond this k point the bessel function vanishes exponentially.
-        #k_cut_small = 0.95*bessel_l_tab[idx]/BG.rA_rec
-
-        # The upperbound of the integral is given by the multipole cut approximation in arxiv:1312.2697
-        # For now, the integration axis is chosen to be a logspaced grid, from kmin to kmin+kcut.
-        # This is because for k>kmin, the integrand ~jl^2 which experiences asymptotic damping for larger k's.
-        # The peak values of the envelope drop by a few orders of magnitude within 3-4 peaks or so, so its
-        # only really important to have high resolution near kmin. 
-        #k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.15, 1000) 
         l = bessel_l_tab[idx]
         k_T0_axis = self.k_axis_transfer
         lna_axis = PT.lna
@@ -653,7 +639,7 @@ class SpectrumSolver(eqx.Module):
         aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        # interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        # Cubic Spline is necessary here for accuracy. 
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
@@ -667,12 +653,8 @@ class SpectrumSolver(eqx.Module):
         eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime)
         alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
         alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
-        
-        #sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) 
-        #sourceT0 = 1.
 
         # Source terms
-        # TODO: fix ISW term
         sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) \
                 + self.switch_isw * (
                     g * (eta - aH*alpha_prime - 2.*aH*alpha) \
@@ -682,11 +664,9 @@ class SpectrumSolver(eqx.Module):
                     aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
                     + g_prime*((theta_b / k_T0_axis**2) + alpha))
                 )
-        #sourceT0 = 0.
 
         sourceT1 = self.switch_isw * expmkappa * \
                 ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
-        #sourceT1 = 0.
 
         sourceT2 = self.switch_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
@@ -695,7 +675,7 @@ class SpectrumSolver(eqx.Module):
         # Bessel functions
         chiT0 = jnp.outer(tau0-tau, k_T0_axis)
 
-        # Note: our phi0's seem to be accurate up to 
+        # Note: our phi0's seem to be accurate up to lmax ~ 3000 or so.
         phi0_tab = phi0(idx, chiT0)
         transferT0 = jnp.trapezoid(
             sourceT0 / aH * phi0_tab,
@@ -718,7 +698,6 @@ class SpectrumSolver(eqx.Module):
         epsilon_tab *= phi0_tab
 
         transferE = jnp.trapezoid(
-            #sourceE / aH * epsilon(idx, chiT0),
             sourceE / aH * epsilon_tab,
             lna_axis, axis=0
         )
@@ -732,8 +711,7 @@ class SpectrumSolver(eqx.Module):
         integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
         integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
         integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
-        #return k_T0_axis, (integrandTT, integrandTE, integrandEE)
-        #return (jnp.trapezoid(integrandTT, k_T0_axis), jnp.trapezoid(integrandTE, k_T0_axis), jnp.trapezoid(integrandEE, k_T0_axis))
+        
         return (
             jnp.trapezoid(integrandTT, k_T0_axis),
             jnp.trapezoid(integrandTE, k_T0_axis),
