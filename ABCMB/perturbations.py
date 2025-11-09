@@ -79,43 +79,21 @@ class PerturbationEvolver(eqx.Module):
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
         BG, params = args
-        sols = vmap(self.evolution_one_k,in_axes=[0,None])(self.k_axis_perturbations, args)
+        lna = jnp.linspace(BG.lna_transfer_start,  0., 500)
 
-        lna = jnp.linspace(BG.lna_transfer_start,  0., 500) # lna_end hardcoded
-
-        res = vmap(lambda arr: vmap(arr.evaluate)(lna))(sols) # Right now the shape is (Nk, Nlna, Ny)
-        res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
-
-        PT = self.make_output_table(lna, res, args)
-        return PT
-
-    def full_evolution_scan(self, args):
-        """
-        Evolve perturbations for multiple wavenumber modes.
-
-        Integrates perturbation equations for a range of k modes,
-        then interpolates results onto common time grid.
-
-        Parameters:
-        -----------
-        args : tuple
-            Background cosmology and cosmological parameters (BG, params)
-
-        Returns:
-        --------
-        PerturbationTable
-            Interpolatable table of perturbation evolution
-        """
-        BG, params = args
-        lna = jnp.linspace(BG.lna_transfer_start, 0., 500)  # lna_end hardcoded
-
-        def body_fun(_, ki):
+        # This scan function is only used if on CPU.
+        # For GPUs we vmap over the wavenumbers instead
+        def scan_fun(_, ki):
             # evolution_one_k returns shape (Nlna, Ny)
-            y = self.evolution_one_k_scan(ki, lna, args)    # (Nlna, Ny)
+            y = self.evolution_one_k(ki, lna, args)    # (Nlna, Ny)
             return None, y
 
-        _, res = lax.scan(body_fun, None, self.k_axis_perturbations)      # res has shape (Nk, Nlna, Ny)
-        res = res.transpose(2, 1, 0)              # -> (Ny, Nlna, Nk)
+        if jax.default_backend() =='gpu':
+            res = vmap(self.evolution_one_k,in_axes=[0,None,None])(self.k_axis_perturbations, lna, args)
+        else: 
+            _, res = lax.scan(scan_fun, None, self.k_axis_perturbations)      # res has shape (Nk, Nlna, Ny)
+
+        res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
 
         PT = self.make_output_table(lna, res, args)
         return PT
@@ -256,74 +234,7 @@ class PerturbationEvolver(eqx.Module):
 
         return y_prime
 
-    def evolution_one_k(self, k, args):
-        """
-        Evolve perturbations for single wavenumber mode.
-
-        Integrates Einstein-Boltzmann equations from early times through
-        recombination to late times using adaptive time stepping.
-
-        Parameters:
-        -----------
-        k : float
-            Wavenumber (units: Mpc^{-1})
-        args : tuple
-            Background cosmology and cosmological parameters (BG, params)
-
-        Returns:
-        --------
-        diffrax.Solution
-            Dense solution object for interpolation
-
-        """
-        BG, params = args
-        ### DIFFRAX INTEGRATION ###
-
-        lna_start = self.get_starting_time(k, args) # Start and end times from tight coupling settings
-        lna_end = 0.0
-
-        # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
-        # at the very least.
-        lna_start = jnp.minimum(lna_start,-10.0)
-    
-        # Initial conditions for tight coupling
-        y_ini = self.initial_conditions_one_k(k, lna_start, args)
-
-        term = diffrax.ODETerm(self.get_derivatives)
-        solver = diffrax.Kvaerno5()
-
-        rtol=jnp.where(
-            k > 1.e-2,
-            1.e-3,
-            1.e-5
-        )
-
-        atol=jnp.where(
-            k > 1.e-2,
-            1.e-6,
-            1.e-10
-        )
-
-        stepsize_controller = diffrax.PIDController(pcoeff=0.25, icoeff=0.80, dcoeff=0, rtol=rtol, atol=atol) # DISCO-EB settings
-        saveat = diffrax.SaveAt(dense=True)
-        adjoint=diffrax.ForwardMode()
-
-        sol = diffrax.diffeqsolve(
-            term, solver,
-            t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
-            stepsize_controller=stepsize_controller,
-            max_steps=4096,
-            saveat=saveat,
-            args=(k,*args),
-            adjoint=adjoint
-        )
-
-        ### END OF DIFFRAX INTEGRATION ###
-
-        return sol
-        #return vmap(sol.evaluate)(lna)
-
-    def evolution_one_k_scan(self, k, lna, args):
+    def evolution_one_k(self, k, lna, args):
         """
         Evolve perturbations for single wavenumber mode.
 

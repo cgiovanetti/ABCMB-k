@@ -153,14 +153,9 @@ class Model(eqx.Module):
 
         params = self.add_derived_parameters(params)
         PT, BG = self.get_PTBG(params)
-
-        if jax.default_backend() =='gpu':
-            # vmap for GPU
-            Cls = self.SS.get_Cl_vmap(PT, BG, params)
-        else:
-            # lax.scan for CPU
-            Cls = self.SS.get_Cl(PT, BG, params)
+        Cls = self.SS.get_Cl(PT, BG, params)
         ells = self.SS.ells
+        
         if self.return_PTBG:
             return ells, Cls, PT, BG
         else:
@@ -185,16 +180,9 @@ class Model(eqx.Module):
             (PerturbationTable, Background) objects
         """
         BG = self.get_BG(params)
-        # params = self.add_derived_parameters(params)
-        PE = perturbations.PerturbationEvolver(self.perturbations_list)
-        
-        # Specify whether to use full_evolution() or full_evolution_scan()
-        if jax.default_backend() =='gpu':
-            # vmap on GPU
-            PT = PE.full_evolution((BG, params))
-        else:
-            # lax.scan on CPU
-            PT = PE.full_evolution_scan((BG, params))
+        PE = perturbations.PerturbationEvolver(self.perturbations_list) 
+        PT = PE.full_evolution((BG, params))
+
         return PT, BG
 
     @eqx.filter_jit

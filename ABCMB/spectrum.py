@@ -498,18 +498,22 @@ class SpectrumSolver(eqx.Module):
             (ClTT, ClTE, ClEE) angular power spectra
         """
 
-        def scan_fun(_, idx):
-            cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
-            return None, jnp.array([cltt, clte, clee])
+        if jax.default_backend() == "gpu":
+            
+            tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
 
-        _, Cls_raw = lax.scan(scan_fun, None, self.lensing_ells_indices)
+        else:
+            
+            def scan_fun(_, idx):
+                cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
+                return None, jnp.array([cltt, clte, clee])
+
+            _, Cls_raw = lax.scan(scan_fun, None, self.lensing_ells_indices)
+            tt_raw = Cls_raw[:, 0]
+            te_raw = Cls_raw[:, 1]
+            ee_raw = Cls_raw[:, 2]
 
         # Cubic spline for smooth Cl over user requested ells
-
-        tt_raw = Cls_raw[:, 0]
-        te_raw = Cls_raw[:, 1]
-        ee_raw = Cls_raw[:, 2]
-
         lensing_ells = bessel_l_tab[self.lensing_ells_indices]
         tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
         te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
@@ -521,45 +525,6 @@ class SpectrumSolver(eqx.Module):
 
         def get_unlensed_Cls():
             return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2])
-
-        return lax.cond(
-            self.lensing,
-            get_lensed_Cls,
-            get_unlensed_Cls
-        )
-
-    def get_Cl_vmap(self, PT, BG, params):
-        """
-        Compute angular power spectra for multiple multipoles using vmap.
-
-        Parameters:
-        -----------
-        PT : perturbations.PerturbationTable
-            Perturbation evolution table
-        BG : cosmology.Background
-            Background cosmology module
-        params : dict
-            Dictionary of input and derived parameters
-
-        Returns:
-        --------
-        tuple
-            (ClTT, ClTE, ClEE) angular power spectra
-        """
-
-        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
-
-        ells = bessel_l_tab[self.ells_indices]
-
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
-
-        def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
-
-        def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
 
         return lax.cond(
             self.lensing,
