@@ -17,15 +17,13 @@ file_dir = os.path.dirname(__file__)
 
 config.update("jax_enable_x64", True)
 
-bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/l.txt", dtype="int"))
-bessel_x_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/x.txt"))
-#bessel_stop_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/jl_stop.txt"))
+bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/l.txt", dtype="int"))
+bessel_x_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/x.txt"))
 
 # 2D arrays of tabulated spherical functions over l and x axes.
-bessel_phi0_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi0.txt"))
-bessel_phi1_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi1.txt"))
-bessel_phi2_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi2.txt"))
-#bessel_epsilon_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/epsilon.txt"))
+bessel_phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
+bessel_phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
+bessel_phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
 
 try:
     gpus = jax.devices('gpu')
@@ -33,16 +31,12 @@ try:
         bessel_l_tab, device=gpus[0])
     bessel_x_tab = jax.device_put(
         bessel_x_tab, device=gpus[0])
-    bessel_stop_tab = jax.device_put(
-        bessel_stop_tab, device=gpus[0])
     bessel_phi0_tab = jax.device_put(
         bessel_phi0_tab, device=gpus[0])
     bessel_phi1_tab = jax.device_put(
         bessel_phi1_tab, device=gpus[0])
     bessel_phi2_tab = jax.device_put(
         bessel_phi2_tab, device=gpus[0])
-    bessel_epsilon_tab = jax.device_put(
-        bessel_epsilon_tab, device=gpus[0])
 except: 
     pass
 
@@ -120,29 +114,6 @@ def phi2(i, x):
     """
     #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
     return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi2_tab[:, i])
-
-def epsilon(i, x):
-    """
-    Compute polarization coupling function ε.
-
-    Parameters:
-    -----------
-    i : int
-        Index into bessel_l_tab for multipole ℓ
-    x : float
-        Argument of coupling function
-
-    Returns:
-    --------
-    float
-        ε(x) for multipole ℓ = bessel_l_tab[i]
-
-    Notes:
-    ------
-    1312.2697 Eq. (3.19b)
-    """
-    #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
-    return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_epsilon_tab[:, i])
 
 class SpectrumSolver(eqx.Module):
     """
