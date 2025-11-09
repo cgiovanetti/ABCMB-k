@@ -38,7 +38,21 @@ class PerturbationEvolver(eqx.Module):
     """
 
     perturbations_list : tuple  #= eqx.static_field()
+    k_axis_perturbations : jnp.array
+    start_small_k : jnp.float64
+    start_large_k : jnp.float64
 
+    def __init__(
+        self,
+        perturbations_list,
+        k_axis_perturbations=jnp.geomspace(1.e-4, 0.4, 600),
+        start_small_k=0.0015,
+        start_large_k=0.07,
+    ):
+        self.perturbations_list = perturbations_list
+        self.k_axis_perturbations = k_axis_perturbations
+        self.start_small_k = start_small_k
+        self.start_large_k = start_large_k
 
     def full_evolution(self, args):
         """
@@ -49,6 +63,8 @@ class PerturbationEvolver(eqx.Module):
 
         Parameters:
         -----------
+        k    : jnp.array
+            1D axis of wavenumbers k. Perturbations are computed and stored at these values.
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
 
@@ -63,58 +79,26 @@ class PerturbationEvolver(eqx.Module):
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
         BG, params = args
-        #k = jnp.logspace(-4., -0.3, 100, base=10)
-        k = jnp.geomspace(1.e-4, 0.4, 700)
-        #k = jnp.array([1.e-3, 1.e-2, 1.e-1])
-        #k = jnp.array([1.e-3, 1.e-2])
-        #k = jnp.array([1.e-1])
-        sols = vmap(self.evolution_one_k,in_axes=[0,None])(k,args)
+        lna = jnp.linspace(BG.lna_transfer_start,  0., 500)
 
-        lna = jnp.linspace(BG.lna_transfer_start,  0., 500) # lna_end hardcoded
-        # lna = jnp.linspace(-15., 0., 1000)
-        #lna = jnp.linspace(-15., -7.0, 500)
-        res = vmap(lambda arr: vmap(arr.evaluate)(lna))(sols) # Right now the shape is (Nk, Nlna, Ny)
-        res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
-        #return lna, k, res
-
-        PT = self.make_output_table(k, lna, res, args)
-        return PT
-
-    def full_evolution_scan(self, args):
-        """
-        Evolve perturbations for multiple wavenumber modes.
-
-        Integrates perturbation equations for a range of k modes,
-        then interpolates results onto common time grid.
-
-        Parameters:
-        -----------
-        args : tuple
-            Background cosmology and cosmological parameters (BG, params)
-
-        Returns:
-        --------
-        PerturbationTable
-            Interpolatable table of perturbation evolution
-        """
-        BG, params = args
-        lna = jnp.linspace(BG.lna_transfer_start, 0., 500)  # lna_end hardcoded
-        #lna = jnp.linspace(-14., 0., 1000)
-        k = jnp.geomspace(1.e-4, 0.4, 300)
-        #k = jnp.array([1.e-3, 1.e-2, 1.e-1])
-
-        def body_fun(_, ki):
+        # This scan function is only used if on CPU.
+        # For GPUs we vmap over the wavenumbers instead
+        def scan_fun(_, ki):
             # evolution_one_k returns shape (Nlna, Ny)
-            y = self.evolution_one_k_scan(ki, lna, args)    # (Nlna, Ny)
+            y = self.evolution_one_k(ki, lna, args)    # (Nlna, Ny)
             return None, y
 
-        _, res = lax.scan(body_fun, None, k)      # res has shape (Nk, Nlna, Ny)
-        res = res.transpose(2, 1, 0)              # -> (Ny, Nlna, Nk)
+        if jax.default_backend() =='gpu':
+            res = vmap(self.evolution_one_k,in_axes=[0,None,None])(self.k_axis_perturbations, lna, args)
+        else: 
+            _, res = lax.scan(scan_fun, None, self.k_axis_perturbations)      # res has shape (Nk, Nlna, Ny)
 
-        PT = self.make_output_table(k, lna, res, args)
+        res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
+
+        PT = self.make_output_table(lna, res, args)
         return PT
 
-    def get_tca_on_off(self, k, args):
+    def get_starting_time(self, k, args):
         """
         Determine tight coupling approximation time range.
 
@@ -124,8 +108,6 @@ class PerturbationEvolver(eqx.Module):
 
         Parameters:
         -----------
-        k : float
-            Wavenumber (units: Mpc^{-1})
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
 
@@ -140,11 +122,6 @@ class PerturbationEvolver(eqx.Module):
         τc/τh > 0.015 (end), τc/τk > 0.01 (end).
         """
         BG, params = args
-        # thresholds
-        thr1 = 0.0015   # start_small_k_at_tau_c_over_tau_h
-        thr2 = 0.07     # start_large_k_at_tau_h_over_tau_k
-        thr3 = 0.015    # tight_coupling_trigger_tau_c_over_tau_h
-        thr4 = 0.01     # tight_coupling_trigger_tau_c_over_tau_k
 
         # 1) Starting lna
         lna_start_range = jnp.linspace(-20.0, -10.0, 10000)
@@ -152,30 +129,16 @@ class PerturbationEvolver(eqx.Module):
         # a) τc/τh  →  f1(lna) = BG.tau_c * BG.aH
         f1 = BG.tau_c(lna_start_range, params) * BG.aH(lna_start_range, params)
         # invert f1(lna) = thr1  →  lna = interp(thr1, f1, lna_range)
-        lna1 = jnp.interp(thr1, f1, lna_start_range)    # jnp.interp ends up being 
+        lna1 = jnp.interp(self.start_small_k, f1, lna_start_range)    # jnp.interp ends up being 
                                                         # faster than fast_interp through here
-
         # b) τh/τk  →  f2(lna) = k / BG.aH
         f2 = k / BG.aH(lna_start_range, params)
         # invert f2(lna) = thr2
-        lna2 = jnp.interp(thr2, f2, lna_start_range)
+        lna2 = jnp.interp(self.start_large_k, f2, lna_start_range)
 
         lna_ini = jnp.minimum(lna1, lna2)
 
-        # 2) Ending lna
-        lna_end_range = jnp.linspace(-15.0, -6.0, 10000)
-
-        # a) τc/τh  →  f3(lna) = BG.tau_c * BG.aH
-        f3 = BG.tau_c(lna_end_range, params) * BG.aH(lna_end_range, params)
-        lna3 = jnp.interp(thr3, f3, lna_end_range) 
-
-        # b) τc/τk  →  f4(lna) = k * BG.tau_c
-        f4 = k * BG.tau_c(lna_end_range, params)
-        lna4 = jnp.interp(thr4, f4, lna_end_range)
-
-        lna_end = jnp.minimum(lna3, lna4)
-
-        return lna_ini, lna_end
+        return lna_ini
 
     def initial_conditions_one_k(self, k, lna_ini, args):
         """
@@ -271,63 +234,7 @@ class PerturbationEvolver(eqx.Module):
 
         return y_prime
 
-    def evolution_one_k(self, k, args):
-        """
-        Evolve perturbations for single wavenumber mode.
-
-        Integrates Einstein-Boltzmann equations from early times through
-        recombination to late times using adaptive time stepping.
-
-        Parameters:
-        -----------
-        k : float
-            Wavenumber (units: Mpc^{-1})
-        args : tuple
-            Background cosmology and cosmological parameters (BG, params)
-
-        Returns:
-        --------
-        diffrax.Solution
-            Dense solution object for interpolation
-
-        """
-        BG, params = args
-        ### DIFFRAX INTEGRATION ###
-
-        lna_start, lna_tca_off = self.get_tca_on_off(k, args) # Start and end times from tight coupling settings
-        lna_end = 0.0
-
-        # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
-        # at the very least.
-        lna_start = jnp.minimum(lna_start,-10.0)
-    
-        # Initial conditions for tight coupling
-        y_ini = self.initial_conditions_one_k(k, lna_start, args)
-
-        # Settings for post-tight coupling
-        term = diffrax.ODETerm(self.get_derivatives)
-        solver = diffrax.Kvaerno5()
-        stepsize_controller = diffrax.PIDController(pcoeff=0.25, icoeff=0.80, dcoeff=0, rtol=1.e-3, atol=1.e-6) # DISCO-EB settings
-        #stepsize_controller = diffrax.PIDController(rtol=1.e-5, atol=1.e-10)
-        saveat = diffrax.SaveAt(dense=True)
-        adjoint=diffrax.ForwardMode()
-
-        sol = diffrax.diffeqsolve(
-            term, solver,
-            t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
-            stepsize_controller=stepsize_controller,
-            max_steps=4096,
-            saveat=saveat,
-            args=(k,*args),
-            adjoint=adjoint
-        )
-
-        ### END OF DIFFRAX INTEGRATION ###
-
-        return sol
-        #return vmap(sol.evaluate)(lna)
-
-    def evolution_one_k_scan(self, k, lna, args):
+    def evolution_one_k(self, k, lna, args):
         """
         Evolve perturbations for single wavenumber mode.
 
@@ -351,7 +258,7 @@ class PerturbationEvolver(eqx.Module):
         """
         ### DIFFRAX INTEGRATION ###
 
-        lna_start, lna_tca_off = self.get_tca_on_off(k, args) # Start and end times from tight coupling settings
+        lna_start = self.get_starting_time(k, args) # Start and end times from tight coupling settings
         lna_end = 0.0
 
         # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
@@ -365,8 +272,24 @@ class PerturbationEvolver(eqx.Module):
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
         solver = diffrax.Kvaerno5()
-        stepsize_controller = diffrax.PIDController(pcoeff=0.25, icoeff=0.80, dcoeff=0, rtol=1.e-3, atol=1.e-6) # DISCO-EB settings
-        #stepsize_controller = diffrax.PIDController(rtol=1.e-3, atol=1.e-6)
+
+        rtol=jnp.where(
+            k > 1.e-2,
+            1.e-3,
+            1.e-5
+        )
+
+        atol=jnp.where(
+            k > 1.e-2,
+            1.e-6,
+            1.e-10
+        )
+
+        # This along with max_steps=10000 did not help with l > 3500
+        #rtol = 1.e-5
+        #atol = 1.e-8
+
+        stepsize_controller = diffrax.PIDController(pcoeff=0.25, icoeff=0.80, dcoeff=0, rtol=rtol, atol=atol)
         saveat = diffrax.SaveAt(dense=True)
         adjoint=diffrax.ForwardMode()
 
@@ -384,7 +307,7 @@ class PerturbationEvolver(eqx.Module):
 
         return vmap(sol.evaluate)(lna)
 
-    def make_output_table(self, k, lna, modes, args):
+    def make_output_table(self, lna, modes, args):
         """
         Create interpolatable perturbation table from evolution results.
 
@@ -392,8 +315,6 @@ class PerturbationEvolver(eqx.Module):
 
         Parameters:
         -----------
-        k : array
-            Wavenumber grid (units: Mpc^{-1})
         lna : array
             Logarithm of scale factor grid
         modes : array
@@ -407,6 +328,7 @@ class PerturbationEvolver(eqx.Module):
             Organized perturbation data for interpolation
 
         """
+        k = self.k_axis_perturbations
         BG, params = args
         CDM    = self.perturbations_list[-4]
         Baryon = self.perturbations_list[-3]

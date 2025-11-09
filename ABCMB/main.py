@@ -11,7 +11,7 @@ import os
 file_dir = os.path.dirname(__file__)
 
 from .hyrex import hyrex
-from . import cosmology, perturbations, spectrum
+from . import cosmology, perturbations, spectrum, model_specs
 from . import constants as cnst
 from . import AbstractSpecies as AS
 from .ABCMBTools import bilinear_interp
@@ -22,44 +22,6 @@ from .linx.nuclear import NuclearRates
 from .linx import const as linxconst
 
 config.update("jax_enable_x64", True)
-
-class Precision(eqx.Module):
-    """
-    Computational precision parameters.
-
-    Contains constants for transfer function calculations and
-    line-of-sight integrals.
-
-    Attributes:
-    -----------
-    T0_largek_cut : float
-        T0 term k-space cutoff (units: Mpc^{-1})
-    T1_largek_cut : float
-        T1 term k-space cutoff (units: Mpc^{-1})
-    T2_largek_cut : float
-        T2 term k-space cutoff (units: Mpc^{-1})
-    E0_largek_cut : float
-        E-mode polarization k-space cutoff (units: Mpc^{-1})
-    tau_c_over_tau_h_largex_cut : float
-        Thomson scattering time threshold
-    jl_smallx_cut : float
-        Spherical Bessel function cutoff threshold
-    """
-
-    ### TRANSFER FUNCTION RELATED ###
-
-    # MULTIPOLE CUT APPROXIMATION #
-    # These are the CLASS defaults, all for SCALAR MODES.
-    # Cuts the line of sight integral over k, for a given ell mode, equal to kmax = l/rA_rec + X_largek_cut,
-    # where rA_rec is the comoving sound horizon at recombination
-    T0_largek_cut : float = 0.15 # T0 term of the temperature source function, contains SW and a part of the ISW effects.
-    T1_largek_cut : float = 0.04 # T1 term of the temperature source function, contains the remaining ISW effect.
-    T2_largek_cut : float = 0.15 # T2 term of the temperature source function
-    E0_largek_cut : float = 0.11 # E-mode polarization term.
-
-    # TIME CUT APPROXIMATION #
-    tau_c_over_tau_h_largex_cut : float = 0.008 # Start the lna integration at a time when aH x tau_c = tau_c_over_tau_h_largex_cut.
-    jl_smallx_cut               : float = 1.e-5 # Stop the upperbound of the lna integration at a time when jl(x) < jl_smallx_cut, where x=k(tau0-tau).
 
 class Model(eqx.Module):
     """
@@ -77,32 +39,29 @@ class Model(eqx.Module):
     add_derived_parameters : Compute derived parameters
     """
 
-    RM : hyrex.recomb_model
-    #PE : perturbations.PerturbationEvolver
+    PE : perturbations.PerturbationEvolver
     SS : spectrum.SpectrumSolver
+    RM : hyrex.recomb_model
 
     species_list       : tuple = ()
     perturbations_list : tuple = ()
-
-    return_PTBG : bool
 
     bbn_type                : str = ""
     linx_reaction_net       : str = ""
     
     PArthENoPE_CLASS_table  : Array #= eqx.field(converter=jnp.asarray)
 
+    return_PTBG : bool
+
     ### ADDING SPECIES: add has_ parameter and add condition to append to tuple.
     # In the init, all species that are present within the model should be set to True.
     # All couplings present between species should be set to true. 
     def __init__(self,
-                 ellmin = 2,
-                 ellmax = 2500,
-                 lensing = False,
-                 has_MassiveNeutrinos=False,
+                 input_specs = {},
                  user_species=None,
-                 return_PTBG=False,
                  bbn_type = "",
-                 linx_reaction_net = "key_PRIMAT_2023"
+                 linx_reaction_net = "key_PRIMAT_2023",
+                 return_PTBG=False,
                  ):
         """
         Initialize Model instance.
@@ -128,62 +87,50 @@ class Model(eqx.Module):
             Nuclear reaction network for LINX (default: "key_PRIMAT_2023")
         """
 
-        self.SS = spectrum.SpectrumSolver(ellmin, ellmax, lensing, switch_sw=1., switch_isw=1., switch_dop=1., switch_pol=1.)
+        # Fill in all user defined and missing specs parameters
+        specs = model_specs.load_specs(input_specs)
 
-        diffrax_vector_idx = 2 # The first two indices (0 and 1) are always reserved for the metric perturbations.
-        perturbations_list = ()
+        # Populate all species
+        self.species_list, self.perturbations_list = model_specs.populate_species(
+            user_species,
+            specs,
+        )   
 
-        dark_energy = AS.DarkEnergy()
-        self.species_list = self.species_list + (dark_energy,)
+        # Initialize perturbation evolver
+        k_axis_perturbations = model_specs.get_k_axis_perturbations(specs)
+        self.PE = perturbations.PerturbationEvolver(
+            self.perturbations_list, 
+            k_axis_perturbations,
+            specs["start_small_k"],
+            specs["start_large_k"]
+        )
 
-        if has_MassiveNeutrinos:
-            massive_neutrinos = AS.MassiveNeutrinos(diffrax_vector_idx)
-            self.species_list   = self.species_list + (massive_neutrinos,)
-            diffrax_vector_idx += massive_neutrinos.num_ell_modes # Add to total length of Diffrax vector
+        # Intialize spectrum solver
+        k_axis_transfer = model_specs.get_k_axis_transfer(specs)
+        self.SS = spectrum.SpectrumSolver(
+            specs["l_min"],
+            specs["l_max"],
+            specs["lensing"],
+            k_axis_transfer,
+            k_pivot=specs["k_pivot"],
+            switch_sw=specs["switch_sw"],
+            switch_isw=specs["switch_isw"],
+            switch_dop=specs["switch_dop"],
+            switch_pol=specs["switch_pol"]
+        )
 
-        # user species must be defined before CDM, since ABCMB expects
-        # fixed indices for CDM, baryons, photons, and massive neutrinos
-
-        if user_species is not None:
-            for species in user_species:
-                fn = lambda spec: spec.delta_idx
-                # update delta_idx, for which the user probably used default
-                # value 0
-                updated_species = eqx.tree_at(fn, species, diffrax_vector_idx)
-                self.species_list = self.species_list + (updated_species,)
-                diffrax_vector_idx += updated_species.num_ell_modes
-
-        # These perturbed species are always present in all runs.
-        # massless neutrinos are last, photons are second to last, baryons third to last, CDM fourth to last.
-
-        cold_dark_matter = AS.ColdDarkMatter(diffrax_vector_idx)
-        self.species_list = self.species_list + (cold_dark_matter,)
-        diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
-
-        baryon = AS.Baryon(dark_energy, diffrax_vector_idx) # CG switched order
-        diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
-
-        photon = AS.Photon(diffrax_vector_idx, baryon)
-        diffrax_vector_idx += photon.num_ell_modes # Add to total length of Diffrax vector
-
-        baryon = eqx.tree_at(lambda b : b.photon, baryon, photon)
-        self.species_list = self.species_list + (baryon, photon,)
-
-        massless_neutrinos = AS.MasslessNeutrinos(diffrax_vector_idx)
-        self.species_list   = self.species_list + (massless_neutrinos,)
-        diffrax_vector_idx += massless_neutrinos.num_ell_modes # Add to total length of Diffrax vector
-
-        for species in self.species_list:
-            if isinstance(species, AS.AbstractPerturbedFluid):
-                self.perturbations_list = self.perturbations_list + (species, )
-
+        # Initialize recombination model
         self.RM = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
-        #self.PE = perturbations.PerturbationEvolver(perturbations_list)
-        self.return_PTBG = return_PTBG
+
+        # Initialize BBN model
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         self.bbn_type = bbn_type
         self.linx_reaction_net = linx_reaction_net
-    
+
+        self.return_PTBG = return_PTBG
+
+    ### JITTED OR JITTABLE FUNCTIONS ###
+
     # @jit
     @eqx.filter_jit
     def run_cosmology(self, params : dict):
@@ -203,24 +150,12 @@ class Model(eqx.Module):
         tuple
             (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
         """
-        # Set up the parameter handler object for the current run given the set
-        # of parameters. This is to be passed to individual species instances to
-        # calculate relevant quantities such as the energy density.
-        #PT, BG = self.get_PTBG(params)
-        ### COMPUTING POWER SPECTRA ###
-        #idxs = jnp.arange(18, 30) # Only compute at tabulated l positions. Future: Adjust l_max # CG: 80 for l = 2000
-        #return spectrum.bessel_l_tab[idxs], self.SS.get_Cl(idxs, PT, BG)
+
         params = self.add_derived_parameters(params)
         PT, BG = self.get_PTBG(params)
-        #return self.SS.Pk_lin(PT.k, 0., PT, BG)
-        #return PT.delta_b
-        if jax.default_backend() =='gpu':
-            # vmap for GPU
-            Cls = self.SS.get_Cl_vmap(PT, BG, params)
-        else:
-            # lax.scan for CPU
-            Cls = self.SS.get_Cl(PT, BG, params)
+        Cls = self.SS.get_Cl(PT, BG, params)
         ells = self.SS.ells
+        
         if self.return_PTBG:
             return ells, Cls, PT, BG
         else:
@@ -245,16 +180,8 @@ class Model(eqx.Module):
             (PerturbationTable, Background) objects
         """
         BG = self.get_BG(params)
-        # params = self.add_derived_parameters(params)
-        PE = perturbations.PerturbationEvolver(self.perturbations_list)
-        
-        # Specify whether to use full_evolution() or full_evolution_scan()
-        if jax.default_backend() =='gpu':
-            # vmap on GPU
-            PT = PE.full_evolution((BG, params))
-        else:
-            # lax.scan on CPU
-            PT = PE.full_evolution_scan((BG, params))
+        PT = self.PE.full_evolution((BG, params))
+
         return PT, BG
 
     @eqx.filter_jit

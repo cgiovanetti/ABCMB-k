@@ -7,6 +7,7 @@ from diffrax import diffeqsolve, ODETerm, Dopri5, Kvaerno3, Kvaerno5, Tsit5, Sav
 from jax.scipy.interpolate import RegularGridInterpolator
 from functools import partial
 from interpax import CubicSpline
+from scipy.special import spherical_jn
 
 from . import ABCMBTools as tools
 from . import constants as cnst
@@ -18,13 +19,11 @@ config.update("jax_enable_x64", True)
 
 bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/l.txt", dtype="int"))
 bessel_x_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/x.txt"))
-bessel_stop_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/jl_stop.txt"))
 
 # 2D arrays of tabulated spherical functions over l and x axes.
 bessel_phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
 bessel_phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
 bessel_phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
-bessel_epsilon_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/epsilon.txt"))
 
 try:
     gpus = jax.devices('gpu')
@@ -32,16 +31,12 @@ try:
         bessel_l_tab, device=gpus[0])
     bessel_x_tab = jax.device_put(
         bessel_x_tab, device=gpus[0])
-    bessel_stop_tab = jax.device_put(
-        bessel_stop_tab, device=gpus[0])
     bessel_phi0_tab = jax.device_put(
         bessel_phi0_tab, device=gpus[0])
     bessel_phi1_tab = jax.device_put(
         bessel_phi1_tab, device=gpus[0])
     bessel_phi2_tab = jax.device_put(
         bessel_phi2_tab, device=gpus[0])
-    bessel_epsilon_tab = jax.device_put(
-        bessel_epsilon_tab, device=gpus[0])
 except: 
     pass
 
@@ -120,29 +115,6 @@ def phi2(i, x):
     #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
     return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi2_tab[:, i])
 
-def epsilon(i, x):
-    """
-    Compute polarization coupling function ε.
-
-    Parameters:
-    -----------
-    i : int
-        Index into bessel_l_tab for multipole ℓ
-    x : float
-        Argument of coupling function
-
-    Returns:
-    --------
-    float
-        ε(x) for multipole ℓ = bessel_l_tab[i]
-
-    Notes:
-    ------
-    1312.2697 Eq. (3.19b)
-    """
-    #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
-    return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_epsilon_tab[:, i])
-
 class SpectrumSolver(eqx.Module):
     """
     CMB angular power spectrum computation.
@@ -164,7 +136,13 @@ class SpectrumSolver(eqx.Module):
 
     ells         : jnp.array
     ells_indices : jnp.array
+
+    lensing_ells : jnp.array
+    lensing_ells_indices : jnp.array
+
     lensing : bool
+
+    k_axis_transfer : jnp.array
 
     k_pivot    : float = 0.05 # In 1/Mpc
     switch_sw  : float = 1.
@@ -175,7 +153,8 @@ class SpectrumSolver(eqx.Module):
     def __init__(self,
                  ellmin=2,
                  ellmax=2500,
-                 lensing=True,
+                 lensing=False,
+                 k_axis_transfer=jnp.geomspace(1.e-4, 0.4, 2500),
                  k_pivot=0.05,
                  switch_sw=1,
                  switch_isw=1,
@@ -207,14 +186,25 @@ class SpectrumSolver(eqx.Module):
             Switch for polarization term (default: 1)
         """
 
+        self.lensing = lensing
+
         self.ells = jnp.arange(ellmin, ellmax+1)
         ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
         ell_idx_max = jnp.where(bessel_l_tab>=ellmax)[0][0]
         self.ells_indices = jnp.arange(ell_idx_min, ell_idx_max+1)
         
-        self.lensing = lensing
+        if self.lensing:
+            lensing_ellmax = ellmax+500
+            lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
+            self.lensing_ells = jnp.arange(ellmin, lensing_ellmax+1)
+            self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
+        else:
+            self.lensing_ells = self.ells
+            self.lensing_ells_indices = self.ells_indices
 
+        self.k_axis_transfer = k_axis_transfer
         self.k_pivot    = k_pivot
+
         self.switch_sw  = switch_sw
         self.switch_isw = switch_isw
         self.switch_dop = switch_dop
@@ -353,8 +343,9 @@ class SpectrumSolver(eqx.Module):
             res = chi(lna)/BG.aH(lna, params) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
             return res
 
-        lna_axis = jnp.linspace(BG.lna_rec, 0., 4000)
+        lna_axis = jnp.linspace(BG.lna_rec, 0., 500)
         integrand = vmap(integrand_func)(lna_axis)
+        integrand = jnp.nan_to_num(integrand, nan=0.)
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
 
     def lensed_Cls(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, PT, BG, params):
@@ -388,7 +379,12 @@ class SpectrumSolver(eqx.Module):
         """
         #beta = jnp.linspace(0., jnp.pi/16., 5000)
         #mu = jnp.cos(beta)
-        mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 1000)
+        # CLASS samples angle uniformly
+        # 500 points is enough for lmax < 4000
+        theta = jnp.linspace(0., jnp.pi/16., 500)
+
+        # Flip mu so that mu is in ascending order, works better for trapz.
+        mu = jnp.flip(jnp.cos(theta))
 
         # Compute lensing Cl
         Clpp = self.lensing_Cl(ells, PT, BG, params)
@@ -420,7 +416,6 @@ class SpectrumSolver(eqx.Module):
         Cgl2 = 1./4./jnp.pi * jnp.sum(
             (2.*ells+1)*ells*(ells+1)*Clpp*dm11, axis=1
         ) # Nmu
-        #sigma2     = Cgl[0] - Cgl
         sigma2     = Cgl[-1] - Cgl
         Cgl    = Cgl[:, None]
         Cgl2   = Cgl2[:, None]
@@ -478,37 +473,11 @@ class SpectrumSolver(eqx.Module):
             axis=1
         )
         
-        #ClTT = 2.*jnp.pi * jnp.trapezoid(corTT[:, None]*d00*jnp.sin(beta)[:, None], beta, axis=0) # Integrand becomes (Nmu, Nells), result is Nells
         ClTT = 2.*jnp.pi * jnp.trapezoid(ksi[:, None]*d00, mu, axis=0) + ClTT_unlensed
         ClTE = 2.*jnp.pi * jnp.trapezoid(ksix[:, None]*d20, mu, axis=0) + ClTE_unlensed
         ClEE = 1./2. * 2.*jnp.pi * jnp.trapezoid(ksip[:, None]*d22+ksim[:, None]*d2m2, mu, axis=0) + ClEE_unlensed
 
         return (ClTT, ClTE, ClEE)
-
-    # def get_Cl(self, PT, BG):
-    #     """
-    #     Compute angular power spectra for multiple multipoles.
-
-    #     Parameters:
-    #     -----------
-    #     idxs : array
-    #         Indices into bessel_l_tab for desired multipoles
-    #     PT : perturbations.PerturbationTable
-    #         Perturbation evolution table
-    #     BG : cosmology.Background
-    #         Background cosmology module
-
-    #     Returns:
-    #     --------
-    #     array
-    #         Angular power spectra (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE) for each ℓ
-    #     """
-    #     ells = bessel_l_tab[self.ells_indices]
-    #     Cls_raw = vmap(lambda idx : self.Cl_one_ell(idx, PT, BG))(self.ells_indices)
-    #     return ells, Cls_raw
-    #     # Cubic interpolate onto 
-
-    #     return 0.
 
     def get_Cl(self, PT, BG, params):
         """
@@ -529,79 +498,39 @@ class SpectrumSolver(eqx.Module):
             (ClTT, ClTE, ClEE) angular power spectra
         """
 
-        def scan_fun(_, idx):
-            cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
-            return None, jnp.array([cltt, clte, clee])
+        if jax.default_backend() == "gpu":
+            
+            tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
 
-        _, Cls_raw = lax.scan(scan_fun, None, self.ells_indices)
+        else:
+            
+            def scan_fun(_, idx):
+                cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
+                return None, jnp.array([cltt, clte, clee])
+
+            _, Cls_raw = lax.scan(scan_fun, None, self.lensing_ells_indices)
+            tt_raw = Cls_raw[:, 0]
+            te_raw = Cls_raw[:, 1]
+            ee_raw = Cls_raw[:, 2]
 
         # Cubic spline for smooth Cl over user requested ells
-
-        tt_raw = Cls_raw[:, 0]
-        te_raw = Cls_raw[:, 1]
-        ee_raw = Cls_raw[:, 2]
-
-        ells = bessel_l_tab[self.ells_indices]
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
+        lensing_ells = bessel_l_tab[self.lensing_ells_indices]
+        tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
+        te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
+        ee_unlensed = CubicSpline(lensing_ells, ee_raw, check=False)(self.lensing_ells)
 
         def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+            tt_lensed, te_lensed, ee_lensed = self.lensed_Cls(self.lensing_ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+            return (tt_lensed[self.ells-2], te_lensed[self.ells-2], ee_lensed[self.ells-2])
 
         def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
+            return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2])
 
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
         return lax.cond(
             self.lensing,
             get_lensed_Cls,
             get_unlensed_Cls
         )
-        #return get_lensed_Cls()
-
-    def get_Cl_vmap(self, PT, BG, params):
-        """
-        Compute angular power spectra for multiple multipoles using vmap.
-
-        Parameters:
-        -----------
-        PT : perturbations.PerturbationTable
-            Perturbation evolution table
-        BG : cosmology.Background
-            Background cosmology module
-        params : dict
-            Dictionary of input and derived parameters
-
-        Returns:
-        --------
-        tuple
-            (ClTT, ClTE, ClEE) angular power spectra
-        """
-
-        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.ells_indices, PT, BG, params)
-
-        ells = bessel_l_tab[self.ells_indices]
-        # return ells, tt_raw, te_raw, ee_raw
-        # return tt_raw, te_raw, ee_raw
-
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
-
-        def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
-
-        def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
-
-        #return (tt_unlensed, te_unlensed, ee_unlensed)
-        return lax.cond(
-            self.lensing,
-            get_lensed_Cls,
-            get_unlensed_Cls
-        )
-        #return get_lensed_Cls()
 
     def Cl_one_ell(self, idx, PT, BG, params):
         """
@@ -625,15 +554,8 @@ class SpectrumSolver(eqx.Module):
         tuple
             (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE) angular power spectra
         """
-        # Beyond this k point the bessel function vanishes exponentially.
-        k_cut_small = 0.95*bessel_l_tab[idx]/BG.rA_rec
-
-        # The upperbound of the integral is given by the multipole cut approximation in arxiv:1312.2697
-        # For now, the integration axis is chosen to be a logspaced grid, from kmin to kmin+kcut.
-        # This is because for k>kmin, the integrand ~jl^2 which experiences asymptotic damping for larger k's.
-        # The peak values of the envelope drop by a few orders of magnitude within 3-4 peaks or so, so its
-        # only really important to have high resolution near kmin. 
-        k_T0_axis = jnp.geomspace(k_cut_small, k_cut_small+0.15, 1000) 
+        l = bessel_l_tab[idx]
+        k_T0_axis = self.k_axis_transfer
         lna_axis = PT.lna
 
         ### TRANSFER FUNCTION ###
@@ -653,7 +575,7 @@ class SpectrumSolver(eqx.Module):
         aH_dot    = aH_dot[:, None]
 
         # Perturbations, all (Nk, Nlna) 2D vectors
-        # interp_column = lambda col : jnp.interp(jnp.log10(k_T0_axis), jnp.log10(PT.k), col)
+        # Cubic Spline is necessary here for accuracy. 
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
@@ -667,12 +589,8 @@ class SpectrumSolver(eqx.Module):
         eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime)
         alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
         alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
-        
-        #sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) 
-        #sourceT0 = 1.
 
         # Source terms
-        # TODO: fix ISW term
         sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) \
                 + self.switch_isw * (
                     g * (eta - aH*alpha_prime - 2.*aH*alpha) \
@@ -682,11 +600,9 @@ class SpectrumSolver(eqx.Module):
                     aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
                     + g_prime*((theta_b / k_T0_axis**2) + alpha))
                 )
-        #sourceT0 = 0.
 
         sourceT1 = self.switch_isw * expmkappa * \
                 ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
-        #sourceT1 = 0.
 
         sourceT2 = self.switch_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
@@ -695,8 +611,11 @@ class SpectrumSolver(eqx.Module):
         # Bessel functions
         chiT0 = jnp.outer(tau0-tau, k_T0_axis)
 
+        # Note: our phi0's seem to be accurate up to lmax ~ 3000 or so.
+        phi0_tab = phi0(idx, chiT0)
         transferT0 = jnp.trapezoid(
-            sourceT0 / aH * phi0(idx, chiT0),
+            sourceT0 / aH * phi0_tab,
+            #sourceT0 / aH * spherical_jn(l, chiT0),
             lna_axis, axis=0
         )
 
@@ -709,9 +628,13 @@ class SpectrumSolver(eqx.Module):
             sourceT2 / aH * phi2(idx, chiT0),
             lna_axis, axis=0
         )
+        
+        epsilon_tab = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1)) / chiT0**2
+        epsilon_tab = epsilon_tab.at[-1].set(jnp.zeros(k_T0_axis.size)) # Filter out the chiT0=0 part
+        epsilon_tab *= phi0_tab
 
         transferE = jnp.trapezoid(
-            sourceE / aH * epsilon(idx, chiT0),
+            sourceE / aH * epsilon_tab,
             lna_axis, axis=0
         )
 
@@ -724,5 +647,9 @@ class SpectrumSolver(eqx.Module):
         integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
         integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
         integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
-        #return k_T0_axis, (integrandTT, integrandTE, integrandEE)
-        return (jnp.trapezoid(integrandTT, k_T0_axis), jnp.trapezoid(integrandTE, k_T0_axis), jnp.trapezoid(integrandEE, k_T0_axis))
+        
+        return (
+            jnp.trapezoid(integrandTT, k_T0_axis),
+            jnp.trapezoid(integrandTE, k_T0_axis),
+            jnp.trapezoid(integrandEE, k_T0_axis)
+        )
