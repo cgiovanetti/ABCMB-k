@@ -57,7 +57,7 @@ class Model(eqx.Module):
     # In the init, all species that are present within the model should be set to True.
     # All couplings present between species should be set to true. 
     def __init__(self,
-                 precision_in = {},
+                 input_specs = {},
                  user_species=None,
                  bbn_type = "",
                  linx_reaction_net = "key_PRIMAT_2023",
@@ -87,36 +87,36 @@ class Model(eqx.Module):
             Nuclear reaction network for LINX (default: "key_PRIMAT_2023")
         """
 
-        # Fill in all user defined and missing precision parameters
-        precision = model_specs.load_specs(precision_in)
+        # Fill in all user defined and missing specs parameters
+        specs = model_specs.load_specs(input_specs)
 
         # Populate all species
         self.species_list, self.perturbations_list = model_specs.populate_species(
             user_species,
-            precision,
+            specs,
         )   
 
         # Initialize perturbation evolver
-        k_axis_perturbations = model_specs.get_k_axis_perturbations(precision)
+        k_axis_perturbations = model_specs.get_k_axis_perturbations(specs)
         self.PE = perturbations.PerturbationEvolver(
             self.perturbations_list, 
             k_axis_perturbations,
-            precision["start_small_k"],
-            precision["start_large_k"]
+            specs["start_small_k"],
+            specs["start_large_k"]
         )
 
         # Intialize spectrum solver
-        k_axis_transfer = model_specs.get_k_axis_transfer(precision)
+        k_axis_transfer = model_specs.get_k_axis_transfer(specs)
         self.SS = spectrum.SpectrumSolver(
-            precision["l_min"],
-            precision["l_max"],
-            precision["lensing"],
+            specs["l_min"],
+            specs["l_max"],
+            specs["lensing"],
             k_axis_transfer,
-            k_pivot=precision["k_pivot"],
-            switch_sw=precision["switch_sw"],
-            switch_isw=precision["switch_isw"],
-            switch_dop=precision["switch_dop"],
-            switch_pol=precision["switch_pol"]
+            k_pivot=specs["k_pivot"],
+            switch_sw=specs["switch_sw"],
+            switch_isw=specs["switch_isw"],
+            switch_dop=specs["switch_dop"],
+            switch_pol=specs["switch_pol"]
         )
 
         # Initialize recombination model

@@ -1,12 +1,10 @@
 from classy import Class
-
-import sys
-sys.path.append('../')
-# sys.path.append('../ABCMB')
-# print(sys.path)
-
 import os
 os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
+file_dir = os.path.dirname(__file__)
+
+import sys
+sys.path.append(file_dir+'/../')
 # print(os.getcwd())
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -26,6 +24,11 @@ def test_accuracy_checker(h = 0.6762):
     ellmax = 2500
     try:
         # ABCMB:
+        specs = {
+            "lensing" : True,
+            "l_max" : ellmax
+        }
+
         params = {
             'h': h,
             'omega_cdm': 0.1193,
@@ -40,44 +43,58 @@ def test_accuracy_checker(h = 0.6762):
             'T_ncdm': 0.71611 * 2.34865418e-4,
         }
 
-        model = Model(ellmin=ellmin, ellmax=ellmax, lensing=False) # ZZ: model now takes ellmin, ellmax for Cls, and want_lensing
+        model = Model(specs) # ZZ: model now takes ellmin, ellmax for Cls, and want_lensing
         ABC_ell, ABC_Cls = model.run_cosmology(params)
         ABC_tt = ABC_Cls[0] 
         ABC_te = ABC_Cls[1] 
         ABC_ee = ABC_Cls[2] 
-        # ABC_ell = model.SS.ells # SpectrumSolver now automatically computes ells between specified ellmin and ellmax
-
+        
+        params = model.add_derived_parameters(params)
 
         # CLASS:
         CLASS_params = {
-            'h': params["h"],
-            'omega_cdm': params['omega_cdm'],
-            'omega_b': params['omega_b'],
-            'A_s': params['A_s'],
-            'n_s': params['n_s'],
-            'N_ur' : params['Neff'],
-            'YHe': params['YHe'],
-            'N_ncdm': 0,
-            'output':'mPk, tCl, pCl',
-            'lensing':'no',
-            'P_k_max_h/Mpc':1.0
+            "output": "mPk, tCl, pCl, lCl",
+            "l_max_scalars" : specs["l_max"],
+            "lensing" : "yes",
+            "H0": params["h"]*100,
+            "omega_b": params["omega_b"],
+            "omega_cdm": params["omega_cdm"],
+            "A_s" : params["A_s"],
+            "n_s" : params["n_s"],
+            "N_ur": params["N_ur"],
+            "YHe": params["YHe"],
+            "N_ncdm": params["N_ncdm"],
+            "reio_parametrization" : "reio_camb",
+            "z_reio" : 11,
+            "reionization_width" : 0.5,
+            "helium_fullreio_redshift" : 3.5,
+            "helium_fullreio_width" : 0.5,
+            "reionization_exponent" : 1.5,
+            "l_max_g": 15,
+            "l_max_pol_g": 10,
+            "l_max_ur": 12, 
+            "l_max_ncdm":17,
+            "radiation_streaming_trigger_tau_over_tau_k" : 20000,
+            "radiation_streaming_trigger_tau_c_over_tau" : 2000,
+            "ur_fluid_trigger_tau_over_tau_k" : 10000, 
+            "ncdm_fluid_trigger_tau_over_tau_k" : 15000
         }
 
         CLASS_Model = Class()
         CLASS_Model.set(CLASS_params)
 
         CLASS_Model.compute()
-        cl = CLASS_Model.raw_cl(ellmax)
+        cl = CLASS_Model.lensed_cl(ellmax)
         cltt=cl["tt"][ellmin:]
-        ell = cl["ell"][ellmin:]
+        ell = cl["ell"][ellmax:]
 
         # Compare all ells
         err_tt = abs(cltt-ABC_tt)/cltt
         print(err_tt.max())
 
-        assert max(err_tt) <= 0.21, f"Accuracy check failed: {err_tt}"
+        assert max(err_tt) <= 0.01, f"Accuracy check failed: {err_tt}"
     
     except Exception as e:
         pytest.fail(f"accuracy_checks raised an exception: {e}")
 
-#print(test_accuracy_checker())
+# print(test_accuracy_checker())
