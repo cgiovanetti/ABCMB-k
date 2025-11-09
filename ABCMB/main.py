@@ -180,8 +180,7 @@ class Model(eqx.Module):
             (PerturbationTable, Background) objects
         """
         BG = self.get_BG(params)
-        PE = perturbations.PerturbationEvolver(self.perturbations_list) 
-        PT = PE.full_evolution((BG, params))
+        PT = self.PE.full_evolution((BG, params))
 
         return PT, BG
 
