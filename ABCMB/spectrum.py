@@ -165,6 +165,10 @@ class SpectrumSolver(eqx.Module):
 
     ells         : jnp.array
     ells_indices : jnp.array
+
+    lensing_ells : jnp.array
+    lensing_ells_indices : jnp.array
+
     lensing : bool
 
     k_axis_transfer : jnp.array
@@ -211,12 +215,21 @@ class SpectrumSolver(eqx.Module):
             Switch for polarization term (default: 1)
         """
 
+        self.lensing = lensing
+
         self.ells = jnp.arange(ellmin, ellmax+1)
         ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
         ell_idx_max = jnp.where(bessel_l_tab>=ellmax)[0][0]
         self.ells_indices = jnp.arange(ell_idx_min, ell_idx_max+1)
         
-        self.lensing = lensing
+        if self.lensing:
+            lensing_ellmax = ellmax+500
+            lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
+            self.lensing_ells = jnp.arange(ellmin, lensing_ellmax+1)
+            self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
+        else:
+            self.lensing_ells = self.ells
+            self.lensing_ells_indices = self.ells_indices
 
         self.k_axis_transfer = k_axis_transfer
         self.k_pivot    = k_pivot
@@ -358,7 +371,7 @@ class SpectrumSolver(eqx.Module):
             window = (chi(BG.lna_rec) - chi(lna))/chi(BG.lna_rec)/chi(lna)
             res = chi(lna)/BG.aH(lna, params) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
             return res
-        lna_axis = jnp.linspace(BG.lna_rec, 0., 400)
+        lna_axis = jnp.linspace(BG.lna_rec, 0., 2000)
         integrand = vmap(integrand_func)(lna_axis)
         integrand = jnp.nan_to_num(integrand, nan=0.)
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
@@ -394,7 +407,10 @@ class SpectrumSolver(eqx.Module):
         """
         #beta = jnp.linspace(0., jnp.pi/16., 5000)
         #mu = jnp.cos(beta)
-        mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 2000)
+        # CLASS samples angle uniformly
+        theta = jnp.linspace(0., jnp.pi/16., 375)
+        mu = jnp.flip(jnp.cos(theta))
+        #mu = jnp.linspace(jnp.cos(jnp.pi/16.), 1., 2000)
 
         # Compute lensing Cl
         Clpp = self.lensing_Cl(ells, PT, BG, params)
@@ -514,7 +530,7 @@ class SpectrumSolver(eqx.Module):
             cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
             return None, jnp.array([cltt, clte, clee])
 
-        _, Cls_raw = lax.scan(scan_fun, None, self.ells_indices)
+        _, Cls_raw = lax.scan(scan_fun, None, self.lensing_ells_indices)
 
         # Cubic spline for smooth Cl over user requested ells
 
@@ -522,16 +538,17 @@ class SpectrumSolver(eqx.Module):
         te_raw = Cls_raw[:, 1]
         ee_raw = Cls_raw[:, 2]
 
-        ells = bessel_l_tab[self.ells_indices]
-        tt_unlensed = CubicSpline(ells, tt_raw, check=False)(self.ells)
-        te_unlensed = CubicSpline(ells, te_raw, check=False)(self.ells)
-        ee_unlensed = CubicSpline(ells, ee_raw, check=False)(self.ells)
+        lensing_ells = bessel_l_tab[self.lensing_ells_indices]
+        tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
+        te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
+        ee_unlensed = CubicSpline(lensing_ells, ee_raw, check=False)(self.lensing_ells)
 
         def get_lensed_Cls():
-            return self.lensed_Cls(self.ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+            tt_lensed, te_lensed, ee_lensed = self.lensed_Cls(self.lensing_ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+            return (tt_lensed[self.ells-2], te_lensed[self.ells-2], ee_lensed[self.ells-2])
 
         def get_unlensed_Cls():
-            return (tt_unlensed, te_unlensed, ee_unlensed)
+            return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2])
 
         #return (tt_unlensed, te_unlensed, ee_unlensed)
         return lax.cond(

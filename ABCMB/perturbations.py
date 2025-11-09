@@ -294,13 +294,13 @@ class PerturbationEvolver(eqx.Module):
 
         rtol=jnp.where(
             k > 1.e-2,
-            1.e-4,
+            1.e-3,
             1.e-5
         )
 
         atol=jnp.where(
             k > 1.e-2,
-            1.e-8,
+            1.e-6,
             1.e-10
         )
 
