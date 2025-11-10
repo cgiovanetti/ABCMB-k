@@ -37,19 +37,22 @@ class PerturbationEvolver(eqx.Module):
     make_output_table : Create interpolatable perturbation table
     """
 
-    perturbations_list : tuple  #= eqx.static_field()
+    perturbed_species_list : tuple  #= eqx.static_field()
+    perturbed_species_dict : dict  = eqx.field(static=True)
     k_axis_perturbations : jnp.array
     start_small_k : jnp.float64
     start_large_k : jnp.float64
 
     def __init__(
         self,
-        perturbations_list,
+        perturbed_species_list,
+        perturbed_species_dict,
         k_axis_perturbations=jnp.geomspace(1.e-4, 0.4, 600),
         start_small_k=0.0015,
         start_large_k=0.07,
     ):
-        self.perturbations_list = perturbations_list
+        self.perturbed_species_list = perturbed_species_list
+        self.perturbed_species_dict = perturbed_species_dict
         self.k_axis_perturbations = k_axis_perturbations
         self.start_small_k = start_small_k
         self.start_large_k = start_large_k
@@ -180,7 +183,7 @@ class PerturbationEvolver(eqx.Module):
         metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*params['R_nu'])*(5.+4.*params['R_nu'] - (16.*params['R_nu']*params['R_nu']+280.*params['R_nu']+325)/10./(2.*params['R_nu']+15.)*tau_ini*om))
         metric_h_ini   = 0.5 * (k * tau_ini)**2 * (1.-om*tau_ini/5.)
 
-        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, params) for p in self.perturbations_list])
+        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, params) for p in self.perturbed_species_list])
         y_ini = jnp.concatenate((jnp.array([metric_h_ini, metric_eta_ini]), all_fluid_ini))
         
         return y_ini
@@ -216,8 +219,8 @@ class PerturbationEvolver(eqx.Module):
         sum_rho_delta = 0.
         sum_rho_plus_P_theta = 0.
         
-        for i in range(len(self.perturbations_list)):
-            species = self.perturbations_list[i]
+        for i in range(len(self.perturbed_species_list)):
+            species = self.perturbed_species_list[i]
             # If species has density perturbation, add to total.
             sum_rho_delta += species.rho_delta(lna, y, params)
             # If species has velocity perturbation, add to total.
@@ -227,10 +230,11 @@ class PerturbationEvolver(eqx.Module):
         metric_eta_prime = 4.*jnp.pi*cnst.G*a**2/aH/k**2 * sum_rho_plus_P_theta / cnst.c_Mpc_over_s**2
 
         # Now loop over all species and assemble their respective y_primes
+        args = (BG, params, self.perturbed_species_list, self.perturbed_species_dict)
         y_prime = jnp.array([metric_h_prime, metric_eta_prime])
-        for i in range(len(self.perturbations_list)):
-            species = self.perturbations_list[i]
-            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, (BG, params))))
+        for i in range(len(self.perturbed_species_list)):
+            species = self.perturbed_species_list[i]
+            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, args)))
 
         return y_prime
 
@@ -330,9 +334,9 @@ class PerturbationEvolver(eqx.Module):
         """
         k = self.k_axis_perturbations
         BG, params = args
-        CDM    = self.perturbations_list[-4]
-        Baryon = self.perturbations_list[-3]
-        Photon = self.perturbations_list[-2]
+        CDM    = self.perturbed_species_list[self.perturbed_species_dict["ColdDarkMatter"]]
+        Baryon = self.perturbed_species_list[self.perturbed_species_dict["Baryon"]]
+        Photon = self.perturbed_species_list[self.perturbed_species_dict["Photon"]]
 
         # Shapes are (Nlna, Nk)
         metric_h   = modes[0]
@@ -350,7 +354,7 @@ class PerturbationEvolver(eqx.Module):
         karr = k[None, :]
         a  = jnp.exp(lna)[:, None]
         aH = BG.aH(lna, params)[:, None]
-        cs2 = Baryon.cs2(lna, (BG, params))[:, None]
+        cs2 = Baryon.cs2(lna, (BG, params, self.perturbed_species_list, self.perturbed_species_dict))[:, None]
         R = 4.*Photon.rho(lna, params)[:, None]/3./Baryon.rho(lna, params)[:, None]
         tau_c = BG.tau_c(lna, params)[:, None]
 
@@ -363,7 +367,7 @@ class PerturbationEvolver(eqx.Module):
         sum_rho_plus_P_theta = jnp.zeros_like(modes[0])
         sum_rho_plus_P_sigma = jnp.zeros_like(modes[0])
 
-        for s in self.perturbations_list:
+        for s in self.perturbed_species_list:
             sum_rho_delta += vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, params)
             sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)
             sum_rho_plus_P_sigma += vmap(s.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, params)

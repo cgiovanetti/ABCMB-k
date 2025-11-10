@@ -22,6 +22,8 @@ class AbstractFluid(eqx.Module, strict=True):
     w : Compute equation of state parameter (units: dimensionless)
     """
 
+    name : eqx.AbstractVar[str] 
+
     @abc.abstractmethod
     def rho(self, lna, args):
         """
@@ -346,6 +348,9 @@ class DarkEnergy(AbstractFluid, strict=True):
     P : Compute dark energy pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     """
+
+    name = "DarkEnergy"
+
     def rho(self, lna, args):
         """
         Compute dark energy density.
@@ -420,6 +425,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
 
     delta_idx : int = eqx.field(default=0)
     num_ell_modes = 1
+    name = "ColdDarkMatter"
 
     def rho(self, lna, args):
         """
@@ -548,6 +554,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
     """
     delta_idx : int = eqx.field(default=0)
     num_ell_modes : int = eqx.field(default=18, static=True)
+    name = "MasslessNeutrinos"
 
     def rho(self, lna, args):
         """
@@ -666,7 +673,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, _, _ = args
         aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
 
@@ -710,7 +717,6 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
 
     delta_idx : int = eqx.field(default=0)
 
-    num_q_bins : int = eqx.field(static=True)
     num_ells_per_bin : int = eqx.field(static=True)
     num_ell_modes : int = eqx.field(static=True)
 
@@ -719,7 +725,9 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
     q_5p = jnp.array([0.583165, 2.0, 4.0, 7.26582, 13.0])
     w_5p = jnp.array([0.0081201, 0.689407, 2.8063, 2.05156, 0.12681])
 
-    def __init__(self, delta_idx, num_q_bins=3, num_ells_per_bin=18):
+    name = "MassiveNeutrino"
+
+    def __init__(self, delta_idx, num_ells_per_bin=18):
         """
         Initialize massive neutrino species.
 
@@ -727,15 +735,12 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         -----------
         delta_idx : int
             Index of first perturbation mode in state vector
-        num_q_bins : int
-            Number of momentum bins (default: 3)
         num_ells_per_bin : int
             Number of angular momentum modes per bin (default: 18)
         """
         self.delta_idx = delta_idx
-        self.num_q_bins = num_q_bins
         self.num_ells_per_bin = num_ells_per_bin
-        self.num_ell_modes = num_q_bins * num_ells_per_bin
+        self.num_ell_modes = 3 * num_ells_per_bin
 
     def rho(self, lna, args):
         """
@@ -904,7 +909,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, _, _ = args
         res = jnp.zeros(self.num_ell_modes)
 
         a = jnp.exp(lna)
@@ -965,7 +970,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
@@ -998,7 +1003,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             kPsi1 = y[self.delta_idx+1 + i*self.num_ells_per_bin]
@@ -1030,7 +1035,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
@@ -1056,13 +1061,9 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
     
-    #coupled_delta_idx : int # Index of coupled photon
-    photon : AbstractPerturbedFluid
     delta_idx : int = eqx.field(default=0)
     num_ell_modes = 2
-
-    # def __init__(self, delta_idx=0):
-    #     self.delta_idx = delta_idx
+    name = "Baryon"
 
     def rho(self, lna, args):
         """
@@ -1128,11 +1129,15 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         during recombination. During reionization this cs2 is negative. This is not physical
         but it should not matter for cosmology.
         """
-        BG, params = args
+        BG, params, perturbed_species_list, perturbed_species_dict = args
+        # Get photon class from list
+        i = perturbed_species_dict["Photon"]
+        photon = perturbed_species_list[i]
+
         Tm = BG.Tm(lna, params) # Baryon temp
         Tg = BG.TCMB(lna, params) # Photon temp
         mu = self.mean_mass(lna, (BG,params))
-        R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
+        R = 4.*photon.rho(lna, params)/3./self.rho(lna, params)
 
         return Tm/mu * (5./3. - 2./3.*mu*R/cnst.me/BG.aH(lna, params)/BG.tau_c(lna, params) * (Tg/Tm - 1.))
 
@@ -1209,15 +1214,19 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, perturbed_species_list, perturbed_species_dict = args
+        # Get photon class from list
+        i = perturbed_species_dict["Photon"]
+        photon = perturbed_species_list[i]
+
         aH = BG.aH(lna, params)
-        cs2 = self.cs2(lna, (BG, params))
-        R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
+        cs2 = self.cs2(lna, args)
+        R = 4.*photon.rho(lna, params)/3./self.rho(lna, params)
         tau_c = BG.tau_c(lna, params)
 
         delta = y[self.delta_idx]
         theta = y[self.delta_idx+1]
-        theta_g = y[self.photon.delta_idx+1]
+        theta_g = y[photon.delta_idx+1]
         delta_prime = -theta/aH-metric_h_prime/2.
         theta_prime = -theta + cs2*k**2*delta/aH + R/tau_c/aH*(theta_g-theta)
         
@@ -1238,12 +1247,12 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
     delta_idx : int = eqx.field(default=0)
-    baryon : AbstractPerturbedFluid 
     num_F_ell_modes : int = eqx.field(static=True)
     num_G_ell_modes : int = eqx.field(static=True)
     num_ell_modes : int = eqx.field(static=True)
+    name = "Photon"
 
-    def __init__(self, delta_idx, baryon, num_F_ell_modes=13, num_G_ell_modes=11):
+    def __init__(self, delta_idx, num_F_ell_modes=13, num_G_ell_modes=11):
         """
         Initialize photon species.
 
@@ -1259,7 +1268,6 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
             Number of polarization multipole modes (default: 11)
         """
         self.delta_idx = delta_idx
-        self.baryon = baryon
         self.num_F_ell_modes = num_F_ell_modes
         self.num_G_ell_modes = num_G_ell_modes
         self.num_ell_modes = num_F_ell_modes + num_G_ell_modes
@@ -1373,7 +1381,11 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, perturbed_species_list, perturbed_species_dict = args
+        # Get Baryon from list
+        i = perturbed_species_dict["Baryon"]
+        baryon = perturbed_species_list[i]
+
         aH    = BG.aH(lna, params)
         tau_c = BG.tau_c(lna, params)
         tau   = BG.tau(lna)
@@ -1385,7 +1397,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         delta = F[0]
         theta = F[1]
         sigma = F[2]
-        theta_b = y[self.baryon.delta_idx+1]
+        theta_b = y[baryon.delta_idx+1]
 
         delta_prime = -4./3./aH*theta - 2./3.*metric_h_prime
         theta_prime = k**2/aH*(delta/4.-sigma) + (theta_b-theta)/aH/tau_c
