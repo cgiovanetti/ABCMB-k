@@ -157,9 +157,9 @@ class Model(eqx.Module):
         ells = self.SS.ells
         
         if self.return_PTBG:
-            return ells, Cls, PT, BG
+            return Cls, ells, PT, BG
         else:
-            return ells, Cls
+            return Cls, ells
 
     # @jit
     @eqx.filter_jit
