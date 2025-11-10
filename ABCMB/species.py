@@ -1264,7 +1264,7 @@ class Photon(StandardFluid):
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
         self.num_F_ell_modes = specs.get("l_max_g", 15) + 1
-        self.num_G_ell_modes = specs.get("l_max_g", 10) + 1
+        self.num_G_ell_modes = specs.get("l_max_pol_g", 10) + 1
         self.num_ell_modes = self.num_F_ell_modes + self.num_G_ell_modes
 
     def rho(self, lna, args):
