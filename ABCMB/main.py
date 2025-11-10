@@ -43,9 +43,10 @@ class Model(eqx.Module):
     SS : spectrum.SpectrumSolver
     RM : hyrex.recomb_model
 
-    species_list           : tuple = ()
-    perturbed_species_list : tuple = ()
-    perturbed_species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
+    species_list : tuple = ()
+    species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
+    #perturbed_species_list : tuple = ()
+    #perturbed_species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
 
     bbn_type                : str = ""
     linx_reaction_net       : str = ""
@@ -92,16 +93,20 @@ class Model(eqx.Module):
         specs = model_specs.load_specs(input_specs)
 
         # Populate all species
-        self.species_list, self.perturbed_species_list, self.perturbed_species_dict = model_specs.populate_species(
+        self.species_list, self.species_dict = model_specs.populate_species(
             user_species,
             specs,
         )   
+        # self.species_list, self.perturbed_species_list, self.perturbed_species_dict = model_specs.populate_species(
+        #     user_species,
+        #     specs,
+        # )   
 
         # Initialize perturbation evolver
         k_axis_perturbations = model_specs.get_k_axis_perturbations(specs)
         self.PE = perturbations.PerturbationEvolver(
-            self.perturbed_species_list, 
-            self.perturbed_species_dict,
+            self.species_list, 
+            self.species_dict,
             k_axis_perturbations,
             specs["start_small_k"],
             specs["start_large_k"]
@@ -159,9 +164,9 @@ class Model(eqx.Module):
         ells = self.SS.ells
         
         if self.return_PTBG:
-            return ells, Cls, PT, BG
+            return Cls, ells, PT, BG
         else:
-            return ells, Cls
+            return Cls, ells
 
     # @jit
     @eqx.filter_jit
