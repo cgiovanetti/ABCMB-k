@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import equinox as eqx
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, Tsit5, SaveAt, PIDController, ForwardMode
 
-import ABCMB.AbstractSpecies as AS
 from .hyrex.array_with_padding import array_with_padding
 from .hyrex import recomb_functions
 from . import ABCMBTools as tools
@@ -832,7 +831,7 @@ class MockBackground(Background):
         Loads pre-computed background quantities from test data files
         for validation and testing purposes.
         """
-        self.species_list = (AS.ColdDarkMatter(0), AS.DarkEnergy(), AS.Baryon(0, None), AS.Photon(0, None))
+        self.species_list = ()
         self.params = {k: float(v) for k, v in np.loadtxt(file_dir+"/../Module_Tests/params.txt", dtype=str)}
 
         # Other tabulated things
@@ -893,7 +892,7 @@ class ClassBackground(Background):
         Loads background and thermodynamics data from CLASS output
         for comparison and validation with CLASS Boltzmann code.
         """
-        self.species_list = (AS.ColdDarkMatter(0), AS.DarkEnergy(), AS.Baryon(0, None), AS.Photon(0, None))
+        self.species_list = ()
         self.params = {k: float(v) for k, v in np.loadtxt(file_dir+"/../Module_Tests/params.txt", dtype=str)}
 
         class_res_dir = "/home/zz1994/packages/class/output/ABCMB_test/noneutrinos00"
