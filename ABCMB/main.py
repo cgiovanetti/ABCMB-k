@@ -13,7 +13,6 @@ file_dir = os.path.dirname(__file__)
 from .hyrex import hyrex
 from . import cosmology, perturbations, spectrum, model_specs
 from . import constants as cnst
-from . import AbstractSpecies as AS
 from .ABCMBTools import bilinear_interp
 
 from .linx.background import BackgroundModel

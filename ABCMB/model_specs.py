@@ -2,7 +2,6 @@ import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
 
-from . import AbstractSpecies as AS
 from . import species
 
 def load_specs(input_specs):
