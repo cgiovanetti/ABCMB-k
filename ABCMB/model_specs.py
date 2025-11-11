@@ -2,7 +2,7 @@ import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
 
-from . import AbstractSpecies as AS
+from . import species
 
 def load_specs(input_specs):
 
@@ -47,50 +47,37 @@ def load_specs(input_specs):
     return specs
 
 def populate_species(user_species, specs):
-    diffrax_vector_idx = 2 # The first two indices (0 and 1) are always reserved for the metric perturbations.
     species_list = ()
-    perturbations_list = ()
+    species_dict = {}
 
-    dark_energy = AS.DarkEnergy()
-    species_list = species_list + (dark_energy,)
+    lcdm_species = (
+        species.DarkEnergy,
+        species.ColdDarkMatter,
+        species.Baryon,
+        species.Photon,
+        species.MasslessNeutrino
+    )
 
-    # user species must be defined before CDM, since ABCMB expects
-    # fixed indices for CDM, baryons, photons, and massive neutrinos
+    i = 0
+    diffrax_vector_idx = 2
+    for s in lcdm_species:
+        instance = s(diffrax_vector_idx, specs) # Creates an instance of s. init is now consistent across all species
+        species_list = species_list + (instance,)
+        species_dict[instance.name] = i
+
+        i += 1
+        diffrax_vector_idx += instance.num_ell_modes
 
     if user_species is not None:
-        for species in user_species:
-            fn = lambda s: s.delta_idx
-            # update delta_idx, for which the user probably used default
-            # value 0
-            updated_species = eqx.tree_at(fn, species, diffrax_vector_idx)
-            species_list = species_list + (updated_species,)
-            diffrax_vector_idx += updated_species.num_ell_modes
+        for s in user_species:
+            instance = s(diffrax_vector_idx, specs)
+            species_list = species_list + (instance,)
+            species_dict[instance.name] = i
 
-    # These perturbed species are always present in all runs.
-    # massless neutrinos are last, photons are second to last, baryons third to last, CDM fourth to last.
+            i += 1
+            diffrax_vector_idx += instance.num_ell_modes
 
-    cold_dark_matter = AS.ColdDarkMatter(diffrax_vector_idx)
-    species_list = species_list + (cold_dark_matter,)
-    diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
-
-    baryon = AS.Baryon(dark_energy, diffrax_vector_idx) # CG switched order
-    diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
-
-    photon = AS.Photon(diffrax_vector_idx, baryon, num_F_ell_modes=specs["l_max_g"]+1, num_G_ell_modes=specs["l_max_pol_g"])
-    diffrax_vector_idx += photon.num_ell_modes # Add to total length of Diffrax vector
-
-    baryon = eqx.tree_at(lambda b : b.photon, baryon, photon)
-    species_list = species_list + (baryon, photon,)
-
-    massless_neutrinos = AS.MasslessNeutrinos(diffrax_vector_idx, num_ell_modes=specs["l_max_ur"])
-    species_list   = species_list + (massless_neutrinos,)
-    diffrax_vector_idx += massless_neutrinos.num_ell_modes # Add to total length of Diffrax vector
-
-    for species in species_list:
-        if isinstance(species, AS.AbstractPerturbedFluid):
-            perturbations_list = perturbations_list + (species, )
-
-    return species_list, perturbations_list
+    return species_list, species_dict
 
 def get_k_axis_perturbations(specs):
     ks = np.zeros(2000)

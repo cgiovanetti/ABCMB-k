@@ -8,7 +8,7 @@ config.update("jax_enable_x64", True)
 
 ### ABSTRACT BASE CLASSES AND INTERFACES ###
 
-class AbstractFluid(eqx.Module, strict=True):
+class Fluid(eqx.Module):
     """
     Abstract base class for fluid species in cosmological simulations.
 
@@ -20,7 +20,17 @@ class AbstractFluid(eqx.Module, strict=True):
     P : Compute pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     w : Compute equation of state parameter (units: dimensionless)
+    rho_delta : Compute standard density perturbation (units: eV cm^{-3})
+    rho_plus_P_theta : Compute standard velocity perturbation (units: eV cm^{-3})
+    rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
+
+    delta_idx     : int = eqx.field(default=0)
+    num_ell_modes : int = eqx.field(default=0, static=True)
+    name          : str = eqx.field(default="")
+
+    def __init__(self, delta_idx, specs):
+        self.delta_idx = delta_idx
 
     @abc.abstractmethod
     def rho(self, lna, args):
@@ -108,27 +118,6 @@ class AbstractFluid(eqx.Module, strict=True):
             Equation of state parameter (units: dimensionless)
         """
         return self.P(lna, args)/self.rho(lna, args)
-
-class AbstractPerturbedFluid(AbstractFluid, strict=True):
-    """
-    Abstract base class for fluid species with perturbations.
-
-    Defines methods for computing perturbation mode properties
-    used in this code.
-
-    Methods:
-    --------
-    y_ini : Compute initial perturbation mode conditions (units: dimensionless)
-    y_prime : Compute perturbation mode time derivatives (units: dimensionless)
-    rho_delta : Compute density perturbation (units: eV cm^{-3})
-    rho_plus_P_theta : Compute velocity perturbation (units: eV cm^{-3})
-    rho_plus_P_sigma : Compute shear perturbation (units: eV cm^{-3})
-    """
-    # Some abstract fields that won't be instanced until a child class calls __init__
-    # All subclasses must have these fields
-    # Declared abstract for now since some methods still reference these fields.
-    delta_idx     : eqx.AbstractVar[int] 
-    num_ell_modes : eqx.AbstractVar[int]
 
     @abc.abstractmethod
     def y_ini(self, k, tau_ini, om, args):
@@ -247,7 +236,7 @@ class AbstractPerturbedFluid(AbstractFluid, strict=True):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
+class StandardFluid(Fluid):
     """
     Standard implementation of perturbation methods for fluid species.
 
@@ -260,6 +249,10 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
     rho_plus_P_theta : Compute standard velocity perturbation (units: eV cm^{-3})
     rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
+
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+
     # Called by diffrax, child classes should never override. Okay to implement here.
     def rho_delta(self, lna, y, args):
         """
@@ -334,7 +327,7 @@ class AbstractStandardPerturbedFluid(AbstractPerturbedFluid, strict=True):
 
 ### BEGINNING OF CONCRETE CLASSES ###
 
-class DarkEnergy(AbstractFluid, strict=True):
+class DarkEnergy(Fluid):
     """
     Dark energy fluid species implementation.
 
@@ -346,6 +339,13 @@ class DarkEnergy(AbstractFluid, strict=True):
     P : Compute dark energy pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     """
+
+    name = "DarkEnergy"
+
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+        self.num_ell_modes = 0 # Dark energy does not contribute to perturbations.
+
     def rho(self, lna, args):
         """
         Compute dark energy density.
@@ -402,7 +402,28 @@ class DarkEnergy(AbstractFluid, strict=True):
         """
         return 0.
 
-class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
+    def y_ini(self, k, tau_ini, om, args):
+        """
+        Trivial initial condition vector for DE
+        """
+        return jnp.array([])
+
+    def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
+        """
+        Trivial derivative vector for DE. 
+        """
+        return jnp.array([])
+
+    def rho_delta(self, lna, y, args):
+        return 0.
+
+    def rho_plus_P_theta(self, lna, y, args):
+        return 0.
+
+    def rho_plus_P_sigma(self, lna, y, args):
+        return 0.
+
+class ColdDarkMatter(StandardFluid):
     """
     Cold dark matter fluid species implementation.
 
@@ -418,8 +439,11 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
 
-    delta_idx : int = eqx.field(default=0)
-    num_ell_modes = 1
+    name = "ColdDarkMatter"
+
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+        self.num_ell_modes = 1 # CDM only receives density perturbation in synchronous gauge.
 
     def rho(self, lna, args):
         """
@@ -534,7 +558,7 @@ class ColdDarkMatter(AbstractStandardPerturbedFluid, strict=True):
         """
         return jnp.array([-0.5*metric_h_prime])
 
-class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
+class MasslessNeutrino(StandardFluid):
     """
     Massless neutrinos fluid species implementation.
 
@@ -546,8 +570,12 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
     P : Compute neutrino pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     """
-    delta_idx : int = eqx.field(default=0)
-    num_ell_modes : int = eqx.field(default=18, static=True)
+
+    name = "MasslessNeutrino"
+
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+        self.num_ell_modes = specs.get("l_max_ur", 12) + 1
 
     def rho(self, lna, args):
         """
@@ -666,7 +694,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, _, _ = args
         aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
 
@@ -690,7 +718,7 @@ class MasslessNeutrinos(AbstractStandardPerturbedFluid, strict=True):
 
         return jnp.concatenate((jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]), Fl_prime, jnp.array([Flmax_prime])))
 
-class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
+class MassiveNeutrino(Fluid):
     """
     Massive neutrinos fluid species implementation.
 
@@ -708,34 +736,20 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
     rho_plus_P_sigma : Compute shear perturbation (units: eV cm^{-3})
     """
 
-    delta_idx : int = eqx.field(default=0)
-
-    num_q_bins : int = eqx.field(static=True)
     num_ells_per_bin : int = eqx.field(static=True)
-    num_ell_modes : int = eqx.field(static=True)
 
     q_3p = jnp.array([0.913201, 3.37517, 7.79184])
     w_3p = jnp.array([0.0687359, 3.31435, 2.29911])
     q_5p = jnp.array([0.583165, 2.0, 4.0, 7.26582, 13.0])
     w_5p = jnp.array([0.0081201, 0.689407, 2.8063, 2.05156, 0.12681])
 
-    def __init__(self, delta_idx, num_q_bins=3, num_ells_per_bin=18):
-        """
-        Initialize massive neutrino species.
+    name = "MassiveNeutrino"
 
-        Parameters:
-        -----------
-        delta_idx : int
-            Index of first perturbation mode in state vector
-        num_q_bins : int
-            Number of momentum bins (default: 3)
-        num_ells_per_bin : int
-            Number of angular momentum modes per bin (default: 18)
-        """
-        self.delta_idx = delta_idx
-        self.num_q_bins = num_q_bins
-        self.num_ells_per_bin = num_ells_per_bin
-        self.num_ell_modes = num_q_bins * num_ells_per_bin
+    def __init__(self, delta_idx, specs):
+
+        super().__init__(delta_idx, specs)
+        self.num_ells_per_bin = specs.get("l_max_ncdm", 17) + 1
+        self.num_ell_modes = 3 * self.num_ells_per_bin
 
     def rho(self, lna, args):
         """
@@ -904,7 +918,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, _, _ = args
         res = jnp.zeros(self.num_ell_modes)
 
         a = jnp.exp(lna)
@@ -965,7 +979,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
@@ -998,7 +1012,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             kPsi1 = y[self.delta_idx+1 + i*self.num_ells_per_bin]
@@ -1030,7 +1044,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
-        for i in range(self.num_q_bins):
+        for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
@@ -1040,7 +1054,7 @@ class MassiveNeutrinos(AbstractPerturbedFluid, strict=True):
         return res * 8./3./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
 
 
-class Baryon(AbstractStandardPerturbedFluid, strict=True):
+class Baryon(StandardFluid):
     """
     Baryon fluid species implementation.
 
@@ -1056,13 +1070,11 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
     
-    #coupled_delta_idx : int # Index of coupled photon
-    photon : AbstractPerturbedFluid
-    delta_idx : int = eqx.field(default=0)
-    num_ell_modes = 2
+    name = "Baryon"
 
-    # def __init__(self, delta_idx=0):
-    #     self.delta_idx = delta_idx
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+        self.num_ell_modes = 2
 
     def rho(self, lna, args):
         """
@@ -1128,11 +1140,15 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         during recombination. During reionization this cs2 is negative. This is not physical
         but it should not matter for cosmology.
         """
-        BG, params = args
+        BG, params, species_list, species_dict = args
+        # Get photon class from list
+        i = species_dict["Photon"]
+        photon = species_list[i]
+
         Tm = BG.Tm(lna, params) # Baryon temp
         Tg = BG.TCMB(lna, params) # Photon temp
         mu = self.mean_mass(lna, (BG,params))
-        R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
+        R = 4.*photon.rho(lna, params)/3./self.rho(lna, params)
 
         return Tm/mu * (5./3. - 2./3.*mu*R/cnst.me/BG.aH(lna, params)/BG.tau_c(lna, params) * (Tg/Tm - 1.))
 
@@ -1209,21 +1225,25 @@ class Baryon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, species_list, species_dict = args
+        # Get photon class from list
+        i = species_dict["Photon"]
+        photon = species_list[i]
+
         aH = BG.aH(lna, params)
-        cs2 = self.cs2(lna, (BG, params))
-        R = 4.*self.photon.rho(lna, params)/3./self.rho(lna, params)
+        cs2 = self.cs2(lna, args)
+        R = 4.*photon.rho(lna, params)/3./self.rho(lna, params)
         tau_c = BG.tau_c(lna, params)
 
         delta = y[self.delta_idx]
         theta = y[self.delta_idx+1]
-        theta_g = y[self.photon.delta_idx+1]
+        theta_g = y[photon.delta_idx+1]
         delta_prime = -theta/aH-metric_h_prime/2.
         theta_prime = -theta + cs2*k**2*delta/aH + R/tau_c/aH*(theta_g-theta)
         
         return jnp.array([delta_prime, theta_prime])
 
-class Photon(AbstractStandardPerturbedFluid, strict=True):
+class Photon(StandardFluid):
     """
     Photon fluid species implementation.
 
@@ -1237,32 +1257,15 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
-    delta_idx : int = eqx.field(default=0)
-    baryon : AbstractPerturbedFluid 
     num_F_ell_modes : int = eqx.field(static=True)
     num_G_ell_modes : int = eqx.field(static=True)
-    num_ell_modes : int = eqx.field(static=True)
+    name = "Photon"
 
-    def __init__(self, delta_idx, baryon, num_F_ell_modes=13, num_G_ell_modes=11):
-        """
-        Initialize photon species.
-
-        Parameters:
-        -----------
-        delta_idx : int
-            Index of first perturbation mode in state vector
-        baryon : AbstractPerturbedFluid
-            Baryon species for coupling
-        num_F_ell_modes : int
-            Number of temperature multipole modes (default: 13)
-        num_G_ell_modes : int
-            Number of polarization multipole modes (default: 11)
-        """
-        self.delta_idx = delta_idx
-        self.baryon = baryon
-        self.num_F_ell_modes = num_F_ell_modes
-        self.num_G_ell_modes = num_G_ell_modes
-        self.num_ell_modes = num_F_ell_modes + num_G_ell_modes
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+        self.num_F_ell_modes = specs.get("l_max_g", 15) + 1
+        self.num_G_ell_modes = specs.get("l_max_pol_g", 10) + 1
+        self.num_ell_modes = self.num_F_ell_modes + self.num_G_ell_modes
 
     def rho(self, lna, args):
         """
@@ -1373,7 +1376,11 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         array
             Time derivatives of perturbation modes (units: dimensionless)
         """
-        BG, params = args
+        BG, params, species_list, species_dict = args
+        # Get Baryon from list
+        i = species_dict["Baryon"]
+        baryon = species_list[i]
+
         aH    = BG.aH(lna, params)
         tau_c = BG.tau_c(lna, params)
         tau   = BG.tau(lna)
@@ -1385,7 +1392,7 @@ class Photon(AbstractStandardPerturbedFluid, strict=True):
         delta = F[0]
         theta = F[1]
         sigma = F[2]
-        theta_b = y[self.baryon.delta_idx+1]
+        theta_b = y[baryon.delta_idx+1]
 
         delta_prime = -4./3./aH*theta - 2./3.*metric_h_prime
         theta_prime = k**2/aH*(delta/4.-sigma) + (theta_b-theta)/aH/tau_c
