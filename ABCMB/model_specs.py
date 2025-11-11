@@ -47,49 +47,6 @@ def load_specs(input_specs):
 
     return specs
 
-def populate_species_old(user_species, specs):
-    diffrax_vector_idx = 2 # The first two indices (0 and 1) are always reserved for the metric perturbations.
-    species_list = ()
-    perturbed_species_list = ()
-    perturbed_species_dict = {}
-
-    dark_energy = AS.DarkEnergy()
-    species_list = species_list + (dark_energy,)
-
-    cold_dark_matter = AS.ColdDarkMatter(diffrax_vector_idx)
-    species_list = species_list + (cold_dark_matter,)
-    diffrax_vector_idx += cold_dark_matter.num_ell_modes # Add to total length of Diffrax vector
-
-    baryon = AS.Baryon(diffrax_vector_idx) 
-    species_list = species_list + (baryon,)
-    diffrax_vector_idx += baryon.num_ell_modes # Add to total length of Diffrax vector
-
-    photon = AS.Photon(diffrax_vector_idx, num_F_ell_modes=specs["l_max_g"]+1, num_G_ell_modes=specs["l_max_pol_g"])
-    species_list = species_list + (photon,)
-    diffrax_vector_idx += photon.num_ell_modes # Add to total length of Diffrax vector
-
-    massless_neutrinos = AS.MasslessNeutrinos(diffrax_vector_idx, num_ell_modes=specs["l_max_ur"])
-    species_list   = species_list + (massless_neutrinos,)
-    diffrax_vector_idx += massless_neutrinos.num_ell_modes # Add to total length of Diffrax vector
-
-    if user_species is not None:
-        for species in user_species:
-            fn = lambda s: s.delta_idx
-            # update delta_idx, for which the user probably used default
-            # value 0
-            updated_species = eqx.tree_at(fn, species, diffrax_vector_idx)
-            species_list = species_list + (updated_species,)
-            diffrax_vector_idx += updated_species.num_ell_modes
-
-    i = 0
-    for species in species_list:
-        if isinstance(species, AS.AbstractPerturbedFluid):
-            perturbed_species_list = perturbed_species_list + (species, )
-            perturbed_species_dict[species.name] = i
-            i += 1
-
-    return species_list, perturbed_species_list, perturbed_species_dict
-
 def populate_species(user_species, specs):
     species_list = ()
     species_dict = {}
