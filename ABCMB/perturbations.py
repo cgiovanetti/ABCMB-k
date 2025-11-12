@@ -278,13 +278,13 @@ class PerturbationEvolver(eqx.Module):
         solver = diffrax.Kvaerno5()
 
         rtol=jnp.where(
-            k > 1.e-2,
+            k > 0.01,
             1.e-3,
             1.e-5
         )
 
         atol=jnp.where(
-            k > 1.e-2,
+            k > 0.01,
             1.e-6,
             1.e-10
         )

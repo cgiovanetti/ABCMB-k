@@ -96,10 +96,6 @@ class Model(eqx.Module):
             user_species,
             specs,
         )   
-        # self.species_list, self.perturbed_species_list, self.perturbed_species_dict = model_specs.populate_species(
-        #     user_species,
-        #     specs,
-        # )   
 
         # Initialize perturbation evolver
         k_axis_perturbations = model_specs.get_k_axis_perturbations(specs)
@@ -240,7 +236,7 @@ class Model(eqx.Module):
             params['A_s']           = params.get('A_s', jnp.array(2.e-9))
             params['n_s']           = params.get('n_s', jnp.array(0.965))
             params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
             params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
             params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
             params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.6))
@@ -254,8 +250,8 @@ class Model(eqx.Module):
             params['R_b']          = params['omega_b'] / params['omega_m']
             params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
             params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
             params['omega_r']      = params['omega_g'] + params['omega_nu']
             params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
             params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
@@ -304,7 +300,7 @@ class Model(eqx.Module):
             params['A_s']           = params.get('A_s', jnp.array(2.e-9))
             params['n_s']           = params.get('n_s', jnp.array(0.965))
             params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
             params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
             params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
             params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
@@ -356,8 +352,8 @@ class Model(eqx.Module):
             params['R_b']          = params['omega_b'] / params['omega_m']
             params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
             params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
             # params['omega_nu']     = 7. / 8. * params['N_ur'] * (4. / 11.)**(4. / 3.) * params['omega_g']
             params['omega_r']      = params['omega_g'] + params['omega_nu']
             params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
@@ -374,7 +370,7 @@ class Model(eqx.Module):
             params['n_s']           = params.get('n_s', jnp.array(0.965))
             params['YHe']           = params.get('YHe', jnp.array(0.245))
             params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611 * params['TCMB0']))
+            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
             params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
             params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
             params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
@@ -388,8 +384,8 @@ class Model(eqx.Module):
             params['R_b']          = params['omega_b'] / params['omega_m']
             params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
             params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - (params['T_ncdm'] / params['TCMB0'])**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * (params['T_nu']/params['TCMB0'])**(4) * params['omega_g']
+            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
+            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
             params['omega_r']      = params['omega_g'] + params['omega_nu']
             params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
             params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']

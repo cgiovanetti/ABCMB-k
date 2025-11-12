@@ -575,7 +575,7 @@ class MasslessNeutrino(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = specs.get("l_max_ur", 12) + 1
+        self.num_ell_modes = specs.get("l_max_ur", 17) + 1
 
     def rho(self, lna, args):
         """
@@ -743,6 +743,8 @@ class MassiveNeutrino(Fluid):
     q_5p = jnp.array([0.583165, 2.0, 4.0, 7.26582, 13.0])
     w_5p = jnp.array([0.0081201, 0.689407, 2.8063, 2.05156, 0.12681])
 
+    dlfdlq_3p = -q_3p / (1.+jnp.exp(-q_3p)) # Log derivative of fermi-dirac w.r.t. momentum
+
     name = "MassiveNeutrino"
 
     def __init__(self, delta_idx, specs):
@@ -772,7 +774,7 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_ncdm'] / a             # shape (N, 1)
+        T = params['T_ncdm'] * params['TCMB0'] / a             # shape (N, 1)
         x = params['m_ncdm'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
@@ -808,7 +810,7 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_ncdm'] / a             # shape (N, 1)
+        T = params['T_ncdm'] * params['TCMB0'] / a             # shape (N, 1)
         x = params['m_ncdm'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
@@ -879,8 +881,6 @@ class MassiveNeutrino(Fluid):
                 * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*om)
         sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*om)
 
-        dlogf0_dlogq = self.q_3p / (1.+jnp.exp(-self.q_3p)) # Log derivative of the fermi-dirac distribution.
-
         idx_q1 = 0 # Psi0 index of first q
         idx_q2 = idx_q1 + self.num_ells_per_bin # Psi0 index of second q
         idx_q3 = idx_q2 + self.num_ells_per_bin # Psi0 index of third q
@@ -922,7 +922,7 @@ class MassiveNeutrino(Fluid):
         res = jnp.zeros(self.num_ell_modes)
 
         a = jnp.exp(lna)
-        T = params['T_ncdm'] / a
+        T = params['T_ncdm'] * params['TCMB0'] / a
         x = params['m_ncdm'] / T
         aH  = BG.aH(lna, params)
         tau = BG.tau(lna)
@@ -975,7 +975,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] / a  # (N,)
+        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
@@ -1008,7 +1008,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] / a  # (N,)
+        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
@@ -1040,7 +1040,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] / a  # (N,)
+        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
         x = params['m_ncdm'] / T  # (N,)
 
         res = 0.
@@ -1263,7 +1263,7 @@ class Photon(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_F_ell_modes = specs.get("l_max_g", 15) + 1
+        self.num_F_ell_modes = specs.get("l_max_g", 12) + 1
         self.num_G_ell_modes = specs.get("l_max_pol_g", 10) + 1
         self.num_ell_modes = self.num_F_ell_modes + self.num_G_ell_modes
 
