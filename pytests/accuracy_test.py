@@ -38,9 +38,9 @@ def test_accuracy_checker(h = 0.6762):
             'Neff': 3.044,
             'YHe': 0.245,
             'TCMB0': 2.34865418e-4,
-            'T_nu': (4. / 11.)**(1. / 3.) * 2.34865418e-4,
+            'T_nu': (4. / 11.)**(1. / 3.),
             'N_ncdm': 0,
-            'T_ncdm': 0.71611 * 2.34865418e-4,
+            'T_ncdm': 0.71611,
         }
 
         model = Model(specs) # ZZ: model now takes ellmin, ellmax for Cls, and want_lensing
