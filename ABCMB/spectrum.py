@@ -142,7 +142,8 @@ class SpectrumSolver(eqx.Module):
 
     lensing : bool
 
-    k_axis_transfer : jnp.array
+    k_axis_transfer  : jnp.array
+    k_axis_Pk_output : jnp.array
 
     k_pivot    : float = 0.05 # In 1/Mpc
     switch_sw  : float = 1.
@@ -155,6 +156,7 @@ class SpectrumSolver(eqx.Module):
                  ellmax=2500,
                  lensing=False,
                  k_axis_transfer=jnp.geomspace(1.e-4, 0.4, 2500),
+                 k_axis_Pk_output=jnp.geomspace(1.e-4, 0.1, 100),
                  k_pivot=0.05,
                  switch_sw=1,
                  switch_isw=1,
@@ -203,6 +205,7 @@ class SpectrumSolver(eqx.Module):
             self.lensing_ells_indices = self.ells_indices
 
         self.k_axis_transfer = k_axis_transfer
+        self.k_axis_Pk_output = k_axis_Pk_output
         self.k_pivot    = k_pivot
 
         self.switch_sw  = switch_sw

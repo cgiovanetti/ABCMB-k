@@ -36,14 +36,17 @@ def test_accuracy_checker(h = 0.6762):
             'YHe': 0.245,
             'TCMB0': 2.34865418e-4,
             'T_nu': (4./11.)**(1./3.),
-            'N_ncdm': 1,
+            'N_ncdm': 0,
             'T_ncdm': 0.71611,
             'm_ncdm': 0.06,
         }
 
         specs = {
+            "output_Cl" : True,
             "l_max" : ellmax,
             "lensing" : True,
+            "output_Pk" : True,
+            "output_k_max" : 0.5,
             "l_max_g" : 12,
             "l_max_pol_g" : 10,
             "l_max_ur" : 17,
@@ -64,11 +67,10 @@ def test_accuracy_checker(h = 0.6762):
 
         # CLASS
         CLASS_params = {
-            "output": "tCl, pCl, lCl" if specs["lensing"] else "tCl, lCl",
+            "output": "mPk, tCl, pCl, lCl" if specs["lensing"] else "mPk, tCl, lCl",
             #"temperature_contributions" : "tsw",
             "l_max_scalars" : ellmax,
-            "k_output_values" : "0.001, 0.01, 0.1, 0.4",
-            #"k_output_values" : kstr,
+            "P_k_max_1/Mpc" : specs["output_k_max"],
             "lensing" : "yes" if specs["lensing"] else "no",
             "H0": params["h"]*100,
             "omega_b": params["omega_b"],
@@ -110,16 +112,24 @@ def test_accuracy_checker(h = 0.6762):
 
         # ABCMB
 
-        ABC_Cls, ABC_ell = model.run_cosmology(params)
-        ABC_tt = ABC_Cls[0] 
-        ABC_te = ABC_Cls[1] 
-        ABC_ee = ABC_Cls[2] 
+        data, label = model.run_cosmology(params)
+        ells = label[0]
+
+        ABC_tt = data[0] 
+        ABC_te = data[1] 
+        ABC_ee = data[2] 
 
         # Compare all ells
         err_tt = abs(cltt-ABC_tt)/cltt
         print(err_tt.max())
 
+        ABC_Pk = data[3]
+        ABC_k = label[1]
+        CLA_Pk = np.vectorize(CLASS_Model.pk)(ABC_k, 0.)
+        err_Pk = abs(CLA_Pk-ABC_Pk)/CLA_Pk
+
         assert max(err_tt) <= 0.01, f"Accuracy check failed: {err_tt}"
+        assert max(err_Pk) <= 0.01, f"Accuracy check failed: {err_pk}"
     
     except Exception as e:
         pytest.fail(f"accuracy_checks raised an exception: {e}")

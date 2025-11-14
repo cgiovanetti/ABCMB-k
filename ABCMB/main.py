@@ -41,9 +41,10 @@ class Model(eqx.Module):
     PE : perturbations.PerturbationEvolver
     SS : spectrum.SpectrumSolver
     RM : hyrex.recomb_model
+    specs : dict
 
     species_list : tuple = ()
-    species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
+    species_dict : dict  #= eqx.field(static=True) # Dict as fields must be static
     #perturbed_species_list : tuple = ()
     #perturbed_species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
 
@@ -90,6 +91,7 @@ class Model(eqx.Module):
 
         # Fill in all user defined and missing specs parameters
         specs = model_specs.load_specs(input_specs)
+        self.specs = specs
 
         # Populate all species
         self.species_list, self.species_dict = model_specs.populate_species(
@@ -98,7 +100,7 @@ class Model(eqx.Module):
         )   
 
         # Initialize perturbation evolver
-        k_axis_perturbations = model_specs.get_k_axis_perturbations(specs)
+        k_axis_perturbations, k_axis_Pk_output = model_specs.get_k_axis_perturbations(specs)
         self.PE = perturbations.PerturbationEvolver(
             self.species_list, 
             self.species_dict,
@@ -114,6 +116,7 @@ class Model(eqx.Module):
             specs["l_max"],
             specs["lensing"],
             k_axis_transfer,
+            k_axis_Pk_output,
             k_pivot=specs["k_pivot"],
             switch_sw=specs["switch_sw"],
             switch_isw=specs["switch_isw"],
@@ -155,13 +158,24 @@ class Model(eqx.Module):
 
         params = self.add_derived_parameters(params)
         PT, BG = self.get_PTBG(params)
-        Cls = self.SS.get_Cl(PT, BG, params)
-        ells = self.SS.ells
+        output = ()
+        aux = ()
+
+        if self.specs["output_Cl"]:
+            Cls = self.SS.get_Cl(PT, BG, params)
+            ells = self.SS.ells
+            output += Cls
+            aux += (ells,)
         
+        if self.specs["output_Pk"]:
+            Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
+            output += (Pk,)
+            aux += (self.SS.k_axis_Pk_output,)
+
         if self.return_PTBG:
-            return Cls, ells, PT, BG
-        else:
-            return Cls, ells
+            aux += (PT, BG)
+
+        return output, aux
 
     # @jit
     @eqx.filter_jit

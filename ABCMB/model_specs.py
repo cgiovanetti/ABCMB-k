@@ -9,9 +9,13 @@ def load_specs(input_specs):
     specs = {}
 
     ### OUTPUT RELATED specs PARAMS ###
+    specs["output_Cl"] = input_specs.get("output_Cl", True)
     specs["l_min"]     = input_specs.get("l_min", 2)
     specs["l_max"]     = input_specs.get("l_max", 2500)
     specs["lensing"]   = input_specs.get("lensing", False)
+
+    specs["output_Pk"]    = input_specs.get("output_Pk", True)
+    specs["output_k_max"] = input_specs.get("output_k_max", 0.5)
 
     ### TODO: HYREX RELATED specs PARAMS ###
 
@@ -120,9 +124,21 @@ def get_k_axis_perturbations(specs):
             i += 1
             ks[i] = k
 
-    ks = jnp.array(ks[np.where(ks>0)])
+    # If the user wants P(k) and specified a k_max above the current, we should add these as well.
+    if specs["output_Pk"] and k < specs["output_k_max"]:
+        k_max = specs["output_k_max"]
+        
+        while k < k_max:
+            step = 0.005
 
-    return ks
+            k += step
+            i += 1
+            ks[i] = k
+
+    ks = ks[np.where(ks>0)]
+    k_axis_Pk_output = ks[np.where(ks<=specs["output_k_max"])]
+
+    return jnp.array(ks), jnp.array(k_axis_Pk_output)
 
 def get_k_axis_transfer(specs):
     ks = np.zeros(8000)
