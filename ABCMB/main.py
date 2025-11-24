@@ -219,6 +219,146 @@ class Model(eqx.Module):
         BG = cosmology.Background(params, self.species_list, self.RM)
         return BG
 
+    def add_derived_parameters_new(self, param_in : dict) -> dict:
+        # ZZ: I made N_ur input instead of Neff
+
+        # we do not want to do in-place updates so we can
+        # recycle dicts if LINX option is used
+        params = param_in.copy()
+
+        # Default parameters except Neff and YHe
+        params['h']             = params.get('h', jnp.array(0.7))
+        params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
+        params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
+        params['A_s']           = params.get('A_s', jnp.array(2.e-9))
+        params['n_s']           = params.get('n_s', jnp.array(0.965))
+        params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+        params['N_ur']          = params.get('N_ur', jnp.array(3.044))
+        params['T_nu']          = params.get('T_nu', jnp.array((4./11.)**(1./3.)))
+        params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
+        params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
+        params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.06))
+        params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+        params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
+        params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
+        params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+
+        # Here we fill in a fake omega_Lambda just so that the DE energy density can be computed in a loop.
+        # This fake quantity will not be used in anything, and later the correct omega_Lambda will be computed.
+        # Purely computational, no physics used or messed up.
+        params['omega_Lambda'] = 0.
+
+        # Derived parameters that do not need Neff and YHe
+        params['H0']           = params['h'] * cnst.H0_over_h
+
+        # Loop over matter fluids to compute total matter density today.
+        rho_m = 0.
+        for s in self.species_list:
+            if s.is_matter:
+                rho_m += s.rho(0., params)
+        params['omega_m']      = rho_m / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional matter density
+        params['R_b']          = params['omega_b'] / params['omega_m'] # Baryon fraction
+    
+        params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
+        params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g'] # Massless neutrino fraction
+
+        # Loop over all fluids and compute energy density at very early time, inferring radiation energy density this way.
+        a_early = jnp.exp(-15.)
+        rho_r = jnp.sum([s.rho(jnp.log(a_early), params) for s in self.species_list])
+        rho_r *= a_early**4 # Radiation density today. 
+        params['omega_r']      = rho_r / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional radiation density
+
+        params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
+
+        # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
+        params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+
+        # BBN related
+        if self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
+            if params.get("Neff") is not None:
+                print("You have specified a value of Neff, but LINX instead expects a \n" \
+                    "parameter 'Delt_Neff_init' which will be used to compute Neff.  Refer to LINX \n" \
+                    "docs or https://arxiv.org/abs/2408.14538 for more information.")
+                sys.exit()
+
+
+            thermo_model_DNeff = BackgroundModel()
+            (
+                t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
+            ) = thermo_model_DNeff(jnp.asarray(params['Delt_Neff_init']))
+
+            # TODO: Ask Cara what the LINX Neff includes.
+            params['Neff'] = Neff_vec[-1]
+
+            # convert user input omega_b to eta_fac LINX expects
+            eta_fac = params['omega_b'] * linxconst.Omegabh2_to_eta0/linxconst.eta0
+
+            abundance_model = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
+
+            abundances = abundance_model(
+                rho_g_vec,
+                rho_nu_vec,
+                rho_NP_vec,
+                P_NP_vec,
+                t_vec=t_vec_ref,
+                a_vec=a_vec_ref,  
+                eta_fac = eta_fac,
+                tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
+                nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
+                )
+            
+            # number abundance
+            YHe_BBN = 4*abundances[5]
+        
+            # CMB uses real mass fraction
+            Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)
+            params['YHe'] = Yp_CMB
+
+        elif self.bbn_type=="Table" or self.bbn_type=="table":
+            # TODO: Sum over all relativistic species at early time.
+            params['Neff'] = params['N_ur'] + params['N_ncdm']*params['T_ncdm']**4/params['T_ur']**4
+            # interpolate CLASS ParthENoPE table
+            bbn = self.PArthENoPE_CLASS_table
+            omegab_all = bbn[:, 0]
+            DNeff_all = bbn[:, 1]
+            YHe_all = bbn[:, 2]
+
+            # we have to hardcode these values to be jit safe (alternatively we 
+            # could read them in at runtime, but these tables don't update 
+            # frequently)
+            n2 = 13 
+            n1 = 701
+
+            omegab = omegab_all[:n1]
+            DNeff = DNeff_all[::n1] 
+
+            YHe_grid = YHe_all.reshape(n2, n1)
+            
+            # Neff = params["Neff"] # less extensible option
+            a_bbn = cnst.TCMB_today*1e-6/0.01   # neutrino decoupling is well over by 10 keV, so 
+                                                # compute Neff at a scale factor approximately 
+                                                # corresponding to this temperature
+            lna_bbn = jnp.log(a_bbn)
+
+            # this is more extensible than just using params['Neff']; if the user includes i.e. interacting
+            # dark radiation, the input parameter Neff tracks only the scaling of the neutrino
+            # energy density
+            Neff_BBN = (jnp.sum(jnp.asarray([s.rho(lna_bbn, params) for s in self.species_list])) - 
+                    self.species_list[-2].rho(lna_bbn,params))/(self.species_list[-1].rho(lna_bbn,params)/params['Neff'])
+            
+            # last two args are user input omega_b and (Neff_BBN - 3.046) (MUST be 3.046 as 
+            # this was assumed when constructing the PArthENoPE table)
+            res_YHe = bilinear_interp(omegab, DNeff,YHe_grid, params['omega_b'],Neff_BBN - 3.046)
+
+            # tabulated result is Yp_CMB
+            params['YHe'] = res_YHe
+        else:
+            # TODO: Sum over all relativistic species at early time.
+            params['Neff'] = params['N_ur'] + params['N_ncdm']*params['T_ncdm']**4/params['T_ur']**4
+            params['YHe'] = params.get('YHe', jnp.array(0.245))
+
+        return params
+
     def add_derived_parameters(self, param_in : dict) -> dict:
         """
         Compute derived parameters.

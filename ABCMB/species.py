@@ -28,6 +28,7 @@ class Fluid(eqx.Module):
     delta_idx     : int = eqx.field(default=0)
     num_ell_modes : int = eqx.field(default=0, static=True)
     name          : str = eqx.field(default="")
+    is_matter     : bool = eqx.field(default=False) # Does the fluid contribute towards matter overdensity today.
 
     def __init__(self, delta_idx, specs):
         self.delta_idx = delta_idx
@@ -325,9 +326,38 @@ class StandardFluid(Fluid):
             0.
         )
 
+class BackgroundFluid(Fluid):
+    
+    num_ell_modes = 0
+
+    def __init__(self, delta_idx, specs):
+        super().__init__(delta_idx, specs)
+
+    def y_ini(self, k, tau_ini, om, args):
+        """
+        Trivial initial condition vector for background.
+        """
+        return jnp.array([])
+
+    def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
+        """
+        Trivial derivative vector for background. 
+        """
+        return jnp.array([])
+
+    def rho_delta(self, lna, y, args):
+        return 0.
+
+    def rho_plus_P_theta(self, lna, y, args):
+        return 0.
+
+    def rho_plus_P_sigma(self, lna, y, args):
+        return 0.
+
+
 ### BEGINNING OF CONCRETE CLASSES ###
 
-class DarkEnergy(Fluid):
+class DarkEnergy(BackgroundFluid):
     """
     Dark energy fluid species implementation.
 
@@ -344,7 +374,7 @@ class DarkEnergy(Fluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = 0 # Dark energy does not contribute to perturbations.
+        #self.num_ell_modes = 0 # Dark energy does not contribute to perturbations.
 
     def rho(self, lna, args):
         """
@@ -402,27 +432,6 @@ class DarkEnergy(Fluid):
         """
         return 0.
 
-    def y_ini(self, k, tau_ini, om, args):
-        """
-        Trivial initial condition vector for DE
-        """
-        return jnp.array([])
-
-    def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
-        """
-        Trivial derivative vector for DE. 
-        """
-        return jnp.array([])
-
-    def rho_delta(self, lna, y, args):
-        return 0.
-
-    def rho_plus_P_theta(self, lna, y, args):
-        return 0.
-
-    def rho_plus_P_sigma(self, lna, y, args):
-        return 0.
-
 class ColdDarkMatter(StandardFluid):
     """
     Cold dark matter fluid species implementation.
@@ -440,6 +449,7 @@ class ColdDarkMatter(StandardFluid):
     """
 
     name = "ColdDarkMatter"
+    is_matter = True
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
@@ -746,6 +756,7 @@ class MassiveNeutrino(Fluid):
     dlfdlq_3p = -q_3p / (1.+jnp.exp(-q_3p)) # Log derivative of fermi-dirac w.r.t. momentum
 
     name = "MassiveNeutrino"
+    is_matter = True
 
     def __init__(self, delta_idx, specs):
 
@@ -1071,6 +1082,7 @@ class Baryon(StandardFluid):
     """
     
     name = "Baryon"
+    is_matter = True
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
