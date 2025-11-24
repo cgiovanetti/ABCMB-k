@@ -260,17 +260,54 @@ class SpectrumSolver(eqx.Module):
             in_axes=1  # loop over columns
         )
 
-        delta_cdm_lna = interp_over_lna(PT.delta_cdm)  # shape (Nk,)
+        delta_m_lna = interp_over_lna(PT.delta_m)  # shape (Nk,)
+
+        # now interpolate over k
+        delta_m = jnp.interp(k, PT.k, delta_m_lna)
+
+        return delta_m**2 * self.primordial_spectrum(k, params)
+
+    def Pk_cb(self, k, z, PT, params):
+        """
+        Compute linear Baryon+DarkMatter power spectrum at wavenumbers k and redshift z.
+        Does not include any other massive species present.
+
+        Parameters
+        ----------
+        k : float or array
+            Wavenumber (Mpc^{-1})
+        z : float
+            Redshift to evaluate.
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns
+        -------
+        float or array
+            Linear Baryon+DarkMatter power spectrum P_cb(k, z), units Mpc^3
+        """
+
+        lna = -jnp.log(1.+z)
+    
+        # vmapped interpolation over Nk (columns of the 2D arrays)
+        interp_over_lna = jax.vmap(
+            lambda y: jnp.interp(lna, PT.lna, y),
+            in_axes=1  # loop over columns
+        )
+
+        delta_dm_lna = interp_over_lna(PT.delta_dm)  # shape (Nk,)
         delta_b_lna   = interp_over_lna(PT.delta_b)    # shape (Nk,)
 
         # now interpolate over k
-        delta_cdm = jnp.interp(k, PT.k, delta_cdm_lna)
+        delta_dm = jnp.interp(k, PT.k, delta_dm_lna)
         delta_b   = jnp.interp(k, PT.k, delta_b_lna)
 
         # total matter overdensity
         delta_m = (
             params['omega_b']   * delta_b +
-            params['omega_cdm'] * delta_cdm
+            params['omega_cdm'] * delta_dm
         ) / params['omega_m']
 
         return delta_m**2 * self.primordial_spectrum(k, params)

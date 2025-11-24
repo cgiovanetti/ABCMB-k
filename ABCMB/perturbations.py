@@ -334,14 +334,23 @@ class PerturbationEvolver(eqx.Module):
         """
         k = self.k_axis_perturbations
         BG, params = args
-        CDM    = self.species_list[self.species_dict["ColdDarkMatter"]]
-        Baryon = self.species_list[self.species_dict["Baryon"]]
+
+        DarkMatter = self.species_list[0]
+        Baryon = self.species_list[0]
+
+        # Loop through species, pick out this model's dark matter and baryon.
+        for s in self.species_list:
+            if "baryon" in s.name.lower():
+                Baryon = s
+            if "darkmatter" in s.name.lower():
+                DarkMatter = s
+
         Photon = self.species_list[self.species_dict["Photon"]]
 
         # Shapes are (Nlna, Nk)
         metric_h   = modes[0]
         metric_eta = modes[1]
-        delta_cdm  = modes[CDM.delta_idx]
+        delta_dm   = modes[DarkMatter.delta_idx]
         delta_b    = modes[Baryon.delta_idx]
         theta_b    = modes[Baryon.delta_idx+1]
         delta_g    = modes[Photon.delta_idx]
@@ -367,11 +376,23 @@ class PerturbationEvolver(eqx.Module):
         sum_rho_plus_P_theta = jnp.zeros_like(modes[0])
         sum_rho_plus_P_sigma = jnp.zeros_like(modes[0])
 
+        # Also collect total matter rho_delta for delta_m down the line
+        sum_rho_delta_m      = jnp.zeros_like(modes[0])
+        sum_rho_m            = 0.
+
         for s in self.species_list:
             if s.num_ell_modes > 0:
-                sum_rho_delta        += vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, params)
+                rho_delta = vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, params)
+                sum_rho_delta        += rho_delta
                 sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)
                 sum_rho_plus_P_sigma += vmap(s.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, params)
+                
+                if s.is_matter:
+                    sum_rho_delta_m += rho_delta
+                    sum_rho_m       += s.rho(lna, params)
+
+        # Compute total matter perturbation
+        delta_m = sum_rho_delta_m / sum_rho_m[:, None]
 
         # Metric perturbation derivatives
         metric_h_prime = 2./aH**2 * (karr**2*metric_eta + 4.*jnp.pi*cnst.G*a**2/cnst.c_Mpc_over_s**2 * sum_rho_delta)
@@ -384,7 +405,8 @@ class PerturbationEvolver(eqx.Module):
         return PerturbationTable(
             k,
             lna,
-            delta_cdm,
+            delta_m,
+            delta_dm,
             delta_b,
             theta_b,
             theta_b_prime,
@@ -401,8 +423,6 @@ class PerturbationEvolver(eqx.Module):
             metric_alpha_prime,
         )
 
-
-
 class PerturbationTable(eqx.Module):
     """
     Interpolatable table of perturbation evolution.
@@ -416,8 +436,10 @@ class PerturbationTable(eqx.Module):
         Wavenumber grid (units: Mpc^{-1})
     lna : array
         Logarithm of scale factor grid
-    delta_cdm : array
-        Cold dark matter density perturbations
+    delta_m : array
+        Total matter density perturbations
+    delta_dm : array
+        Dark matter density perturbations
     delta_b : array
         Baryon density perturbations
     theta_b : array
@@ -449,7 +471,8 @@ class PerturbationTable(eqx.Module):
     """
     k         : jnp.array
     lna       : jnp.array
-    delta_cdm : jnp.array
+    delta_m   : jnp.array
+    delta_dm  : jnp.array
     delta_b   : jnp.array
     theta_b   : jnp.array
     theta_b_prime : jnp.array
