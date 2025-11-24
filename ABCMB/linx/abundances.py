@@ -92,7 +92,7 @@ class AbundanceModel(eqx.Module):
             self.species_A * ma + self.species_excess_mass - self.species_Z * me
         )
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def __call__(
         self, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, 
         a_vec=None, t_vec=None, 
@@ -276,7 +276,7 @@ class AbundanceModel(eqx.Module):
             Y_f = jnp.array(sol.ys).flatten()
             return Y_f
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def get_t(self, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec):
         """ 
         Time elapsed. 
@@ -338,7 +338,7 @@ class AbundanceModel(eqx.Module):
 
         return sol_t.ys
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def get_a(self, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec): 
         """ 
         Scale factor. 
@@ -408,7 +408,7 @@ class AbundanceModel(eqx.Module):
         return a_vec
 
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def Y_prime(self, t, Y, args):
         """Returns :math:`dY_i/dt` for this abundance model. 
 

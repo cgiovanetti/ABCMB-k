@@ -22,6 +22,9 @@ from .linx import const as linxconst
 
 config.update("jax_enable_x64", True)
 
+# cuda_devices = jax.devices('cuda')
+cpu_devices = jax.devices('cpu')
+
 class Model(eqx.Module):
     """
     Model configuration and computation manager.
@@ -137,8 +140,31 @@ class Model(eqx.Module):
     ### JITTED OR JITTABLE FUNCTIONS ###
 
     # @jit
+    # need this outside of the jit context
+    def run_cosmology_abbr(self, params : dict):
+        """
+        Compute CMB angular power spectra for given parameters.
+
+        Runs the full pipeline from background evolution through
+        perturbation integration to CMB power spectrum computation.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        tuple
+            (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
+        """
+
+        full_params = self.add_derived_parameters(params)
+        output, aux = self.run_cosmology_abbr(self, full_params)
+        return output, aux
+
     @eqx.filter_jit
-    def run_cosmology(self, params : dict):
+    def run_cosmology_abbr(self, params : dict):
         """
         Compute CMB angular power spectra for given parameters.
 
@@ -285,7 +311,7 @@ class Model(eqx.Module):
             thermo_model_DNeff = BackgroundModel()
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
-            ) = thermo_model_DNeff(jnp.asarray(params['Delt_Neff_init']))
+            ) = jax.jit(thermo_model_DNeff(jnp.asarray(params['Delt_Neff_init'])),device=cpu,backend='cpu')
 
             # TODO: Ask Cara what the LINX Neff includes.
             params['Neff'] = Neff_vec[-1]
@@ -295,7 +321,7 @@ class Model(eqx.Module):
 
             abundance_model = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
 
-            abundances = abundance_model(
+            abundances = jax.jit(abundance_model(
                 rho_g_vec,
                 rho_nu_vec,
                 rho_NP_vec,
@@ -305,7 +331,7 @@ class Model(eqx.Module):
                 eta_fac = eta_fac,
                 tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
                 nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
-                )
+                ),device=cpu,backend='cpu')
             
             # number abundance
             YHe_BBN = 4*abundances[5]

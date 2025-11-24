@@ -47,7 +47,7 @@ class BackgroundModel(eqx.Module):
         self.LO = LO
         self.NLO = NLO
 
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def __call__(
         self, Delt_Neff_init, T_start=const.T_start, 
         T_end=const.T_end, rtol=1e-8, atol=1e-10, 
@@ -173,7 +173,7 @@ class BackgroundModel(eqx.Module):
             rho_extra_vec, P_extra_vec, Neff_vec
         )
     
-    @eqx.filter_jit
+    # @eqx.filter_jit
     def dY(self, t, Y, args): 
         """ Differential equation for background quantities. 
 
