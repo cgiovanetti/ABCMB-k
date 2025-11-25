@@ -40,19 +40,30 @@ class Caller(eqx.Module):
         self.withPrimitives = ModuleWithPrimitives()
 
     def __call__(self, a, b):
-        one = self.fun1(a,b)
-        two = self.fun2(one,a)
-        return one + two
+        # This mimics add_derived_parameters - not jitted, creates dict with mixed devices
+        dynamic_dict = self.fun1(a, b)
+        # This mimics run_cosmology_abbr - GPU jitted, receives mixed-device dict
+        result = self.fun2(dynamic_dict)
+        return result
 
-    # not jitted in my example
+    # not jitted - mimics add_derived_parameters
     def fun1(self, a, b):
-        quantity1 = eqx.filter_jit(self.withArrays,backend='cpu')(a)
-        quantity2 = self.withPrimitives(quantity1)
-        return quantity2 
+        # CPU-jitted function returns array (mimics LINX functions)
+        cpu_result = eqx.filter_jit(self.withArrays, backend='cpu')(a)
+        
+        # Create dictionary with mixed devices
+        # 'first' is on CPU (from cpu_result which came from CPU-jitted function)
+        # 'rest' is on GPU (default device for jnp.array)
+        dynamic_dict = {
+            'first': jnp.array([cpu_result, cpu_result+1, cpu_result+2, cpu_result+3, cpu_result+4]),
+            'rest': jnp.array([b, b+1, b+2, b+3, b+4, b+5, b+6])
+        }
+        return dynamic_dict
     
     @eqx.filter_jit
-    def fun2(self, a, b):
-        return a**2/b**2
+    def fun2(self, dynamic_dict):
+        # GPU-jitted function receives dict with mixed-device arrays
+        return jnp.sum(dynamic_dict['first']) + jnp.sum(dynamic_dict['rest'])
 
 caller = Caller()
 res = caller(1.,2.)
