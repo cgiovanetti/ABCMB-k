@@ -410,7 +410,7 @@ class Model(eqx.Module):
             
             # number abundance
             # CG: put in a try/except!
-            YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu'))
+            YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu')[0])
             jax.debug.print("{}".format(YHe_BBN))
         
             # CMB uses real mass fraction
