@@ -42,7 +42,8 @@ for i in range(2):
         'omega_b': 0.0225,
         'A_s': 2.12424e-9,
         'n_s': 0.9709,
-        'Neff': 3.044,
+        # 'Neff': 3.044,
+        'Delta_Neff_init': 0.,
         'YHe': 0.245,
         'TCMB0': 2.34865418e-4,
         'T_nu': (4. / 11.)**(1. / 3.) * 2.34865418e-4,
@@ -51,7 +52,8 @@ for i in range(2):
         'm_ncdm': 1.
     }
 
-    model = Model(ellmin=2, ellmax=2500, lensing=False, has_MassiveNeutrinos=False)
+    model = Model(bbn_type='LINX')
+    # model = Model(bbn_type='LINX')
 
     ell, ABC_Cl = model.run_cosmology(params)
 
