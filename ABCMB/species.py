@@ -605,7 +605,12 @@ class MasslessNeutrino(StandardFluid):
             Neutrino density (units: eV cm^{-3})
         """
         params = args
-        return params['omega_nu'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
+
+        a = jnp.exp(lna)
+        rho = params['N_nu_massless'] * 2. * 7./8. * jnp.pi**2/30. * params['T_nu']**4 * params['TCMB0']**4 / a**4 # eV^4
+        rho = rho / (cnst.c * cnst.hbar)**3 # Convert to eV cm^{-3}
+        #return params['omega_nu'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
+        return rho
     
     def P(self, lna, args):
         """
@@ -786,8 +791,8 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_ncdm'] * params['TCMB0'] / a             # shape (N, 1)
-        x = params['m_ncdm'] / T             # shape (N, 1)
+        T = params['T_nu'] * params['TCMB0'] / a             # shape (N, 1)
+        x = params['m_nu_massive'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
         integrand = (1. + jnp.exp(-self.q_5p)) / self.q_5p**2 \
@@ -796,7 +801,7 @@ class MassiveNeutrino(Fluid):
         # Dot product along last axis with w_5p
         integral = jnp.dot(integrand, self.w_5p)               # (N,)
 
-        rho_val = 4. * T[:, 0]**4 / jnp.pi**2 * integral / cnst.hbar**3 / cnst.c**3
+        rho_val = params['N_nu_massive'] * 4. * T[:, 0]**4 / jnp.pi**2 * integral / cnst.hbar**3 / cnst.c**3
 
         # Remove extra dimension if original input was scalar
         return jnp.squeeze(rho_val) if jnp.ndim(lna) == 0 else rho_val
@@ -822,8 +827,8 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_ncdm'] * params['TCMB0'] / a             # shape (N, 1)
-        x = params['m_ncdm'] / T             # shape (N, 1)
+        T = params['T_nu'] * params['TCMB0'] / a             # shape (N, 1)
+        x = params['m_nu_massive'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
         integrand = (1. + jnp.exp(-self.q_5p)) / jnp.sqrt(self.q_5p**2 + x**2) # (N, 5)
@@ -831,7 +836,7 @@ class MassiveNeutrino(Fluid):
         # Dot product along last axis with w_5p
         integral = jnp.dot(integrand, self.w_5p)               # (N,)
 
-        P_val = 4./3. * T[:, 0]**4 / jnp.pi**2 * integral / cnst.hbar**3 / cnst.c**3
+        P_val = params['N_nu_massive'] * 4./3. * T[:, 0]**4 / jnp.pi**2 * integral / cnst.hbar**3 / cnst.c**3
 
         # Remove extra dimension if original input was scalar
         return jnp.squeeze(P_val) if jnp.ndim(lna) == 0 else P_val
@@ -934,8 +939,8 @@ class MassiveNeutrino(Fluid):
         res = jnp.zeros(self.num_ell_modes)
 
         a = jnp.exp(lna)
-        T = params['T_ncdm'] * params['TCMB0'] / a
-        x = params['m_ncdm'] / T
+        T = params['T_nu'] * params['TCMB0'] / a
+        x = params['m_nu_massive'] / T
         aH  = BG.aH(lna, params)
         tau = BG.tau(lna)
 
@@ -987,8 +992,8 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
-        x = params['m_ncdm'] / T  # (N,)
+        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
         for i in range(3):
@@ -998,7 +1003,7 @@ class MassiveNeutrino(Fluid):
             Psi0 = y[self.delta_idx + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))*epsilon/q**2 * Psi0
-        return res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
+        return params['N_nu_massive'] * res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
 
     def rho_plus_P_theta(self, lna, y, args):
         """
@@ -1020,8 +1025,8 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
-        x = params['m_ncdm'] / T  # (N,)
+        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
         for i in range(3):
@@ -1030,7 +1035,7 @@ class MassiveNeutrino(Fluid):
             kPsi1 = y[self.delta_idx+1 + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))/q * kPsi1
-        return res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
+        return params['N_nu_massive'] * res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
 
     def rho_plus_P_sigma(self, lna, y, args):
         """
@@ -1052,8 +1057,8 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_ncdm'] * params['TCMB0'] / a  # (N,)
-        x = params['m_ncdm'] / T  # (N,)
+        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
         for i in range(3):
@@ -1063,7 +1068,7 @@ class MassiveNeutrino(Fluid):
             Psi2 = y[self.delta_idx+2 + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))/epsilon * Psi2
-        return res * 8./3./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
+        return params['N_nu_massive'] * res * 8./3./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
 
 
 class Baryon(StandardFluid):
