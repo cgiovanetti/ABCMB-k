@@ -646,33 +646,33 @@ f_numu_scat_tab = np.loadtxt(file_dir+"/data/background/"+"numu_scatt.txt")
 f_nue_ann_tab = np.loadtxt(file_dir+"/data/background/"+"nue_ann.txt")
 f_numu_ann_tab = np.loadtxt(file_dir+"/data/background/"+"numu_ann.txt")
 
-try:
-    gpus = devices('gpu')
-    P_QED_tab = device_put(
-        P_QED_tab, device=gpus[0] 
-    )
-    dPdT_QED_tab = device_put(
-        dPdT_QED_tab, device=gpus[0]
-    )
-    d2PdT2_QED_tab  = device_put(
-        d2PdT2_QED_tab , device=gpus[0]
-    )
+# try:
+#     gpus = devices('gpu')
+#     P_QED_tab = device_put(
+#         P_QED_tab, device=gpus[0] 
+#     )
+#     dPdT_QED_tab = device_put(
+#         dPdT_QED_tab, device=gpus[0]
+#     )
+#     d2PdT2_QED_tab  = device_put(
+#         d2PdT2_QED_tab , device=gpus[0]
+#     )
 
-    f_nue_scat_tab = device_put(
-        f_nue_scat_tab, device=gpus[0]
-    )
-    f_numu_scat_tab = device_put(
-        f_numu_scat_tab, device=gpus[0]
-    )
+#     f_nue_scat_tab = device_put(
+#         f_nue_scat_tab, device=gpus[0]
+#     )
+#     f_numu_scat_tab = device_put(
+#         f_numu_scat_tab, device=gpus[0]
+#     )
 
-    f_nue_ann_tab = device_put(
-        f_nue_ann_tab, device=gpus[0]
-    )
-    f_numu_ann_tab = device_put(
-        f_numu_ann_tab, device=gpus[0]
-    )
-except: 
-    pass
+#     f_nue_ann_tab = device_put(
+#         f_nue_ann_tab, device=gpus[0]
+#     )
+#     f_numu_ann_tab = device_put(
+#         f_numu_ann_tab, device=gpus[0]
+#     )
+# except: 
+#     pass
 
 
 ######################
