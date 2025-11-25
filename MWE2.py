@@ -40,33 +40,32 @@ class Caller(eqx.Module):
         self.withPrimitives = ModuleWithPrimitives()
 
     def __call__(self, a, b):
-        # This mimics add_derived_parameters - not jitted, creates dict with mixed devices
-        dynamic_dict = self.fun1(a, b)
-        # This mimics run_cosmology_abbr - GPU jitted, receives mixed-device dict
-        result = self.fun2(dynamic_dict)
+        # This mimics run_cosmology - NOT jitted
+        params_dict = self.add_derived_parameters(a, b)
+        # This mimics run_cosmology_abbr - jitted without backend spec (defaults to GPU)
+        result = self.run_cosmology_abbr(params_dict)
         return result
 
-    # not jitted - mimics add_derived_parameters
-    def fun1(self, a, b):
-        # CPU-jitted function returns array (mimics LINX functions)
-        cpu_result = eqx.filter_jit(self.withArrays, backend='cpu')(a)
+    # NOT jitted - mimics add_derived_parameters
+    def add_derived_parameters(self, a, b):
+        # Call CPU-jitted function that returns arrays
+        cpu_arrays = eqx.filter_jit(self.withArrays, backend='cpu')(a)
         
-        # Create dictionary with mixed devices
-        # 'first' is on CPU (from cpu_result which came from CPU-jitted function)
-        # 'rest' is on GPU (default device for jnp.array)
-        dynamic_dict = {
-            'first': jnp.array([cpu_result, cpu_result+1, cpu_result+2, cpu_result+3, cpu_result+4]),
-            'rest': jnp.array([b, b+1, b+2, b+3, b+4, b+5, b+6])
+        # Create params dict with mix of CPU and GPU arrays
+        # cpu_arrays is on CPU from the CPU-jitted function
+        # The arithmetic operations create new arrays that stay on CPU
+        params_dict = {
+            'first': jnp.array([cpu_arrays, cpu_arrays+1, cpu_arrays+2, cpu_arrays+3, cpu_arrays+4]),  # CPU
+            'rest': jnp.array([b, b+1, b+2, b+3, b+4, b+5, b+6])  # GPU (default)
         }
-        return dynamic_dict
+        return params_dict
     
-    @eqx.filter_jit
-    def fun2(self, dynamic_dict):
-        # GPU-jitted function receives dict with mixed-device arrays
-        return jnp.sum(dynamic_dict['first']) + jnp.sum(dynamic_dict['rest'])
+    @eqx.filter_jit  # No backend specified - defaults to GPU
+    def run_cosmology_abbr(self, params_dict):
+        # This receives a dict with mixed-device arrays
+        return jnp.sum(params_dict['first']) + jnp.sum(params_dict['rest'])
 
 caller = Caller()
 res = caller(1.,2.)
 print(res)
-# print(Manipulator(res))
 
