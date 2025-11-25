@@ -61,7 +61,7 @@ class WeakRates(eqx.Module):
     L_nTOpCCRTh_res : list
     L_pTOnCCRTh_res : list 
 
-    lambda_0 : float
+    lambda_0 : float = eqx.field(static=True)
 
     def __init__(self, 
         RC_corr=True, FM_corr=True, weak_mag_corr=True, 

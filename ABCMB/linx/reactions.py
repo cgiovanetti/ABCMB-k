@@ -54,8 +54,8 @@ class Reaction(eqx.Module):
     name : str
     in_states : tuple 
     out_states : tuple 
-    frwrd_symmetry_fac : float
-    bkwrd_symmetry_fac : float
+    frwrd_symmetry_fac : float = eqx.field(static=True)
+    bkwrd_symmetry_fac : float = eqx.field(static=True)
     alpha : float
     beta : float
     gamma : float
