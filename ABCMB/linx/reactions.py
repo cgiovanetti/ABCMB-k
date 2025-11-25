@@ -51,18 +51,18 @@ class Reaction(eqx.Module):
 
     """
 
-    name : str = eqx.field(static=True)
-    in_states : tuple = eqx.field(static=True)
-    out_states : tuple = eqx.field(static=True)
-    frwrd_symmetry_fac : float = eqx.field(static=True)
-    bkwrd_symmetry_fac : float = eqx.field(static=True)
+    name : str #= eqx.field(static=True)
+    in_states : tuple #= eqx.field(static=True)
+    out_states : tuple #= eqx.field(static=True)
+    frwrd_symmetry_fac : float#= eqx.field(static=True)
+    bkwrd_symmetry_fac : float #= eqx.field(static=True)
     alpha : float
     beta : float
     gamma : float
     T9_vec : list 
     mu_median_vec : list
     expsigma_vec : list
-    interp_type : str = eqx.field(static=True)
+    interp_type : str #= eqx.field(static=True)
     frwrd_rate_param_func : callable 
 
     def __init__(
@@ -117,12 +117,12 @@ class Reaction(eqx.Module):
         multiplicity_in = jnp.array(
             [self.in_states.count(i) for i in set(self.in_states)]
         )
-        self.frwrd_symmetry_fac = float(jnp.prod(1. / multiplicity_in))
+        self.frwrd_symmetry_fac = jnp.prod(1. / multiplicity_in)
 
         multiplicity_out = jnp.array(
             [self.out_states.count(i) for i in set(self.out_states)]
         )
-        self.bkwrd_symmetry_fac = float(jnp.prod(1. / multiplicity_out))
+        self.bkwrd_symmetry_fac = jnp.prod(1. / multiplicity_out)
 
         self.alpha = alpha 
         self.beta = beta 
