@@ -14,7 +14,8 @@ class ModuleWithArrays(eqx.Module):
         self.dictionary = {'add':8.7}
     
     def __call__(self, x):
-        return jnp.sum(self.coefficients * self.weights) * x + self.dictionary['add']
+        # Return a large array to mimic LINX returning arrays like rho_g_vec
+        return jnp.ones(548) * (jnp.sum(self.coefficients * self.weights) * x + self.dictionary['add'])
 
 class ModuleWithPrimitives(eqx.Module):
 
@@ -40,30 +41,33 @@ class Caller(eqx.Module):
         self.withPrimitives = ModuleWithPrimitives()
 
     def __call__(self, a, b):
-        # This mimics run_cosmology - NOT jitted
+        # NOT jitted - mimics run_cosmology
         params_dict = self.add_derived_parameters(a, b)
-        # This mimics run_cosmology_abbr - jitted without backend spec (defaults to GPU)
+        # Jitted - mimics run_cosmology_abbr
         result = self.run_cosmology_abbr(params_dict)
         return result
 
     # NOT jitted - mimics add_derived_parameters
     def add_derived_parameters(self, a, b):
-        # Call CPU-jitted function that returns arrays
-        cpu_arrays = eqx.filter_jit(self.withArrays, backend='cpu')(a)
+        # CPU-jitted function returns large array (mimics LINX)
+        cpu_large_array = eqx.filter_jit(self.withArrays, backend='cpu')(a)
         
-        # Create params dict with mix of CPU and GPU arrays
-        # cpu_arrays is on CPU from the CPU-jitted function
-        # The arithmetic operations create new arrays that stay on CPU
+        # Move to GPU explicitly (mimics the device_put at line 437)
+        gpu_large_array = jax.device_put(cpu_large_array, jax.devices('gpu')[0])
+        
+        # Create dict with:
+        # - 'first': large array on GPU (from CPU computation moved to GPU)
+        # - 'rest': scalars that stay on CPU (default for scalars)
         params_dict = {
-            'first': jnp.array([cpu_arrays, cpu_arrays+1, cpu_arrays+2, cpu_arrays+3, cpu_arrays+4]),  # CPU
-            'rest': jnp.array([b, b+1, b+2, b+3, b+4, b+5, b+6])  # GPU (default)
+            'first': gpu_large_array,  # GPU array
+            'rest': b  # Scalar stays on CPU
         }
         return params_dict
     
-    @eqx.filter_jit  # No backend specified - defaults to GPU
+    @eqx.filter_jit  # No backend - defaults to GPU
     def run_cosmology_abbr(self, params_dict):
-        # This receives a dict with mixed-device arrays
-        return jnp.sum(params_dict['first']) + jnp.sum(params_dict['rest'])
+        # Mixed device dict causes error
+        return jnp.sum(params_dict['first']) + params_dict['rest']
 
 caller = Caller()
 res = caller(1.,2.)
