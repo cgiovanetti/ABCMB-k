@@ -14,8 +14,7 @@ class ModuleWithArrays(eqx.Module):
         self.dictionary = {'add':8.7}
     
     def __call__(self, x):
-        # Return a large array to mimic LINX returning arrays like rho_g_vec
-        return jnp.ones(548) * (jnp.sum(self.coefficients * self.weights) * x + self.dictionary['add'])
+        return jnp.sum(self.coefficients * self.weights) * x + self.dictionary['add']
 
 class ModuleWithPrimitives(eqx.Module):
 
@@ -40,36 +39,40 @@ class Caller(eqx.Module):
         self.withArrays = ModuleWithArrays()
         self.withPrimitives = ModuleWithPrimitives()
 
-    def __call__(self, a, b):
+    def __call__(self, input_dict):
         # NOT jitted - mimics run_cosmology
-        params_dict = self.add_derived_parameters(a, b)
+        full_params = self.add_derived_parameters(input_dict)
         # Jitted - mimics run_cosmology_abbr
-        result = self.run_cosmology_abbr(params_dict)
+        result = self.run_cosmology_abbr(full_params)
         return result
 
     # NOT jitted - mimics add_derived_parameters
-    def add_derived_parameters(self, a, b):
-        # CPU-jitted function returns large array (mimics LINX)
-        cpu_large_array = eqx.filter_jit(self.withArrays, backend='cpu')(a)
+    def add_derived_parameters(self, input_dict):
+        # Start with input dict (Python floats)
+        params = input_dict.copy()
         
-        # Move to GPU explicitly (mimics the device_put at line 437)
-        gpu_large_array = jax.device_put(cpu_large_array, jax.devices('gpu')[0])
+        # Call CPU-jitted function with Python float
+        # This returns array on CPU
+        cpu_result = eqx.filter_jit(self.withArrays, backend='cpu')(params['a'])
         
-        # Create dict with:
-        # - 'first': large array on GPU (from CPU computation moved to GPU)
-        # - 'rest': scalars that stay on CPU (default for scalars)
-        params_dict = {
-            'first': gpu_large_array,  # GPU array
-            'rest': b  # Scalar stays on CPU
-        }
-        return params_dict
+        # Do arithmetic with CPU array and Python float
+        # The Python float gets converted to JAX array on DEFAULT device (GPU)
+        params['first'] = cpu_result + params['b']  # cpu_result is CPU, params['b'] becomes GPU
+        
+        # Also add some pure Python float operations that become GPU arrays
+        params['rest'] = params['b'] * 2.0  # This becomes a GPU array
+        
+        return params
     
     @eqx.filter_jit  # No backend - defaults to GPU
-    def run_cosmology_abbr(self, params_dict):
-        # Mixed device dict causes error
-        return jnp.sum(params_dict['first']) + params_dict['rest']
+    def run_cosmology_abbr(self, params):
+        # params dict now has mixed devices:
+        # params['first'] involves CPU array
+        # params['rest'] is GPU array
+        return params['first'] + params['rest']
 
 caller = Caller()
-res = caller(1.,2.)
+input_params = {'a': 1.0, 'b': 2.0}  # Python floats, like time_tests.py
+res = caller(input_params)
 print(res)
 
