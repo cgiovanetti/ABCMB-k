@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 import equinox as eqx
+import jax
 
 print("Testing which Reaction field causes the warning...")
 

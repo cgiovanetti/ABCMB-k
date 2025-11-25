@@ -56,14 +56,14 @@ class Reaction(eqx.Module):
     out_states : tuple = eqx.field(static=True)
     frwrd_symmetry_fac : float = eqx.field(static=True)
     bkwrd_symmetry_fac : float = eqx.field(static=True)
-    alpha : float = eqx.field(static=True)
-    beta : float = eqx.field(static=True)
-    gamma : float = eqx.field(static=True)
-    T9_vec : list = eqx.field(static=True)
-    mu_median_vec : list = eqx.field(static=True)
-    expsigma_vec : list = eqx.field(static=True)
+    alpha : float
+    beta : float
+    gamma : float
+    T9_vec : list 
+    mu_median_vec : list
+    expsigma_vec : list
     interp_type : str = eqx.field(static=True)
-    frwrd_rate_param_func : callable = eqx.field(static=True)
+    frwrd_rate_param_func : callable 
 
     def __init__(
         self, name, in_states, out_states, alpha, beta, gamma, 

@@ -55,8 +55,11 @@ class Model(eqx.Module):
     linx_reaction_net       : str = ""
     
     PArthENoPE_CLASS_table  : Array #= eqx.field(converter=jnp.asarray)
+    thermo_model_DNeff_jit : callable
 
     return_PTBG : bool
+
+    
 
     ### ADDING SPECIES: add has_ parameter and add condition to append to tuple.
     # In the init, all species that are present within the model should be set to True.
@@ -134,6 +137,11 @@ class Model(eqx.Module):
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         self.bbn_type = bbn_type
         self.linx_reaction_net = linx_reaction_net
+        
+        if self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
+            thermo_model_DNeff = BackgroundModel()
+            self.thermo_model_DNeff_jit = jax.jit(thermo_model_DNeff,backend='cpu')
+            
 
         self.return_PTBG = return_PTBG
 
@@ -356,10 +364,13 @@ class Model(eqx.Module):
                 sys.exit()
 
 
-            thermo_model_DNeff = BackgroundModel()
+            # thermo_model_DNeff = BackgroundModel()
+            # (
+            #     t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
+            # ) = jax.jit(thermo_model_DNeff,backend='cpu')(jnp.asarray(params['Delta_Neff_init']))
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
-            ) = jax.jit(thermo_model_DNeff,backend='cpu')(jnp.asarray(params['Delta_Neff_init']))
+            ) = self.thermo_model_DNeff_jit(jnp.asarray(params['Delta_Neff_init']))
 
             params['Neff'] = Neff_vec[-1]
 
