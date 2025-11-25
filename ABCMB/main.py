@@ -409,7 +409,7 @@ class Model(eqx.Module):
             )
             
             # number abundance
-            #CG: put in a try/except!
+            # CG: put in a try/except!
             YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu'))
             jax.debug.print("{}".format(YHe_BBN))
         
