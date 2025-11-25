@@ -117,12 +117,12 @@ class Reaction(eqx.Module):
         multiplicity_in = jnp.array(
             [self.in_states.count(i) for i in set(self.in_states)]
         )
-        self.frwrd_symmetry_fac = jnp.prod(1. / multiplicity_in)
+        self.frwrd_symmetry_fac = float(jnp.prod(1. / multiplicity_in))
 
         multiplicity_out = jnp.array(
             [self.out_states.count(i) for i in set(self.out_states)]
         )
-        self.bkwrd_symmetry_fac = jnp.prod(1. / multiplicity_out)
+        self.bkwrd_symmetry_fac = float(jnp.prod(1. / multiplicity_out))
 
         self.alpha = alpha 
         self.beta = beta 
