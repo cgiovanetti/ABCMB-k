@@ -43,14 +43,14 @@ class AbundanceModel(eqx.Module):
     """
     nuclear_net : nucl.NuclearRates  
     weak_rates : wr.WeakRates 
-    species_dict : dict
-    species_Z : list
-    species_N : list
-    species_A : list 
-    species_excess_mass : dict
-    species_spin : list
-    species_binding_energy : list
-    species_mass : list
+    species_dict : dict = eqx.field(static=True)
+    species_Z : list = eqx.field(static=True)
+    species_N : list = eqx.field(static=True)
+    species_A : list = eqx.field(static=True)
+    species_excess_mass : dict = eqx.field(static=True)
+    species_spin : list = eqx.field(static=True)
+    species_binding_energy : list = eqx.field(static=True)
+    species_mass : list = eqx.field(static=True)
 
     def __init__(self, nuclear_net, weak_rates=wr.WeakRates()):
 
@@ -92,7 +92,7 @@ class AbundanceModel(eqx.Module):
             self.species_A * ma + self.species_excess_mass - self.species_Z * me
         )
 
-    # @eqx.filter_jit
+    @eqx.filter_jit
     def __call__(
         self, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, 
         a_vec=None, t_vec=None, 

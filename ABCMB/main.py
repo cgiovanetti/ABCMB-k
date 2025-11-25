@@ -368,13 +368,10 @@ class Model(eqx.Module):
 
             abundance_model = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
 
-            abundances_jit = jax.jit(lambda rho_g_vec,
-                rho_nu_vec,
-                rho_NP_vec,
-                P_NP_vec,
-                t_vec_ref,
-                a_vec_ref,  
-                eta_fac: abundance_model(
+
+            # abundance_model_jit = jax.jit(abundance_model,backend='cpu')
+
+            abundances = jax.jit(abundance_model,backend='cpu')(
                 jnp.asarray(rho_g_vec),
                 jnp.asarray(rho_nu_vec),
                 jnp.asarray(rho_NP_vec),
@@ -384,19 +381,6 @@ class Model(eqx.Module):
                 eta_fac = jnp.asarray(eta_fac),
                 tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
                 nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
-                ),backend='cpu')
-
-
-            # abundance_model_jit = jax.jit(abundance_model,backend='cpu')
-
-            abundances = abundances_jit(
-                jnp.asarray(rho_g_vec),
-                jnp.asarray(rho_nu_vec),
-                jnp.asarray(rho_NP_vec),
-                jnp.asarray(P_NP_vec),
-                jnp.asarray(t_vec_ref),
-                jnp.asarray(a_vec_ref),  
-                jnp.asarray(eta_fac)
                 )
             
             # number abundance

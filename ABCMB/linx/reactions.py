@@ -59,9 +59,9 @@ class Reaction(eqx.Module):
     alpha : float
     beta : float
     gamma : float
-    T9_vec : list 
-    mu_median_vec : list
-    expsigma_vec : list
+    T9_vec : list = eqx.field(static=True)
+    mu_median_vec : list = eqx.field(static=True)
+    expsigma_vec : list = eqx.field(static=True)
     interp_type : str 
     frwrd_rate_param_func : callable 
 
