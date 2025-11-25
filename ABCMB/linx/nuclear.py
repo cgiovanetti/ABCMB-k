@@ -37,16 +37,16 @@ class NuclearRates(eqx.Module):
 
     max_i_species : int
     interp_type : str
-    reactions : list = eqx.field(static=True)
-    reactions_names: list = eqx.field(static=True)
-    in_states : dict = eqx.field(static=True)
-    out_states : dict = eqx.field(static=True)
-    frwrd_symmetry_fac : dict = eqx.field(static=True)
-    bkwrd_symmetry_fac : dict = eqx.field(static=True)
-    frwrd_rate_param : dict = eqx.field(static=True)
-    bkwrd_rate_param : dict = eqx.field(static=True)
-    frwrd_reaction_by_particle : dict = eqx.field(static=True)
-    bkwrd_reaction_by_particle : dict = eqx.field(static=True)
+    reactions : list
+    reactions_names: list
+    in_states : dict
+    out_states : dict
+    frwrd_symmetry_fac : dict
+    bkwrd_symmetry_fac : dict
+    frwrd_rate_param : dict
+    bkwrd_rate_param : dict
+    frwrd_reaction_by_particle : dict
+    bkwrd_reaction_by_particle : dict
 
     def __init__(
         self, reactions=None, nuclear_net=None, interp_type='linear',
