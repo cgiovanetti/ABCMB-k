@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Diagnostic script to identify unhashable JAX arrays in AbundanceModel hierarchy.
+Simplified diagnostic script to identify unhashable JAX arrays in AbundanceModel.
 """
 
 import jax
@@ -9,55 +9,68 @@ import numpy as np
 import equinox as eqx
 from ABCMB.linx.nuclear import NuclearRates
 from ABCMB.linx.abundances import AbundanceModel
+from ABCMB.linx.reactions import Reaction
 
-def check_hashability(obj, path="root"):
-    """Recursively check if an object and its attributes are hashable."""
-    issues = []
+def check_module_fields(module, module_name, max_depth=2, current_depth=0):
+    """Check fields of an Equinox module for JAX arrays."""
+    if current_depth >= max_depth:
+        return []
     
-    if isinstance(obj, eqx.Module):
-        print(f"\n{'='*60}")
-        print(f"Checking Equinox Module: {path}")
-        print(f"Type: {type(obj).__name__}")
-        print(f"{'='*60}")
+    issues = []
+    indent = "  " * current_depth
+    
+    print(f"{indent}Checking {module_name}:")
+    
+    # Get field names from the module
+    if hasattr(module, '__dataclass_fields__'):
+        field_names = module.__dataclass_fields__.keys()
+    else:
+        field_names = [name for name in dir(module) if not name.startswith('_')]
+    
+    for field_name in field_names:
+        try:
+            field_value = getattr(module, field_name)
+        except:
+            continue
         
-        # Get all fields
-        for field_name in dir(obj):
-            if field_name.startswith('_'):
-                continue
-            
-            try:
-                field_value = getattr(obj, field_name)
-            except:
-                continue
-            
-            # Check if it's a JAX array
-            if isinstance(field_value, jax.Array):
-                field_path = f"{path}.{field_name}"
-                print(f"  [JAX ARRAY] {field_name}: shape={field_value.shape}, dtype={field_value.dtype}")
-                issues.append({
-                    'path': field_path,
-                    'type': 'jax.Array',
-                    'shape': field_value.shape,
-                    'dtype': field_value.dtype
-                })
-            
-            # Check if it's a numpy array
-            elif isinstance(field_value, np.ndarray):
-                field_path = f"{path}.{field_name}"
-                print(f"  [NUMPY ARRAY] {field_name}: shape={field_value.shape}, dtype={field_value.dtype}")
-            
-            # Check if it's a nested Module
-            elif isinstance(field_value, eqx.Module):
-                nested_issues = check_hashability(field_value, f"{path}.{field_name}")
-                issues.extend(nested_issues)
-            
-            # Check if it's a tuple/list of Modules
-            elif isinstance(field_value, (tuple, list)) and len(field_value) > 0:
-                if isinstance(field_value[0], eqx.Module):
-                    print(f"  [COLLECTION] {field_name}: {len(field_value)} items")
-                    for i, item in enumerate(field_value):
-                        nested_issues = check_hashability(item, f"{path}.{field_name}[{i}]")
-                        issues.extend(nested_issues)
+        # Check for JAX arrays
+        if isinstance(field_value, jax.Array):
+            print(f"{indent}  [JAX ARRAY] {field_name}: shape={field_value.shape}, dtype={field_value.dtype}")
+            issues.append({
+                'module': module_name,
+                'field': field_name,
+                'type': 'jax.Array',
+                'shape': field_value.shape,
+                'dtype': field_value.dtype
+            })
+        
+        # Check for numpy arrays
+        elif isinstance(field_value, np.ndarray):
+            print(f"{indent}  [NUMPY] {field_name}: shape={field_value.shape}, dtype={field_value.dtype}")
+        
+        # Check for nested modules (but limit depth)
+        elif isinstance(field_value, eqx.Module) and current_depth < max_depth - 1:
+            nested_issues = check_module_fields(
+                field_value, 
+                f"{module_name}.{field_name}",
+                max_depth,
+                current_depth + 1
+            )
+            issues.extend(nested_issues)
+        
+        # Check tuples/lists of modules (only first few items)
+        elif isinstance(field_value, (tuple, list)) and len(field_value) > 0:
+            if isinstance(field_value[0], eqx.Module):
+                print(f"{indent}  [COLLECTION] {field_name}: {len(field_value)} items")
+                # Only check first item to avoid explosion
+                if current_depth < max_depth - 1:
+                    nested_issues = check_module_fields(
+                        field_value[0],
+                        f"{module_name}.{field_name}[0]",
+                        max_depth,
+                        current_depth + 1
+                    )
+                    issues.extend(nested_issues)
     
     return issues
 
@@ -74,8 +87,9 @@ def main():
     abundance_model = AbundanceModel(nuclear_rates)
     
     # Check for unhashable JAX arrays
-    print("\n3. Scanning for JAX arrays in AbundanceModel hierarchy...")
-    issues = check_hashability(abundance_model, "AbundanceModel")
+    print("\n3. Scanning for JAX arrays (limited depth to avoid recursion)...")
+    print()
+    issues = check_module_fields(abundance_model, "AbundanceModel", max_depth=3)
     
     # Summary
     print("\n" + "="*80)
@@ -83,43 +97,37 @@ def main():
     print("="*80)
     
     if issues:
-        print(f"\nFound {len(issues)} JAX array(s) that will cause hashing issues:")
+        print(f"\nFound {len(issues)} JAX array(s) in module attributes:")
         for i, issue in enumerate(issues, 1):
-            print(f"\n{i}. {issue['path']}")
-            print(f"   Type: {issue['type']}")
-            print(f"   Shape: {issue['shape']}")
-            print(f"   Dtype: {issue['dtype']}")
+            print(f"\n{i}. {issue['module']}.{issue['field']}")
+            print(f"   Shape: {issue['shape']}, Dtype: {issue['dtype']}")
         
         print("\n" + "="*80)
         print("ROOT CAUSE")
         print("="*80)
-        print("\nJAX arrays are unhashable because they are mutable and their values")
-        print("can change. Equinox modules require all fields to be hashable for")
-        print("JIT compilation to work properly.")
+        print("\nJAX arrays stored as Equinox module attributes are unhashable.")
+        print("This prevents JIT compilation from working.")
         
-        print("\n" + "="*80)
-        print("COMPARISON WITH BackgroundModel")
-        print("="*80)
-        print("\nBackgroundModel only stores boolean flags (hashable primitives).")
-        print("It does NOT store any JAX arrays as module attributes.")
-        print("All arrays are created dynamically during computation.")
+        print("\nThe JAX arrays are created in:")
+        print("  - Reaction.__init__(): frwrd_symmetry_fac, bkwrd_symmetry_fac (from jnp.prod)")
+        print("  - AbundanceModel.__init__(): species_Z, species_N, species_excess_mass, etc.")
         
     else:
-        print("\nNo JAX arrays found - this shouldn't happen!")
+        print("\nNo JAX arrays found in module attributes.")
     
-    # Try to hash it
+    # Try to JIT compile
     print("\n" + "="*80)
-    print("ATTEMPTING TO JIT COMPILE")
+    print("ATTEMPTING JIT COMPILATION")
     print("="*80)
     
     try:
         print("\nAttempting: jax.jit(abundance_model, backend='cpu')")
         jitted = jax.jit(abundance_model, backend='cpu')
-        print("SUCCESS! (This shouldn't happen if JAX arrays are present)")
+        print("SUCCESS! (Unexpected if JAX arrays are present)")
     except TypeError as e:
-        print(f"FAILED with TypeError: {e}")
-        print("\nThis confirms the diagnosis: JAX arrays in module attributes")
-        print("prevent JIT compilation.")
+        print(f"\nFAILED with TypeError:")
+        print(f"  {str(e)[:200]}...")
+        print("\nThis confirms JAX arrays in module attributes prevent JIT compilation.")
 
 if __name__ == "__main__":
     main()
