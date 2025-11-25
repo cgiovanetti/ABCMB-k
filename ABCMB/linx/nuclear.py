@@ -34,15 +34,15 @@ class NuclearRates(eqx.Module):
     bkwrd_rate : dict of callable
         Dictionary of backward rate parameter for each reaction. 
     """
-
+    
     max_i_species : int
-    interp_type : str
-    reactions : tuple = eqx.field(static=True)
-    reactions_names: tuple = eqx.field(static=True)
-    in_states : dict = eqx.field(static=True)
-    out_states : dict = eqx.field(static=True)
-    frwrd_symmetry_fac : dict = eqx.field(static=True)
-    bkwrd_symmetry_fac : dict = eqx.field(static=True)
+    interp_type : str = eqx.field(static=True)
+    reactions : list
+    reactions_names: list = eqx.field(static=True)
+    in_states : dict
+    out_states : dict
+    frwrd_symmetry_fac : dict
+    bkwrd_symmetry_fac : dict 
     frwrd_rate_param : dict = eqx.field(static=True)
     bkwrd_rate_param : dict = eqx.field(static=True)
     frwrd_reaction_by_particle : dict = eqx.field(static=True)

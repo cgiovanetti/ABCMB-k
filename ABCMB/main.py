@@ -22,7 +22,7 @@ from .linx import const as linxconst
 
 config.update("jax_enable_x64", True)
 
-gpu = jax.devices('gpu')
+# gpu = jax.devices('gpu')
 cpu = jax.devices('cpu')[0]  # CG check if you need this
 
 class Model(eqx.Module):
@@ -368,23 +368,50 @@ class Model(eqx.Module):
 
             abundance_model = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
 
+            # need to partition out the static bits so we can use JAX's jit
+            abund_params, abund_static = eqx.partition(abundance_model, eqx.is_array)
 
-            # abundance_model_jit = jax.jit(abundance_model,backend='cpu')
+            def make_abundance_apply(static_model):
+                def abundance_apply(abund_params,
+                                    rho_g_vec,
+                                    rho_nu_vec,
+                                    rho_NP_vec,
+                                    P_NP_vec,
+                                    t_vec,
+                                    a_vec,
+                                    tau_n_fac):
+                    model = eqx.combine(abund_params, static_model)
+                    return model(
+                        rho_g_vec,
+                        rho_nu_vec,
+                        rho_NP_vec,
+                        P_NP_vec,
+                        t_vec=t_vec,
+                        a_vec=a_vec,
+                        tau_n_fac=tau_n_fac,
+                    )
+                return abundance_apply
 
-            abundances = jax.jit(abundance_model,backend='cpu')(
+            abundance_apply = make_abundance_apply(abund_static)
+
+            # now that we've closed over the static bits, compile on CPU
+            abundance_apply_cpu = jax.jit(abundance_apply, backend="cpu")
+
+            abundances = abundance_apply_cpu(
+                abund_params,
                 jnp.asarray(rho_g_vec),
                 jnp.asarray(rho_nu_vec),
                 jnp.asarray(rho_NP_vec),
                 jnp.asarray(P_NP_vec),
                 t_vec=jnp.asarray(t_vec_ref),
-                a_vec=jnp.asarray(a_vec_ref),  
-                eta_fac = jnp.asarray(eta_fac),
-                tau_n_fac = jnp.asarray(params.get("tau_n_fac", 1.0)),
-                nuclear_rates_q = jnp.asarray( params.get("nuclear_rates_q", jnp.zeros( len(abundance_model.nuclear_net.reactions) )) )
-                )
+                a_vec=jnp.asarray(a_vec_ref),
+                tau_n_fac=jnp.asarray(1.0),
+            )
             
             # number abundance
-            YHe_BBN = 4*abundances[5]
+            #CG: put in a try/except!
+            YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu'))
+            jax.debug.print("{}".format(YHe_BBN))
         
             # CMB uses real mass fraction
             Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)

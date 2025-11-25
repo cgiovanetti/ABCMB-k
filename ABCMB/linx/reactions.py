@@ -51,18 +51,18 @@ class Reaction(eqx.Module):
 
     """
 
-    name : str
+    name : str = eqx.field(static=True)
     in_states : tuple 
     out_states : tuple 
-    frwrd_symmetry_fac : float = eqx.field(static=True)
-    bkwrd_symmetry_fac : float = eqx.field(static=True)
+    frwrd_symmetry_fac : float
+    bkwrd_symmetry_fac : float
     alpha : float
     beta : float
     gamma : float
-    T9_vec : list = eqx.field(static=True)
-    mu_median_vec : list = eqx.field(static=True)
-    expsigma_vec : list = eqx.field(static=True)
-    interp_type : str 
+    T9_vec : list 
+    mu_median_vec : list
+    expsigma_vec : list
+    interp_type : str = eqx.field(static=True)
     frwrd_rate_param_func : callable 
 
     def __init__(
@@ -140,17 +140,17 @@ class Reaction(eqx.Module):
                 file_dir+'/data/nuclear_rates/'+spline_data,
                 unpack=True 
             )
-            try:
-                gpus = jax.devices('gpu')
-                self.T9_vec = jax.device_put(self.T9_vec, device=gpus[0])
-                self.mu_median_vec = jax.device_put(
-                    self.mu_media_vec, device=gpus[0]
-                )
-                self.expsigma_vec = jax.device_put(
-                    self.expsigma_vec, device=gpus[0]
-                )
-            except: 
-                pass
+            # try:
+            #     gpus = jax.devices('gpu')
+            #     self.T9_vec = jax.device_put(self.T9_vec, device=gpus[0])
+            #     self.mu_median_vec = jax.device_put(
+            #         self.mu_median_vec, device=gpus[0]
+            #     )
+            #     self.expsigma_vec = jax.device_put(
+            #         self.expsigma_vec, device=gpus[0]
+            #     )
+            # except: 
+            #     pass
 
         elif frwrd_rate_param_func is not None: 
 
