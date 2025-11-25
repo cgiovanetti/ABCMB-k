@@ -37,8 +37,8 @@ class NuclearRates(eqx.Module):
 
     max_i_species : int
     interp_type : str
-    reactions : list
-    reactions_names: list
+    reactions : tuple
+    reactions_names: tuple
     in_states : dict
     out_states : dict
     frwrd_symmetry_fac : dict
@@ -81,17 +81,17 @@ class NuclearRates(eqx.Module):
 
         if reactions is not None: 
 
-            self.reactions = reactions
+            self.reactions = tuple(reactions)
 
         elif nuclear_net == 'np_only': 
             # No nuclear reactions. n<->p rates are always included. 
 
-            self.reactions = []
+            self.reactions = ()
             self.max_i_species = 2
 
         else: 
 
-            self.reactions = self.populate(nuclear_net)
+            self.reactions = tuple(self.populate(nuclear_net))
 
             if nuclear_net[:3] == 'key': 
  
@@ -111,7 +111,7 @@ class NuclearRates(eqx.Module):
         self.bkwrd_symmetry_fac = {} 
         self.frwrd_rate_param = {} 
         self.bkwrd_rate_param = {}
-        self.reactions_names = [] 
+        self.reactions_names = ()
 
         self.frwrd_reaction_by_particle = {
             i:[] for i in range(self.max_i_species)
@@ -135,7 +135,7 @@ class NuclearRates(eqx.Module):
                 if i in self.out_states[rxn.name]: 
                     self.bkwrd_reaction_by_particle[i].append(rxn.name)
             
-            self.reactions_names.append(rxn.name)
+            self.reactions_names = self.reactions_names + (rxn.name,)
             
 
     @eqx.filter_jit
