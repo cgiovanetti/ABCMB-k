@@ -140,17 +140,6 @@ class Reaction(eqx.Module):
                 file_dir+'/data/nuclear_rates/'+spline_data,
                 unpack=True 
             )
-            # try:
-            #     gpus = jax.devices('gpu')
-            #     self.T9_vec = jax.device_put(self.T9_vec, device=gpus[0])
-            #     self.mu_median_vec = jax.device_put(
-            #         self.mu_median_vec, device=gpus[0]
-            #     )
-            #     self.expsigma_vec = jax.device_put(
-            #         self.expsigma_vec, device=gpus[0]
-            #     )
-            # except: 
-            #     pass
 
         elif frwrd_rate_param_func is not None: 
 

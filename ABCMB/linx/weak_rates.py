@@ -93,33 +93,11 @@ class WeakRates(eqx.Module):
                 unpack = True
             )
 
-            # try:
-            #     gpus = jax.devices('gpu')
-            #     self.T_nTOp_thermal_interval = jax.device_put(
-            #         self.T_nTOp_thermal_interval, device=gpus[0] 
-            #     )
-            #     self.L_nTOpCCRTh_res = jax.device_put(
-            #         self.L_nTOpCCRTh_res, device=gpus[0]
-            #     )
-            # except: 
-            #     pass
-
             self.T_pTOn_thermal_interval, self.L_pTOnCCRTh_res = np.loadtxt(
                 file_dir+"/data/weak_thermal_corrections/"
                 +"pTOn_thermal_corrections_SBBN.txt", 
                 unpack = True
             )
-
-            # try:
-            #     gpus = jax.devices('gpu')
-            #     self.T_pTOn_thermal_interval = jax.device_put(
-            #         self.T_pTOn_thermal_interval, device=gpus[0] 
-            #     )
-            #     self.L_pTOnCCRTh_res = jax.device_put(
-            #         self.L_pTOnCCRTh_res, device=gpus[0]
-            #     )
-            # except: 
-            #     pass
 
         else: 
 
