@@ -22,8 +22,6 @@ from .linx import const as linxconst
 
 config.update("jax_enable_x64", True)
 
-# gpu = jax.devices('gpu')
-cpu = jax.devices('cpu')[0]  # CG check if you need this
 
 class Model(eqx.Module):
     """
@@ -139,18 +137,18 @@ class Model(eqx.Module):
         self.bbn_type = bbn_type
         self.linx_reaction_net = linx_reaction_net
         
+        # initialize LINX
         if self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
             self.thermo_model_DNeff = BackgroundModel()
-            # self.thermo_model_DNeff_jit = jax.jit(thermo_model_DNeff,backend='cpu')
-            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net))
-            
+            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net)) 
+        else:
+            self.thermo_model_DNeff = None
+            self.abundanceModel = None
 
         self.return_PTBG = return_PTBG
 
-    ### JITTED OR JITTABLE FUNCTIONS ###
-
-    # @jit
     # need this outside of the jit context
+    # since we want LINX to run on CPU
     def run_cosmology(self, params : dict):
         """
         Compute CMB angular power spectra for given parameters.
@@ -172,6 +170,8 @@ class Model(eqx.Module):
         full_params = self.add_derived_parameters(params)
         output, aux = self.run_cosmology_abbr(full_params)
         return output, aux
+        
+    ### JITTED OR JITTABLE FUNCTIONS ###
 
     @eqx.filter_jit
     def run_cosmology_abbr(self, params : dict):
@@ -365,16 +365,10 @@ class Model(eqx.Module):
                     "docs or https://arxiv.org/abs/2408.14538 for more information.")
                 sys.exit()
 
-
-            # thermo_model_DNeff = BackgroundModel()
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
             ) = eqx.filter_jit(self.thermo_model_DNeff,backend='cpu')(jnp.asarray(params['Delta_Neff_init']))
-            # (
-            #     t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
-            # ) = self.thermo_model_DNeff_jit(jnp.asarray(params['Delta_Neff_init']))
 
-            params['Neff'] = jax.device_put(Neff_vec[-1],device=jax.devices('gpu')[0])
 
             # convert user input omega_b to eta_fac LINX expects
             eta_fac = params['omega_b'] * linxconst.Omegabh2_to_eta0/linxconst.eta0
@@ -392,8 +386,11 @@ class Model(eqx.Module):
                 )
   
             # number abundance
-            # CG: put in a try/except!
-            YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu')[0])
+            try:
+                params['Neff'] = jax.device_put(Neff_vec[-1],device=jax.devices('gpu')[0])
+                YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu')[0])
+            except: # no GPU
+                pass
         
             # CMB uses real mass fraction
             Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)

@@ -42,8 +42,8 @@ for i in range(2):
         'omega_b': jnp.asarray(0.0225),
         'A_s': jnp.asarray(2.12424e-9),
         'n_s': jnp.asarray(0.9709),
-        # 'Neff': 3.044,
-        'Delta_Neff_init': jnp.asarray(0.),
+        'Neff': 3.044,
+        # 'Delta_Neff_init': jnp.asarray(0.),
         'YHe': jnp.asarray(0.245),
         'TCMB0': jnp.asarray(2.34865418e-4),
         'T_nu': jnp.asarray((4. / 11.)**(1. / 3.) * 2.34865418e-4),
@@ -52,8 +52,8 @@ for i in range(2):
         'm_ncdm': jnp.asarray(1.)
     }
 
-    model = Model(bbn_type='LINX')
     # model = Model(bbn_type='LINX')
+    model = Model()
 
     ell, ABC_Cl = model.run_cosmology(params)
 

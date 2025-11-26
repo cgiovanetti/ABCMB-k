@@ -88,29 +88,31 @@ class Background(eqx.Module):
         # self.params = params
         self.species_list = species_list
 
-        self.tau_tab = self._tabulate_conformal_time(params)
-        self.tau0 = self.tau(0.)
+        self.tau_tab = jax.device_put(self._tabulate_conformal_time(params),jax.devices('gpu')[0])
+        self.tau0 = jax.device_put(self.tau(0.),jax.devices('gpu')[0])
         
         ### RECOMBINATION RELATED ###
 
         # Run hyrex to tabulate recombination output
+        # TODO: get this running on CPU. Will require refactorization.
         self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
                                                                         Delta_z_reion = params["Delta_z_reion"], 
                                                                         z_reion_He = params["z_reion_He"], 
                                                                         Delta_z_reion_He = params["Delta_z_reion_He"])
-        self.kappa_func = self._tabulate_optical_depth(params)
+
+        self.kappa_func = jax.device_put(self._tabulate_optical_depth(params),jax.devices('gpu')[0])
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
         vis_vals = vmap(self.visibility,in_axes=[0,None])(lna_vals, params)
-        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
-        self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
-        self.rA_rec = self.tau0 - self.tau(self.lna_rec)
+        self.lna_rec = jax.device_put(lna_vals[jnp.argmax(vis_vals)],jax.devices('gpu')[0])
+        self.lna_visibility_stop = jax.device_put(lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)],jax.devices('gpu')[0])
+        self.rA_rec = jax.device_put(self.tau0 - self.tau(self.lna_rec),jax.devices('gpu')[0])
 
         # Find approximate early time when aH x tau_c = 0.008
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH,in_axes=[0,None])(lna_vals,params)*self.tau_c(lna_vals,params)
-        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
+        self.lna_transfer_start =  jax.device_put(lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)],jax.devices('gpu')[0])
 
 
     def rho_tot(self, lna, params):
