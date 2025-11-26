@@ -37,21 +37,23 @@ for i in range(2):
     start=time.time()
     # ABCMB:
     params = {
-        'h': h,
-        'omega_cdm': 0.1193,
-        'omega_b': 0.0225,
-        'A_s': 2.12424e-9,
-        'n_s': 0.9709,
+        'h': jnp.asarray(h),
+        'omega_cdm': jnp.asarray(0.1193),
+        'omega_b': jnp.asarray(0.0225),
+        'A_s': jnp.asarray(2.12424e-9),
+        'n_s': jnp.asarray(0.9709),
         'Neff': 3.044,
-        'YHe': 0.245,
-        'TCMB0': 2.34865418e-4,
-        'T_nu': (4. / 11.)**(1. / 3.) * 2.34865418e-4,
-        'N_ncdm': 1.,
-        'T_ncdm': 0.71611 * 2.34865418e-4,
-        'm_ncdm': 1.
+        # 'Delta_Neff_init': jnp.asarray(0.),
+        'YHe': jnp.asarray(0.245),
+        'TCMB0': jnp.asarray(2.34865418e-4),
+        'T_nu': jnp.asarray((4. / 11.)**(1. / 3.) * 2.34865418e-4),
+        'N_ncdm': jnp.asarray(1.),
+        'T_ncdm': jnp.asarray(0.71611 * 2.34865418e-4),
+        'm_ncdm': jnp.asarray(1.)
     }
 
-    model = Model(ellmin=2, ellmax=2500, lensing=False, has_MassiveNeutrinos=False)
+    # model = Model(bbn_type='LINX')
+    model = Model()
 
     ell, ABC_Cl = model.run_cosmology(params)
 
