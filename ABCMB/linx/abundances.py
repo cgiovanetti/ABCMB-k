@@ -44,7 +44,7 @@ class AbundanceModel(eqx.Module):
     
     nuclear_net : nucl.NuclearRates  
     weak_rates : wr.WeakRates 
-    species_dict : dict #= eqx.field(static=True)
+    species_dict : dict
     species_Z : list
     species_N : list
     species_A : list 

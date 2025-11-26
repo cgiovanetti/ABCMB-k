@@ -51,18 +51,18 @@ class Reaction(eqx.Module):
 
     """
 
-    name : str #= eqx.field(static=True)
-    in_states : tuple #= eqx.field(static=True)
-    out_states : tuple #= eqx.field(static=True)
-    frwrd_symmetry_fac : float#= eqx.field(static=True)
-    bkwrd_symmetry_fac : float #= eqx.field(static=True)
+    name : str 
+    in_states : tuple 
+    out_states : tuple 
+    frwrd_symmetry_fac : float
+    bkwrd_symmetry_fac : float
     alpha : float
     beta : float
     gamma : float
     T9_vec : list 
     mu_median_vec : list
     expsigma_vec : list
-    interp_type : str #= eqx.field(static=True)
+    interp_type : str
     frwrd_rate_param_func : callable 
 
     def __init__(
