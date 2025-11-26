@@ -449,11 +449,12 @@ class ColdDarkMatter(StandardFluid):
     """
 
     name = "ColdDarkMatter"
+    num_ell_modes = 1
     is_matter = True
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = 1 # CDM only receives density perturbation in synchronous gauge.
+        #self.num_ell_modes = 1 # CDM only receives density perturbation in synchronous gauge.
 
     def rho(self, lna, args):
         """
@@ -1082,11 +1083,12 @@ class Baryon(StandardFluid):
     """
     
     name = "Baryon"
+    num_ell_modes = 2
     is_matter = True
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = 2
+        #self.num_ell_modes = 2
 
     def rho(self, lna, args):
         """

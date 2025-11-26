@@ -38,24 +38,21 @@ class PerturbationEvolver(eqx.Module):
     """
 
     species_list : tuple  #= eqx.static_field()
-    species_dict : dict  = eqx.field(static=True)
+    species_dict : dict  #= eqx.field(static=True)
     k_axis_perturbations : jnp.array
-    start_small_k : jnp.float64
-    start_large_k : jnp.float64
+    specs : dict #= eqx.field(static=True)
 
     def __init__(
         self,
         species_list,
         species_dict,
         k_axis_perturbations=jnp.geomspace(1.e-4, 0.4, 600),
-        start_small_k=0.0015,
-        start_large_k=0.07,
+        specs = {}
     ):
         self.species_list = species_list
         self.species_dict = species_dict
         self.k_axis_perturbations = k_axis_perturbations
-        self.start_small_k = start_small_k
-        self.start_large_k = start_large_k
+        self.specs = specs
 
     def full_evolution(self, args):
         """
@@ -132,12 +129,12 @@ class PerturbationEvolver(eqx.Module):
         # a) τc/τh  →  f1(lna) = BG.tau_c * BG.aH
         f1 = BG.tau_c(lna_start_range, params) * BG.aH(lna_start_range, params)
         # invert f1(lna) = thr1  →  lna = interp(thr1, f1, lna_range)
-        lna1 = jnp.interp(self.start_small_k, f1, lna_start_range)    # jnp.interp ends up being 
+        lna1 = jnp.interp(self.specs["start_small_k"], f1, lna_start_range)    # jnp.interp ends up being 
                                                         # faster than fast_interp through here
         # b) τh/τk  →  f2(lna) = k / BG.aH
         f2 = k / BG.aH(lna_start_range, params)
         # invert f2(lna) = thr2
-        lna2 = jnp.interp(self.start_large_k, f2, lna_start_range)
+        lna2 = jnp.interp(self.specs["start_large_k"], f2, lna_start_range)
 
         lna_ini = jnp.minimum(lna1, lna2)
 
@@ -278,22 +275,18 @@ class PerturbationEvolver(eqx.Module):
         solver = diffrax.Kvaerno5()
 
         rtol=jnp.where(
-            k > 0.01,
-            1.e-3,
-            1.e-5
+            k > self.specs["k_split_PE"],
+            self.specs["rtol_large_k_PE"],
+            self.specs["rtol_small_k_PE"]
         )
 
         atol=jnp.where(
-            k > 0.01,
-            1.e-6,
-            1.e-10
+            k > self.specs["k_split_PE"],
+            self.specs["atol_large_k_PE"],
+            self.specs["atol_small_k_PE"]
         )
 
-        # This along with max_steps=10000 did not help with l > 3500
-        #rtol = 1.e-5
-        #atol = 1.e-8
-
-        stepsize_controller = diffrax.PIDController(pcoeff=0.25, icoeff=0.80, dcoeff=0, rtol=rtol, atol=atol)
+        stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol)
         saveat = diffrax.SaveAt(dense=True)
         adjoint=diffrax.ForwardMode()
 
@@ -301,7 +294,7 @@ class PerturbationEvolver(eqx.Module):
             term, solver,
             t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
             stepsize_controller=stepsize_controller,
-            max_steps=2048,
+            max_steps=self.specs["max_steps_PE"],
             saveat=saveat,
             args=(k,*args),
             adjoint=adjoint

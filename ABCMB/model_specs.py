@@ -8,6 +8,8 @@ def load_specs(input_specs):
 
     specs = {}
 
+    specs["use_LCDM_species"] = input_specs.get("use_LCDM_species", True)
+
     ### OUTPUT RELATED specs PARAMS ###
     specs["output_Cl"] = input_specs.get("output_Cl", True)
     specs["l_min"]     = input_specs.get("l_min", 2)
@@ -42,6 +44,18 @@ def load_specs(input_specs):
     specs["start_small_k"] = input_specs.get("start_small_k", 0.0015)
     specs["start_large_k"] = input_specs.get("start_small_k", 0.07)
 
+    ### Perturbation Evolver Diffrax Settings ###
+    specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
+    # Step size controller
+    specs["k_split_PE"]      = input_specs.get("k_split_PE", 0.01)
+    specs["rtol_small_k_PE"] = input_specs.get("rtol_small_k_PE", 1.e-5)
+    specs["rtol_large_k_PE"] = input_specs.get("rtol_large_k_PE", 1.e-3)
+    specs["atol_small_k_PE"] = input_specs.get("atol_small_k_PE", 1.e-10)
+    specs["atol_large_k_PE"] = input_specs.get("atol_large_k_PE", 1.e-6)
+    specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)
+    specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
+    specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
+
     ### Physical contributions to CMB temperature transfer function ###
     specs["switch_sw"]  = input_specs.get("switch_sw", 1)
     specs["switch_isw"] = input_specs.get("switch_isw", 1)
@@ -64,13 +78,17 @@ def populate_species(user_species, specs):
 
     i = 0
     diffrax_vector_idx = 2
-    for s in lcdm_species:
-        instance = s(diffrax_vector_idx, specs) # Creates an instance of s. init is now consistent across all species
-        species_list = species_list + (instance,)
-        species_dict[instance.name] = i
 
-        i += 1
-        diffrax_vector_idx += instance.num_ell_modes
+    # Add baseline LCDM species if needed.
+    #print(specs["use_LCDM_species"])
+    if specs["use_LCDM_species"]:
+        for s in lcdm_species:
+            instance = s(diffrax_vector_idx, specs) # Creates an instance of s. init is now consistent across all species
+            species_list = species_list + (instance,)
+            species_dict[instance.name] = i
+
+            i += 1
+            diffrax_vector_idx += instance.num_ell_modes
 
     if user_species is not None:
         for s in user_species:

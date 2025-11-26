@@ -105,8 +105,7 @@ class Model(eqx.Module):
             self.species_list, 
             self.species_dict,
             k_axis_perturbations,
-            specs["start_small_k"],
-            specs["start_large_k"]
+            specs
         )
 
         # Intialize spectrum solver
