@@ -166,19 +166,6 @@ class Model(eqx.Module):
             (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
         """
 
-        # let the user know the code is compiling
-        print("            __")
-        print("           /  \\")
-        print("          /    \\")
-        print("         /"+'\033[1m' +"   /\\"+"\033[0m"+" \\")
-        print("            "+'\033[1m' +"/  \\"+"\033[0m"+" \\     _     _")
-        print("        /  "+'\033[1m' +"/ /\\ \\"+"\033[0m"+" \\   / \\   / \\ ")
-        print("          "+'\033[1m' +"/ /__\\ \\"+"\033[0m"+" \\_/"+'\033[1m' +"___"+"\033[0m"+"\\_/"+'\033[1m' +"___"+"\033[0m"+"\\   __")
-        print("       / "+'\033[1m' +"/ ______ \\  | _ \\ / ___"+"\033[0m"+"\\_/  \\   _")
-        print("        "+'\033[1m' +"/ /      \\ \\ |  _// /    | \\/"+"\033[0m"+" \\_/"+'\033[1m' +"_"+"\033[0m"+"\\  ")
-        print("______/"+'\033[1m' +"/ /        \\ \\| _ \\\\ \\___ ||\\/||| - )"+"\033[0m"+"/\\  ")
-        print("      "+'\033[1m' +"/_/          \\_\\___/ \\____|||  |||_-_)"+"\033[0m"+"  \\/\\ is compiling...")
-        print("                                                 \\/\\")
         
         full_params = self.add_derived_parameters(params)
         output, aux = self.run_cosmology_abbr(full_params)
@@ -205,7 +192,22 @@ class Model(eqx.Module):
             (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
         """
 
-        # params = self.add_derived_parameters(params)
+        # let the user know the code is compiling
+        print("\n")
+        print("            __")
+        print("           /  \\")
+        print("          /    \\")
+        print("         /"+'\033[1m' +"   /\\"+"\033[0m"+" \\")
+        print("            "+'\033[1m' +"/  \\"+"\033[0m"+" \\     _     _")
+        print("        /  "+'\033[1m' +"/ /\\ \\"+"\033[0m"+" \\   / \\   / \\ ")
+        print("          "+'\033[1m' +"/ /__\\ \\"+"\033[0m"+" \\_/"+'\033[1m' +"___"+"\033[0m"+"\\_/"+'\033[1m' +"___"+"\033[0m"+"\\   __")
+        print("       / "+'\033[1m' +"/ ______ \\  | _ \\ / ___"+"\033[0m"+"\\_/  \\   _")
+        print("        "+'\033[1m' +"/ /      \\ \\ |  _// /    | \\/"+"\033[0m"+" \\_/"+'\033[1m' +"_"+"\033[0m"+"\\  ")
+        print("______/"+'\033[1m' +"/ /        \\ \\| _ \\\\ \\___ ||\\/||| - )"+"\033[0m"+"/\\  ")
+        print("      "+'\033[1m' +"/_/          \\_\\___/ \\____|||  |||_-_)"+"\033[0m"+"  \\/\\ is compiling...")
+        print("                                                 \\/\\")
+        print("\n")
+
         PT, BG = self.get_PTBG(params)
         output = ()
         aux = ()

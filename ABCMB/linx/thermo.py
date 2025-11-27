@@ -94,20 +94,6 @@ def rho_massless_BE(T, mu, g):
     float
         Units of MeV^4. 
     """
-    # epsilonbig = 1e12
-    # epsilonsmall = 1e-12
-
-    # T_non_negative = jnp.maximum(T, epsilonsmall) 
-    # T_safer = lax.cond(
-    #     T_non_negative < epsilonbig,
-    #     lambda _: T_non_negative,
-    #     lambda _: 0.0,
-    #     None
-    # )
-
-    # T_safe_pow4 = T_safer**4
-
-    # return g * 3 / jnp.pi**2 * T_safe_pow4 * Li(4, jnp.exp(mu/T_safer))
     
     return lax.cond(
         T > 0., 
@@ -191,23 +177,7 @@ def rho_massless_FD(T, mu, g):
         lambda T: 0., 
         T
     )
-    # T = jnp.where(jnp.isnan(T**4),0,T)
-    # value = jnp.where(jnp.isnan(g * 45 / jnp.pi**2 * T**4),0, T**4)
-    # epsilonbig = 1e12
-    # epsilonsmall = 1e-12
-
-    # # Compute T^4 safely, avoid potential underflow or NaN by ensuring T is always above epsilon
-    # T_non_negative = jnp.maximum(T, epsilonsmall) 
-    # T_safer = lax.cond(
-    #     T_non_negative < epsilonbig,
-    #     lambda _: T_non_negative,
-    #     lambda _: 0.0,
-    #     None
-    # )
-
-    # T_safe_pow4 = T_safer**4
-    # return g * 3 / jnp.pi**2 * T_safe_pow4 #* Li(4, -jnp.exp(mu/T))
-
+ 
 def n_massless_FD(T, mu, g): 
     """
     Number density of a massless particle with Fermi-Dirac statistcs.
