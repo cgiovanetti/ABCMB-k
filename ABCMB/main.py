@@ -271,6 +271,109 @@ class Model(eqx.Module):
         return BG
 
     def add_derived_parameters(self, param_in : dict) -> dict:
+        # we do not want to do in-place updates so we can
+        # recycle dicts if LINX option is used
+        params = param_in.copy()
+
+        # Default parameters except Neff and YHe
+        params['h']             = params.get('h', jnp.array(0.7))
+        params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
+        params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
+        params['A_s']           = params.get('A_s', jnp.array(2.e-9))
+        params['n_s']           = params.get('n_s', jnp.array(0.965))
+        params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+        params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+        params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
+        params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
+        params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+
+        # Here we fill in a fake omega_Lambda just so that the DE energy density can be computed in a loop.
+        # This fake quantity will not be used in anything, and later the correct omega_Lambda will be computed.
+        # Purely computational, no physics used or messed up.
+        params['omega_Lambda'] = 0.
+
+        # Neff, BBN related
+        params['T_nu_massive']  = params.get('T_nu_massive', jnp.array(0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
+        params['N_nu_massive']  = params.get('N_nu_massive', jnp.array(0))  # Literal number of massive neutrinos
+        params['m_nu_massive']  = params.get('m_nu_massive', jnp.array(0.06)) # Massive neutrino mass, in eV
+        params['N_nu_massless'] = params.get('N_nu_massless', jnp.array(3)-params["N_nu_massive"]) # Literal number of massless neutrinos
+
+        input_T    = params.get('T_nu_massless') != None
+        input_Neff = params.get('Neff') != None
+
+        if input_T and input_Neff:
+            print("You can only input one of T_nu_massless or Neff, but got values T_nu_massless={} and Neff={}.".format(params["T_nu_massless"], params["Neff"]))
+            sys.exit()
+
+        if not input_T and not input_Neff and self.bbn_type.lower() != "linx":
+            print("You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities. Defaulting to LCDM values")
+            # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
+            params["Neff"] = 3.044
+            input_Neff = True
+
+        lna_early = -23.
+        a_early = jnp.exp(lna_early)
+
+        if input_T:
+            # Define Neff at early times
+            rho_g = 0.
+            rho_nu = 0.
+            rho_extra = 0.
+            for s in self.species_list:
+                rho = s.rho(lna_early, params)
+                if s.name == "Photon":
+                    rho_g += rho
+                elif "neutrino" in s.name.lower():
+                    rho_nu += rho
+                else:
+                    rho_extra += rho
+            params["Neff"] = (rho_nu+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
+
+        if input_Neff:
+            # Infer massless neutrino energy density from Neff.
+            rho_g = 0.
+            rho_extra = 0.
+            for s in self.species_list:
+                if s.name == "Photon":
+                    rho = s.rho(lna_early, params)
+                    rho_g += rho
+                elif s.name != "MasslessNeutrino":
+                    rho = s.rho(lna_early, params)
+                    rho_extra += rho
+            params["T_nu_massless"] = (params["Neff"]/params["N_nu_massless"]*(4./11)**(4./3) - (8./7.)/params["N_nu_massless"] * rho_extra/rho_g)**(1./4.)
+
+        # ZZ: YHe should only be defined if no LINX!!!
+        params['YHe']           = params.get('YHe', jnp.array(0.245))
+
+        # Derived parameters that do not need Neff and YHe
+        params['H0']           = params['h'] * cnst.H0_over_h
+
+        # Loop over matter fluids to compute total matter density today.
+        rho_m = 0.
+        for s in self.species_list:
+            if s.is_matter:
+                rho_m += s.rho(0., params)
+        params['omega_m']      = rho_m / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional matter density
+        params['R_b']          = params['omega_b'] / params['omega_m'] # Baryon fraction
+    
+        # Loop over all fluids and compute energy density at very early time, inferring radiation energy density this way.
+        a_early = jnp.exp(-23.)
+        rho_r  = 0.
+        rho_nu = 0.
+        for s in self.species_list:
+            rho_r += s.rho(jnp.log(a_early), params)
+            if "neutrino" in s.name.lower():
+                rho_nu += s.rho(jnp.log(a_early), params)
+
+        params['omega_r']      = rho_r * a_early**4 / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional radiation density today
+        params['R_nu']         = rho_nu / rho_r # Fractional radiation density in neutrinos, defined at early times. Used for setting adiabatic ICs.
+
+        # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
+        params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+
+        return params
+
+    def add_derived_parameters_old(self, param_in : dict) -> dict:
         """
         Compute derived parameters.
 

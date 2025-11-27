@@ -607,7 +607,7 @@ class MasslessNeutrino(StandardFluid):
         params = args
 
         a = jnp.exp(lna)
-        rho = params['N_nu_massless'] * 2. * 7./8. * jnp.pi**2/30. * params['T_nu']**4 * params['TCMB0']**4 / a**4 # eV^4
+        rho = params['N_nu_massless'] * 2. * 7./8. * jnp.pi**2/30. * params['T_nu_massless']**4 * params['TCMB0']**4 / a**4 # eV^4
         rho = rho / (cnst.c * cnst.hbar)**3 # Convert to eV cm^{-3}
         #return params['omega_nu'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
         return rho
@@ -791,7 +791,7 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_nu'] * params['TCMB0'] / a             # shape (N, 1)
+        T = params['T_nu_massive'] * params['TCMB0'] / a             # shape (N, 1)
         x = params['m_nu_massive'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
@@ -827,7 +827,7 @@ class MassiveNeutrino(Fluid):
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
         a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_nu'] * params['TCMB0'] / a             # shape (N, 1)
+        T = params['T_nu_massive'] * params['TCMB0'] / a             # shape (N, 1)
         x = params['m_nu_massive'] / T             # shape (N, 1)
 
         # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
@@ -939,7 +939,7 @@ class MassiveNeutrino(Fluid):
         res = jnp.zeros(self.num_ell_modes)
 
         a = jnp.exp(lna)
-        T = params['T_nu'] * params['TCMB0'] / a
+        T = params['T_nu_massive'] * params['TCMB0'] / a
         x = params['m_nu_massive'] / T
         aH  = BG.aH(lna, params)
         tau = BG.tau(lna)
@@ -992,7 +992,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        T = params['T_nu_massive'] * params['TCMB0'] / a  # (N,)
         x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
@@ -1025,7 +1025,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        T = params['T_nu_massive'] * params['TCMB0'] / a  # (N,)
         x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
@@ -1057,7 +1057,7 @@ class MassiveNeutrino(Fluid):
         """
         params = args
         a = jnp.exp(lna)
-        T = params['T_nu'] * params['TCMB0'] / a  # (N,)
+        T = params['T_nu_massive'] * params['TCMB0'] / a  # (N,)
         x = params['m_nu_massive'] / T  # (N,)
 
         res = 0.
@@ -1303,7 +1303,9 @@ class Photon(StandardFluid):
             Photon density (units: eV cm^{-3})
         """
         params = args
-        return params['omega_g'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
+        a = jnp.exp(lna)
+        return jnp.pi**2/15. * params["TCMB0"]**4 / a**4 / (cnst.c * cnst.hbar)**3
+        #return params['omega_g'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
 
     def P(self, lna, args):
         """
