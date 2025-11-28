@@ -306,10 +306,17 @@ class Model(eqx.Module):
             sys.exit()
 
         if not input_T and not input_Neff and self.bbn_type.lower() != "linx":
-            print("You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities. Defaulting to LCDM values")
+            # params["T_nu_massless"] = 0.71636856
+            # input_T = True
+            # print(
+            #     "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nT_nu_massless will be set to a fiducial value of {} so that Neff in the neutrino sector is 3.044.".format(params["T_nu_massless"])
+            # )
             # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
             params["Neff"] = 3.044
             input_Neff = True
+            print(
+                "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nNeff will be set to a fiducial value of {}.".format(params["Neff"])
+            )
 
         lna_early = -23.
         a_early = jnp.exp(lna_early)
