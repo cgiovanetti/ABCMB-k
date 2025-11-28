@@ -137,7 +137,7 @@ class Model(eqx.Module):
         self.linx_reaction_net = linx_reaction_net
         
         # initialize LINX
-        if self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
+        if self.bbn_type.lower() == "linx":
             self.thermo_model_DNeff = BackgroundModel()
             self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net)) 
         else:
@@ -277,6 +277,7 @@ class Model(eqx.Module):
 
         # Default parameters except Neff and YHe
         params['h']             = params.get('h', jnp.array(0.7))
+        params['H0']            = params['h'] * cnst.H0_over_h
         params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
         params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
         params['A_s']           = params.get('A_s', jnp.array(2.e-9))
@@ -292,17 +293,29 @@ class Model(eqx.Module):
         # Purely computational, no physics used or messed up.
         params['omega_Lambda'] = 0.
 
-        # Neff, BBN related
+        # neutrinos
         params['T_nu_massive']  = params.get('T_nu_massive', jnp.array(0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
         params['N_nu_massive']  = params.get('N_nu_massive', jnp.array(0))  # Literal number of massive neutrinos
         params['m_nu_massive']  = params.get('m_nu_massive', jnp.array(0.06)) # Massive neutrino mass, in eV
         params['N_nu_massless'] = params.get('N_nu_massless', jnp.array(3)-params["N_nu_massive"]) # Literal number of massless neutrinos
 
+        ### CHECKING INPUT COMPATIBILITY ###
+
         input_T    = params.get('T_nu_massless') != None
         input_Neff = params.get('Neff') != None
 
+        # If the user input both massless neutrino temp and Neff, throw an error. Our code treats these as 1-to-1, see paper.
         if input_T and input_Neff:
             print("You can only input one of T_nu_massless or Neff, but got values T_nu_massless={} and Neff={}.".format(params["T_nu_massless"], params["Neff"]))
+            sys.exit()
+
+        # If the user input either temperature or Neff, but requested LINX, throw an error. LINX will compute the correct values.
+        if (input_T or input_Neff) and self.bbn_type.lower() == "linx":
+            print(
+                "You have specified a value for T_nu_massless and/or Neff, but LINX instead expects a \n" \
+                    "parameter 'Delta_Neff_init' which will be used to compute Neff. Refer to LINX \n" \
+                    "docs or https://arxiv.org/abs/2408.14538 for more information."
+            )
             sys.exit()
 
         if not input_T and not input_Neff and self.bbn_type.lower() != "linx":
@@ -317,12 +330,17 @@ class Model(eqx.Module):
             print(
                 "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nNeff will be set to a fiducial value of {}.".format(params["Neff"])
             )
+        
+        ### END OF INPUT COMPATIBILITY ###
+
+        ### HELIUM FRACTION AND Neff ###
+        # Regardless of bbn_type, these two parameters will be set by the end.
 
         lna_early = -23.
         a_early = jnp.exp(lna_early)
 
         if input_T:
-            # Define Neff at early times
+            # Applies if used input neutrino temperature and did not request LINX.
             rho_g = 0.
             rho_nu = 0.
             rho_extra = 0.
@@ -336,101 +354,10 @@ class Model(eqx.Module):
                     rho_extra += rho
             params["Neff"] = (rho_nu+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
 
-        if input_Neff:
-            # Infer massless neutrino energy density from Neff.
-            rho_g = 0.
-            rho_extra = 0.
-            for s in self.species_list:
-                if s.name == "Photon":
-                    rho = s.rho(lna_early, params)
-                    rho_g += rho
-                elif s.name != "MasslessNeutrino":
-                    rho = s.rho(lna_early, params)
-                    rho_extra += rho
-            params["T_nu_massless"] = (params["Neff"]/params["N_nu_massless"]*(4./11)**(4./3) - (8./7.)/params["N_nu_massless"] * rho_extra/rho_g)**(1./4.)
+        if self.bbn_type.lower() == "table":
+            # Applies if user requested BBN table to be user.
+            # In this case Neff must already have been set, and can be used to interp YHe.
 
-        # ZZ: YHe should only be defined if no LINX!!!
-        params['YHe']           = params.get('YHe', jnp.array(0.245))
-
-        # Derived parameters that do not need Neff and YHe
-        params['H0']           = params['h'] * cnst.H0_over_h
-
-        # Loop over matter fluids to compute total matter density today.
-        rho_m = 0.
-        for s in self.species_list:
-            if s.is_matter:
-                rho_m += s.rho(0., params)
-        params['omega_m']      = rho_m / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional matter density
-        params['R_b']          = params['omega_b'] / params['omega_m'] # Baryon fraction
-    
-        # Loop over all fluids and compute energy density at very early time, inferring radiation energy density this way.
-        a_early = jnp.exp(-23.)
-        rho_r  = 0.
-        rho_nu = 0.
-        for s in self.species_list:
-            rho_r += s.rho(jnp.log(a_early), params)
-            if "neutrino" in s.name.lower():
-                rho_nu += s.rho(jnp.log(a_early), params)
-
-        params['omega_r']      = rho_r * a_early**4 / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional radiation density today
-        params['R_nu']         = rho_nu / rho_r # Fractional radiation density in neutrinos, defined at early times. Used for setting adiabatic ICs.
-
-        # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
-        params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
-
-        return params
-
-    def add_derived_parameters_old(self, param_in : dict) -> dict:
-        """
-        Compute derived parameters.
-
-        Calculates derived parameters from the fundamental parameters,
-        including density parameters and ratios, and fills in default
-        parameter values left unspecified by the user.
-
-        Parameters:
-        -----------
-        params : dict
-            Input parameters
-
-        Returns:
-        --------
-        dict
-            Extended parameter dictionary with derived quantities
-        """
-        # we do not want to do in-place updates so we can
-        # recycle dicts if LINX option is used
-        params = param_in.copy()
-
-        if self.bbn_type=="Table" or self.bbn_type=="table":
-            # add default params if user unspecified.  No YHe
-            params['Neff']          = params.get("Neff", jnp.array(3.044))
-            params['h']             = params.get('h', jnp.array(0.7))
-            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
-            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
-            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
-            params['n_s']           = params.get('n_s', jnp.array(0.965))
-            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
-            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
-            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
-            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.6))
-            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
-            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
-            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
-            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
-
-            # other derived params must be specified *before* BBN computation
-            params['omega_m']      = params['omega_cdm'] + params['omega_b']
-            params['R_b']          = params['omega_b'] / params['omega_m']
-            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
-            params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
-            params['omega_r']      = params['omega_g'] + params['omega_nu']
-            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
-            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
-            
             # interpolate CLASS ParthENoPE table
             bbn = self.PArthENoPE_CLASS_table
             omegab_all = bbn[:, 0]
@@ -457,8 +384,10 @@ class Model(eqx.Module):
             # this is more extensible than just using params['Neff']; if the user includes i.e. interacting
             # dark radiation, the input parameter Neff tracks only the scaling of the neutrino
             # energy density
-            Neff_BBN = (jnp.sum(jnp.asarray([s.rho(lna_bbn, params) for s in self.species_list])) - 
-                    self.species_list[-2].rho(lna_bbn,params))/(self.species_list[-1].rho(lna_bbn,params)/params['Neff'])
+            # TODO: Ask Cara if this is right. This is all contributions to Neff right? Above should then already take care of that.
+            Neff_BBN = params["Neff"]
+            # Neff_BBN = (jnp.sum(jnp.asarray([s.rho(lna_bbn, params) for s in self.species_list])) - 
+            #         self.species_list[-2].rho(lna_bbn,params))/(self.species_list[-1].rho(lna_bbn,params)/params['Neff'])
             
             # last two args are user input omega_b and (Neff_BBN - 3.046) (MUST be 3.046 as 
             # this was assumed when constructing the PArthENoPE table)
@@ -466,34 +395,15 @@ class Model(eqx.Module):
 
             # tabulated result is Yp_CMB
             params['YHe'] = res_YHe
-
-        elif self.bbn_type=="LINX" or self.bbn_type=="Linx" or self.bbn_type=="linx":
-            # first add params not specified by user.  No Neff or YHe
-            params['h']             = params.get('h', jnp.array(0.7))
-            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
-            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
-            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
-            params['n_s']           = params.get('n_s', jnp.array(0.965))
-            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
-            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
-            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
-            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
-            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
-            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
-            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
-            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
-
-            if params.get("Neff") is not None:
-                print("You have specified a value of Neff, but LINX instead expects a \n" \
-                    "parameter 'Delta_Neff_init' which will be used to compute Neff.  Refer to LINX \n" \
-                    "docs or https://arxiv.org/abs/2408.14538 for more information.")
-                sys.exit()
-
+        elif self.bbn_type.lower() == "linx":
+            # Applies if user requested to run LINX.
+            # For this branch to happen, Neff must NOT have already been set. 
+            # Logic above has already accounted for this, since input_T and input_Neff must both be False
+            # for LINX to execute.
+            params['Delta_Neff_init'] = params.get('Delta_Neff_init', 0.)
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
             ) = eqx.filter_jit(self.thermo_model_DNeff,backend='cpu')(jnp.asarray(params['Delta_Neff_init']))
-
 
             # convert user input omega_b to eta_fac LINX expects
             eta_fac = params['omega_b'] * linxconst.Omegabh2_to_eta0/linxconst.eta0
@@ -521,47 +431,47 @@ class Model(eqx.Module):
             Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)
             params['YHe'] = Yp_CMB
 
-            # other derived params must be specified *after* BBN computation
-            params['omega_m']      = params['omega_cdm'] + params['omega_b']
-            params['R_b']          = params['omega_b'] / params['omega_m']
-            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
-            params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
-            # params['omega_nu']     = 7. / 8. * params['N_ur'] * (4. / 11.)**(4. / 3.) * params['omega_g']
-            params['omega_r']      = params['omega_g'] + params['omega_nu']
-            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
-            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
-        
+            # Now Neff has been set by LINX but neutrino temperature has yet to be calculated.
+            # we now set the input_Neff flag to True so the branch below takes care of this.
+            input_Neff = True
         else:
-            # if neither is specified, fill out the dict as usual.  
-            # input params defaults
-            params['Neff']          = params.get("Neff", jnp.array(3.044))
-            params['h']             = params.get('h', jnp.array(0.7))
-            params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
-            params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
-            params['A_s']           = params.get('A_s', jnp.array(2.e-9))
-            params['n_s']           = params.get('n_s', jnp.array(0.965))
-            params['YHe']           = params.get('YHe', jnp.array(0.245))
-            params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-            params['T_nu']          = params.get('T_nu', jnp.array(0.71611))
-            params['T_ncdm']        = params.get('T_ncdm', jnp.array(0.71611))
-            params['N_ncdm']        = params.get('N_ncdm', jnp.array(0.))
-            params['m_ncdm']        = params.get('m_ncdm', jnp.array(0.))
-            params['z_reion']       = params.get('z_reion', jnp.array(11.0))
-            params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
-            params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
-            params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+            # Applies if user wanted neither LINX or BBN table. 
+            params['YHe'] = params.get('YHe', jnp.array(0.245))
 
-            # derived params
-            params['omega_m']      = params['omega_cdm'] + params['omega_b']
-            params['R_b']          = params['omega_b'] / params['omega_m']
-            params['omega_g']      = 8. * jnp.pi**3 * cnst.G / 45. / cnst.H0_over_h**2 / cnst.hbar**3 / cnst.c**3 * params['TCMB0']**4
-            params['H0']           = params['h'] * cnst.H0_over_h
-            params['N_ur']         = params['Neff'] - params['T_ncdm']**4 / (4. / 11.)**(4. / 3.) * params['N_ncdm']
-            params['omega_nu']     = 7. / 8. * params['N_ur'] * params['T_nu']**(4) * params['omega_g']
-            params['omega_r']      = params['omega_g'] + params['omega_nu']
-            params['R_nu']         = jnp.where(params['omega_r'] > 0.0, params['omega_nu'] / params['omega_r'], 0.0)
-            params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+        if input_Neff:
+            # Applies if user input Neff and did not request LINX.
+            rho_g = 0.
+            rho_extra = 0.
+            for s in self.species_list:
+                if s.name == "Photon":
+                    rho = s.rho(lna_early, params)
+                    rho_g += rho
+                elif s.name != "MasslessNeutrino":
+                    rho = s.rho(lna_early, params)
+                    rho_extra += rho
+            params["T_nu_massless"] = (params["Neff"]/params["N_nu_massless"]*(4./11)**(4./3) - (8./7.)/params["N_nu_massless"] * rho_extra/rho_g)**(1./4.)
+
+        # Loop over matter fluids to compute total matter density today.
+        rho_m = 0.
+        for s in self.species_list:
+            if s.is_matter:
+                rho_m += s.rho(0., params)
+        params['omega_m']      = rho_m / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional matter density
+        params['R_b']          = params['omega_b'] / params['omega_m'] # Baryon fraction
+    
+        # Loop over all fluids and compute energy density at very early time, inferring radiation energy density this way.
+        a_early = jnp.exp(-23.)
+        rho_r  = 0.
+        rho_nu = 0.
+        for s in self.species_list:
+            rho_r += s.rho(jnp.log(a_early), params)
+            if "neutrino" in s.name.lower():
+                rho_nu += s.rho(jnp.log(a_early), params)
+
+        params['omega_r']      = rho_r * a_early**4 / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional radiation density today
+        params['R_nu']         = rho_nu / rho_r # Fractional radiation density in neutrinos, defined at early times. Used for setting adiabatic ICs.
+
+        # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
+        params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
 
         return params
