@@ -35,10 +35,9 @@ def test_accuracy_checker(h = 0.6762):
             'Neff': 3.044,
             'YHe': 0.245,
             'TCMB0': 2.34865418e-4,
-            'T_nu': (4./11.)**(1./3.),
-            'N_ncdm': 0,
-            'T_ncdm': 0.71611,
-            'm_ncdm': 0.06,
+            'N_nu_massive': 0,
+            'T_nu_massive': 0.71611,
+            'm_nu_massive': 0.06,
         }
 
         specs = {
@@ -52,7 +51,7 @@ def test_accuracy_checker(h = 0.6762):
             "l_max_ur" : 17,
             "l_max_ncdm" : 17
         }
-        if params["N_ncdm"] > 0:
+        if params["N_nu_massive"] > 0:
             user_species = (
                 species.MassiveNeutrino,
             )
@@ -67,7 +66,7 @@ def test_accuracy_checker(h = 0.6762):
 
         # CLASS
         CLASS_params = {
-            "output": "mPk, tCl, pCl, lCl" if specs["lensing"] else "mPk, tCl, lCl",
+            "output": "mPk, tCl, pCl, lCl" if specs["lensing"] else "mPk, tCl, pCl",
             #"temperature_contributions" : "tsw",
             "l_max_scalars" : ellmax,
             "P_k_max_1/Mpc" : specs["output_k_max"],
@@ -77,9 +76,9 @@ def test_accuracy_checker(h = 0.6762):
             "omega_cdm": params["omega_cdm"],
             "A_s" : params["A_s"],
             "n_s" : params["n_s"],
-            "N_ur": params["N_ur"],
+            "N_ur": params["Neff"],
             "YHe": params["YHe"],
-            "N_ncdm": params["N_ncdm"],
+            "N_ncdm": params["N_nu_massive"],
             #"reio_parametrization" : "reio_none",
             "reio_parametrization" : "reio_camb",
             "z_reio" : 11,
@@ -99,8 +98,8 @@ def test_accuracy_checker(h = 0.6762):
 
         CLASS_Model = Class()
         CLASS_Model.set(CLASS_params)
-        if params["N_ncdm"] > 0:
-            CLASS_Model.set({"m_ncdm": params["m_ncdm"], "T_ncdm": params["T_ncdm"]})
+        if params["N_nu_massive"] > 0:
+            CLASS_Model.set({"m_ncdm": params["m_nu_massive"], "T_ncdm": params["T_nu_massive"]})
 
         CLASS_Model.compute()
         if specs["lensing"]:
