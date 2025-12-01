@@ -293,43 +293,43 @@ class Model(eqx.Module):
         # Purely computational, no physics used or messed up.
         params['omega_Lambda'] = 0.
 
-        # neutrinos
+        # Massive neutrinos
         params['T_nu_massive']  = params.get('T_nu_massive', jnp.array(0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
         params['N_nu_massive']  = params.get('N_nu_massive', jnp.array(0))  # Literal number of massive neutrinos
         params['m_nu_massive']  = params.get('m_nu_massive', jnp.array(0.06)) # Massive neutrino mass, in eV
-        params['N_nu_massless'] = params.get('N_nu_massless', jnp.array(3)-params["N_nu_massive"]) # Literal number of massless neutrinos
+        params['T_nu_massless'] = params.get('T_nu_massless', jnp.array(0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
 
         ### CHECKING INPUT COMPATIBILITY ###
 
-        input_T    = params.get('T_nu_massless') != None
+        input_N    = params.get('N_nu_massless') != None
         input_Neff = params.get('Neff') != None
 
-        # If the user input both massless neutrino temp and Neff, throw an error. Our code treats these as 1-to-1, see paper.
-        if input_T and input_Neff:
-            print("You can only input one of T_nu_massless or Neff, but got values T_nu_massless={} and Neff={}.".format(params["T_nu_massless"], params["Neff"]))
+        # If the user input both massless neutrino number and Neff, throw an error. Our code treats these as 1-to-1, see paper.
+        if input_N and input_Neff:
+            print("You can only input one of N_nu_massless or Neff, but got values N_nu_massless={} and Neff={}.".format(params["N_nu_massless"], params["Neff"]))
             sys.exit()
 
-        # If the user input either temperature or Neff, but requested LINX, throw an error. LINX will compute the correct values.
-        if (input_T or input_Neff) and self.bbn_type.lower() == "linx":
+        # If the user input either N_massless or Neff, but requested LINX, throw an error. LINX will compute the correct values.
+        if (input_N or input_Neff) and self.bbn_type.lower() == "linx":
             print(
-                "You have specified a value for T_nu_massless and/or Neff, but LINX instead expects a \n" \
+                "You have specified a value for N_nu_massless and/or Neff, but LINX instead expects a \n" \
                     "parameter 'Delta_Neff_init' which will be used to compute Neff. Refer to LINX \n" \
                     "docs or https://arxiv.org/abs/2408.14538 for more information."
             )
             sys.exit()
 
-        if not input_T and not input_Neff and self.bbn_type.lower() != "linx":
-            # params["T_nu_massless"] = 0.71636856
-            # input_T = True
-            # print(
-            #     "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nT_nu_massless will be set to a fiducial value of {} so that Neff in the neutrino sector is 3.044.".format(params["T_nu_massless"])
-            # )
-            # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
-            params["Neff"] = 3.044
-            input_Neff = True
+        if not input_N and not input_Neff and self.bbn_type.lower() != "linx":
+            params["N_nu_massless"] = 3 - params['N_nu_massive']
+            input_N = True
             print(
-                "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nNeff will be set to a fiducial value of {}.".format(params["Neff"])
+                "You did not specify either N_nu_massless or Neff, and did not ask LINX to compute these quantities.\nN_nu_massless will be set to 3-N_nu_massive={}.".format(3-params["N_nu_massive"])
             )
+            # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
+            # params["Neff"] = 3.044
+            # input_Neff = True
+            # print(
+            #     "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nNeff will be set to a fiducial value of {}.".format(params["Neff"])
+            # )
         
         ### END OF INPUT COMPATIBILITY ###
 
@@ -339,8 +339,14 @@ class Model(eqx.Module):
         lna_early = -23.
         a_early = jnp.exp(lna_early)
 
-        if input_T:
-            # Applies if used input neutrino temperature and did not request LINX.
+        # Case 1: The user specifies the true number of massless neutrinos. Note this is distinct from CLASS' N_ur which
+        # is computed assuming T_massless = (4/11)^(1/3) x T_CMB.
+        # Here, Neff will be inferred from the cosmological fluid content. 
+        # In particular if the universe contains massive neutrinos, we account for the error incurred when using a late time
+        # massive neutrino temperature which underestimates the massive neutrino energy density at early time, when Neff is set.
+        # We account for this by adding the missing relativistic energy in massive neutrinos at early times to the massless fluid.
+        # See detail in paper.
+        if input_N:
             rho_g = 0.
             rho_nu = 0.
             rho_extra = 0.
@@ -352,7 +358,11 @@ class Model(eqx.Module):
                     rho_nu += rho
                 else:
                     rho_extra += rho
-            params["Neff"] = (rho_nu+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
+
+            Neff_raw     = (rho_nu+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.) # Uncorrected Neff using T_nu_massive today
+            rho_nu_early = 7/8 * (params["N_nu_massless"] + params["N_nu_massive"]) * params["T_nu_massless"]**4 * rho_g # Correct using massless neutrino temp.
+            params["Neff"] = (rho_nu_tot+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
+            params["N_nu_massless"] = params["N_nu_massless"] + params["Neff"] - Neff_raw # Add difference to massless sector.
 
         if self.bbn_type.lower() == "table":
             # Applies if user requested BBN table to be user.
@@ -381,13 +391,8 @@ class Model(eqx.Module):
                                                 # corresponding to this temperature
             lna_bbn = jnp.log(a_bbn)
 
-            # this is more extensible than just using params['Neff']; if the user includes i.e. interacting
-            # dark radiation, the input parameter Neff tracks only the scaling of the neutrino
-            # energy density
-            # TODO: Ask Cara if this is right. This is all contributions to Neff right? Above should then already take care of that.
+            # Comprehensive Neff, includes all relativsitic species at early times.
             Neff_BBN = params["Neff"]
-            # Neff_BBN = (jnp.sum(jnp.asarray([s.rho(lna_bbn, params) for s in self.species_list])) - 
-            #         self.species_list[-2].rho(lna_bbn,params))/(self.species_list[-1].rho(lna_bbn,params)/params['Neff'])
             
             # last two args are user input omega_b and (Neff_BBN - 3.046) (MUST be 3.046 as 
             # this was assumed when constructing the PArthENoPE table)
@@ -425,21 +430,30 @@ class Model(eqx.Module):
                 params['Neff'] = jax.device_put(Neff_vec[-1],device=jax.devices('gpu')[0])
                 YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu')[0])
             except: # no GPU
+                params['Neff'] = Neff_vec[-1]
+                YHe_BBN = 4*abundances[5]
                 pass
         
             # CMB uses real mass fraction
             Yp_CMB = 1./(4*cnst.mH/cnst.mHe*(1/YHe_BBN - 1) + 1)
             params['YHe'] = Yp_CMB
 
-            # Now Neff has been set by LINX but neutrino temperature has yet to be calculated.
+            # Now Neff has been set by LINX but massless neutrino number has yet to be calculated.
             # we now set the input_Neff flag to True so the branch below takes care of this.
             input_Neff = True
         else:
             # Applies if user wanted neither LINX or BBN table. 
             params['YHe'] = params.get('YHe', jnp.array(0.245))
 
+
+        # Case 2: User specifies the total Neff of the universe, including neutrinos and all other relativistic species at early times.
+        # Then we subtract off all relativistic energy densities from Neff and assign the remaining to massless neutrinos.
+        # Since massless neutrino temperature is already specified here, the true derived parameter is N_nu_massless, the physical
+        # number of massless neutrinos.
+        # The philosophy is that if we're increasing Neff, we are not heating the existing neutrinos, we are adding extra neutrinos
+        # at the same temperature. At the CMB level these are indistinguishable, but we chose the later convention. 
+        # Note, if after the deduction there's not enough energy density for massless neutrinos (N_nu_massless < 0), ABCMB throws an error.
         if input_Neff:
-            # Applies if user input Neff and did not request LINX.
             rho_g = 0.
             rho_extra = 0.
             for s in self.species_list:
@@ -449,7 +463,14 @@ class Model(eqx.Module):
                 elif s.name != "MasslessNeutrino":
                     rho = s.rho(lna_early, params)
                     rho_extra += rho
-            params["T_nu_massless"] = (params["Neff"]/params["N_nu_massless"]*(4./11)**(4./3) - (8./7.)/params["N_nu_massless"] * rho_extra/rho_g)**(1./4.)
+            rho1nu = 7/8 * (4/11)**(4/3) * rho_g
+            
+            params['N_nu_massless'] = (params["Neff"] - rho_extra/rho1nu) * ((4/11)**(1/3) / params["T_nu_massless"])**4
+            if params['N_nu_massless'] < 0:
+                print("ABCMB got a negative N_nu_massless. This is most likely because you included an extra relativistic fluid but did not\n"
+                +"account for its contribution to Neff when inputting Neff. For this reason when studying BSM radiation we recommend inputting\n"
+                +"N_nu_massless and T_nu_massless instead of Neff to safely fix the neutrino contributions.")
+                sys.exit()
 
         # Loop over matter fluids to compute total matter density today.
         rho_m = 0.
