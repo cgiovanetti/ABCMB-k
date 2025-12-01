@@ -361,7 +361,7 @@ class Model(eqx.Module):
 
             Neff_raw     = (rho_nu+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.) # Uncorrected Neff using T_nu_massive today
             rho_nu_early = 7/8 * (params["N_nu_massless"] + params["N_nu_massive"]) * params["T_nu_massless"]**4 * rho_g # Correct using massless neutrino temp.
-            params["Neff"] = (rho_nu_tot+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
+            params["Neff"] = (rho_nu_early+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
             params["N_nu_massless"] = params["N_nu_massless"] + params["Neff"] - Neff_raw # Add difference to massless sector.
 
         if self.bbn_type.lower() == "table":
@@ -466,11 +466,11 @@ class Model(eqx.Module):
             rho1nu = 7/8 * (4/11)**(4/3) * rho_g
             
             params['N_nu_massless'] = (params["Neff"] - rho_extra/rho1nu) * ((4/11)**(1/3) / params["T_nu_massless"])**4
-            if params['N_nu_massless'] < 0:
-                print("ABCMB got a negative N_nu_massless. This is most likely because you included an extra relativistic fluid but did not\n"
-                +"account for its contribution to Neff when inputting Neff. For this reason when studying BSM radiation we recommend inputting\n"
-                +"N_nu_massless and T_nu_massless instead of Neff to safely fix the neutrino contributions.")
-                sys.exit()
+            # if params['N_nu_massless'] < 0:
+            #     print("ABCMB got a negative N_nu_massless. This is most likely because you included an extra relativistic fluid but did not\n"
+            #     +"account for its contribution to Neff when inputting Neff. For this reason when studying BSM radiation we recommend inputting\n"
+            #     +"N_nu_massless and T_nu_massless instead of Neff to safely fix the neutrino contributions.")
+            #     sys.exit()
 
         # Loop over matter fluids to compute total matter density today.
         rho_m = 0.

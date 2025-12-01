@@ -27,7 +27,7 @@ def test_accuracy_checker(h = 0.6762):
         # Setup
 
         params = {
-            'h': 0.6762,
+            'h': h,
             'omega_cdm': 0.1193,
             'omega_b': 0.0225,
             'A_s': 2.12424e-9,
@@ -62,7 +62,7 @@ def test_accuracy_checker(h = 0.6762):
             user_species=user_species,
             input_specs=specs
         ) 
-        params = model.add_derived_parameters(params)
+        full_params = model.add_derived_parameters(params)
 
         # CLASS
         CLASS_params = {
@@ -71,14 +71,14 @@ def test_accuracy_checker(h = 0.6762):
             "l_max_scalars" : ellmax,
             "P_k_max_1/Mpc" : specs["output_k_max"],
             "lensing" : "yes" if specs["lensing"] else "no",
-            "H0": params["h"]*100,
-            "omega_b": params["omega_b"],
-            "omega_cdm": params["omega_cdm"],
-            "A_s" : params["A_s"],
-            "n_s" : params["n_s"],
-            "N_ur": params["Neff"],
-            "YHe": params["YHe"],
-            "N_ncdm": params["N_nu_massive"],
+            "H0": full_params["h"]*100,
+            "omega_b": full_params["omega_b"],
+            "omega_cdm": full_params["omega_cdm"],
+            "A_s" : full_params["A_s"],
+            "n_s" : full_params["n_s"],
+            "N_ur": full_params["Neff"],
+            "YHe": full_params["YHe"],
+            "N_ncdm": full_params["N_nu_massive"],
             #"reio_parametrization" : "reio_none",
             "reio_parametrization" : "reio_camb",
             "z_reio" : 11,
@@ -98,8 +98,8 @@ def test_accuracy_checker(h = 0.6762):
 
         CLASS_Model = Class()
         CLASS_Model.set(CLASS_params)
-        if params["N_nu_massive"] > 0:
-            CLASS_Model.set({"m_ncdm": params["m_nu_massive"], "T_ncdm": params["T_nu_massive"]})
+        if full_params["N_nu_massive"] > 0:
+            CLASS_Model.set({"m_ncdm": full_params["m_nu_massive"], "T_ncdm": full_params["T_nu_massive"]})
 
         CLASS_Model.compute()
         if specs["lensing"]:
