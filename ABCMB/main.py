@@ -213,9 +213,9 @@ class Model(eqx.Module):
         print('           / /__\\ \\    ___   ___  ')
         print('          / ______ \\  | _ \\ / __\\ _  _  ')
         print('         / /      \\ \\ |  _// /   | \\/ | __  ')
-        print('        / /        \\ \\| _ \\\\ \___||\\/||| -)  ')
-        print('       /_/          \\_\\___/ \___/||  |||_-) is compiling...')
-        print('\_____/      ')
+        print('        / /        \\ \\| _ \\\\ \\___||\\/||| -)  ')
+        print('       /_/          \\_|___/ \\___/||  |||_-) is compiling...')
+        print('\\_____/      ')
         print("")
 
         PT, BG = self.get_PTBG(params)
