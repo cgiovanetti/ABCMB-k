@@ -194,7 +194,7 @@ class Model(eqx.Module):
         """
 
         # let the user know the code is compiling
-        print("\n")
+        print("")
         print("            __")
         print("           /  \\")
         print("          /    \\")
@@ -207,7 +207,7 @@ class Model(eqx.Module):
         print("______/"+'\033[1m' +"/ /        \\ \\| _ \\\\ \\___ ||\\/||| - )"+"\033[0m"+"/\\  ")
         print("      "+'\033[1m' +"/_/          \\_\\___/ \\____|||  |||_-_)"+"\033[0m"+"  \\/\\ is compiling...")
         print("                                                 \\/\\")
-        print("\n")
+        print("")
 
         PT, BG = self.get_PTBG(params)
         output = ()
