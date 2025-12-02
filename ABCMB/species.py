@@ -77,28 +77,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a pressure function.")
 
-    @abc.abstractmethod
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Calculates the squared sound speed of the fluid species at a given
-        cosmological epoch using the logarithm of the scale factor.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float
-            Sound speed squared (units: dimensionless)
-        """
-        raise NotImplementedError("Fluid species must implement a sound speed squared.")
-
     def w(self, lna, args):
         """
         Compute equation of state parameter.
@@ -367,7 +345,6 @@ class DarkEnergy(BackgroundFluid):
     --------
     rho : Compute dark energy density (units: eV cm^{-3})
     P : Compute dark energy pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
     """
 
     name = "DarkEnergy"
@@ -414,24 +391,6 @@ class DarkEnergy(BackgroundFluid):
         params = args
         return -self.rho(lna, params)
 
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float
-            Sound speed squared (units: dimensionless)
-        """
-        return 0.
-
 class ColdDarkMatter(StandardFluid):
     """
     Cold dark matter fluid species implementation.
@@ -443,7 +402,6 @@ class ColdDarkMatter(StandardFluid):
     --------
     rho : Compute cold dark matter density (units: eV cm^{-3})
     P : Compute cold dark matter pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
@@ -494,29 +452,6 @@ class ColdDarkMatter(StandardFluid):
         Notes:
         ------
         Cold dark matter is pressureless, so this always returns zero.
-        """
-        return 0.
-
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float
-            Sound speed squared (units: dimensionless)
-
-        Notes:
-        ------
-        For cold dark matter, sound speed is always zero due to its
-        non-relativistic and pressureless nature.
         """
         return 0.
     
@@ -579,7 +514,6 @@ class MasslessNeutrino(StandardFluid):
     --------
     rho : Compute neutrino density (units: eV cm^{-3})
     P : Compute neutrino pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
     """
 
     name = "MasslessNeutrino"
@@ -630,29 +564,6 @@ class MasslessNeutrino(StandardFluid):
         """
         params = args
         return self.rho(lna, params)/3.
-
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float
-            Sound speed squared (units: dimensionless)
-
-        Notes:
-        ------
-        For massless neutrinos, sound speed is always 1/3 due to
-        their relativistic equation of state.
-        """
-        return 1./3.
 
     def y_ini(self, k, tau_ini, om, args):
         """
@@ -744,7 +655,6 @@ class MassiveNeutrino(Fluid):
     --------
     rho : Compute massive neutrino density (units: eV cm^{-3})
     P : Compute massive neutrino pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     rho_delta : Compute density perturbation (units: eV cm^{-3})
@@ -840,32 +750,6 @@ class MassiveNeutrino(Fluid):
 
         # Remove extra dimension if original input was scalar
         return jnp.squeeze(P_val) if jnp.ndim(lna) == 0 else P_val
-
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Parameters:
-        -----------
-        lna : float or ArrayLike
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float or ArrayLike
-            Sound speed squared (units: dimensionless)
-
-        Notes:
-        ------
-        Uses equation of state parameter w as approximation.
-        """
-        try:
-            _, params = args
-        except:
-            params = args
-        return self.w(lna, params) # ZZ : Is this correct?
 
     def y_ini(self, k, tau_ini, om, args):
         """
@@ -1272,7 +1156,6 @@ class Photon(StandardFluid):
     --------
     rho : Compute photon density (units: eV cm^{-3})
     P : Compute photon pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
     y_ini : Compute initial perturbation conditions (units: dimensionless)
     y_prime : Compute perturbation time derivatives (units: dimensionless)
     """
@@ -1325,28 +1208,6 @@ class Photon(StandardFluid):
         """
         params = args
         return self.rho(lna, params)/3.
-
-    def cs2(self, lna, args):
-        """
-        Compute sound speed squared.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        args : dict
-            Cosmological parameters (params)
-
-        Returns:
-        --------
-        float
-            Sound speed squared (units: dimensionless)
-
-        Notes:
-        ------
-        For photons, sound speed is always 1/3 due to their relativistic equation of state.
-        """
-        return 1./3.
 
     def y_ini(self, k, tau_ini, om, args):
         """
