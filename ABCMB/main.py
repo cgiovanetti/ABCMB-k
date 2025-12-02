@@ -19,6 +19,7 @@ from .linx.background import BackgroundModel
 from .linx.abundances import AbundanceModel
 from .linx.nuclear import NuclearRates
 from .linx import const as linxconst
+from .linx import thermo as linxThermo
 
 config.update("jax_enable_x64", True)
 
@@ -427,9 +428,14 @@ class Model(eqx.Module):
   
             # number abundance
             try:
+                params['T_nu_massless'] = jax.device_put(
+                    linxThermo.T_nu(rho_nu_vec[-1]) / linxThermo.T_g(rho_g_vec[-1]),
+                    device=jax.devices('gpu')[0]
+                )
                 params['Neff'] = jax.device_put(Neff_vec[-1],device=jax.devices('gpu')[0])
                 YHe_BBN = jax.device_put(4*abundances[5],device=jax.devices('gpu')[0])
             except: # no GPU
+                params['T_nu_massless'] = linxThermo.T_nu(rho_nu_vec[-1]) / linxThermo.T_g(rho_g_vec[-1])
                 params['Neff'] = Neff_vec[-1]
                 YHe_BBN = 4*abundances[5]
                 pass
