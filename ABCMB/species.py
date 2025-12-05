@@ -1,4 +1,4 @@
-import abc
+#import abc
 from jax import config, lax
 import jax.numpy as jnp
 import equinox as eqx
@@ -10,19 +10,38 @@ config.update("jax_enable_x64", True)
 
 class Fluid(eqx.Module):
     """
-    Abstract base class for fluid species in cosmological simulations.
+    Base class for fluid species.
 
-    Defines an interface for computing fluid thermodynamic properties.
+    Defines fluid properties.
+
+    Fields:
+    -------
+    delta_idx : int
+        Default = 0
+        Position of the first perturbation equation in the Diffrax vector. For most fluids this is the density perturbation mode "delta".
+    num_ell_modes : int 
+        Default = 0
+        Number of equations that need to be simultaneously evolved in the perturbations module. 
+    name : str
+        Default = ""
+        Name of the fluid, used to find fluid and refer to it later in the computation using species_dict["name"].
+    is_matter : bool
+        Default = False
+        Whether the fluid is non-relativistic today and contributes towards the total matter power spectrum. 
 
     Methods:
     --------
-    rho : Compute energy density (units: eV cm^{-3})
-    P : Compute pressure (units: eV cm^{-3})
-    cs2 : Compute sound speed squared (units: dimensionless)
-    w : Compute equation of state parameter (units: dimensionless)
-    rho_delta : Compute standard density perturbation (units: eV cm^{-3})
-    rho_plus_P_theta : Compute standard velocity perturbation (units: eV cm^{-3})
-    rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
+    Background Quantities:
+        rho : Compute energy density (units: eV cm^{-3})
+        P   : Compute pressure (units: eV cm^{-3})
+        w   : Compute equation of state parameter (units: dimensionless)
+
+    Perturbation Quantities:
+        y_ini   : Adiabatic initial conditions, in synchronous gauge
+        y_prime : Perturbation derivatives, in synchronous gauge
+        rho_delta        : Perturbed density function δρ (units: eV cm^{-3})
+        rho_plus_P_theta : Velocity perturbation  (units: eV cm^{-3})
+        rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
     delta_idx     : int = eqx.field(default=0)
@@ -33,7 +52,7 @@ class Fluid(eqx.Module):
     def __init__(self, delta_idx, specs):
         self.delta_idx = delta_idx
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def rho(self, lna, args):
         """
         Compute energy density.
@@ -55,7 +74,7 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement an energy density function.")
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def P(self, lna, args):
         """
         Compute pressure.
@@ -98,7 +117,7 @@ class Fluid(eqx.Module):
         """
         return self.P(lna, args)/self.rho(lna, args)
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def y_ini(self, k, tau_ini, om, args):
         """
         Compute initial conditions for perturbation modes.
@@ -123,7 +142,7 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement the initial conditions of their perturbation modes.")
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
         Compute time derivatives of perturbation modes.
@@ -152,7 +171,7 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def rho_delta(self, lna, y, args):
         """
         Compute density perturbation.
@@ -173,7 +192,7 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def rho_plus_P_theta(self, lna, y, args):
         """
         Compute velocity perturbation.
@@ -194,7 +213,7 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    @abc.abstractmethod
+    #@abc.abstractmethod
     def rho_plus_P_sigma(self, lna, y, args):
         """
         Compute shear perturbation.
@@ -331,7 +350,6 @@ class BackgroundFluid(Fluid):
 
     def rho_plus_P_sigma(self, lna, y, args):
         return 0.
-
 
 ### BEGINNING OF CONCRETE CLASSES ###
 

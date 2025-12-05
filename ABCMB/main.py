@@ -49,27 +49,17 @@ class Model(eqx.Module):
     species_dict : dict  #= eqx.field(static=True) # Dict as fields must be static
     #perturbed_species_list : tuple = ()
     #perturbed_species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
-
-    bbn_type                : str = ""
-    linx_reaction_net       : str = ""
     
     PArthENoPE_CLASS_table  : Array #= eqx.field(converter=jnp.asarray)
     thermo_model_DNeff : BackgroundModel
     abundanceModel : AbundanceModel
-
-    return_PTBG : bool
-
-    
 
     ### ADDING SPECIES: add has_ parameter and add condition to append to tuple.
     # In the init, all species that are present within the model should be set to True.
     # All couplings present between species should be set to true. 
     def __init__(self,
                  input_specs = {},
-                 user_species=None,
-                 bbn_type = "",
-                 linx_reaction_net = "key_PRIMAT_2023",
-                 return_PTBG=False,
+                 user_species=None
                  ):
         """
         Initialize Model instance.
@@ -79,20 +69,6 @@ class Model(eqx.Module):
 
         Parameters:
         -----------
-        ellmin : int, optional
-            Minimum multipole for CMB spectrum (default: 2)
-        ellmax : int, optional
-            Maximum multipole for CMB spectrum (default: 2500)
-        lensing : bool, optional
-            Whether to include lensing effects (default: False)
-        has_MassiveNeutrinos : bool, optional
-            Whether to include massive neutrinos (default: False)
-        return_PTBG : bool, optional
-            Whether to return perturbation table and background (default: False)
-        bbn_type : str, optional
-            BBN calculation method: "Table", "LINX", or "" for manual (default: "")
-        linx_reaction_net : str, optional
-            Nuclear reaction network for LINX (default: "key_PRIMAT_2023")
         """
 
         # Fill in all user defined and missing specs parameters
@@ -134,18 +110,13 @@ class Model(eqx.Module):
 
         # Initialize BBN model
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
-        self.bbn_type = bbn_type
-        self.linx_reaction_net = linx_reaction_net
-        
         # initialize LINX
-        if self.bbn_type.lower() == "linx":
+        if self.specs["bbn_type"].lower() == "linx":
             self.thermo_model_DNeff = BackgroundModel()
-            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.linx_reaction_net)) 
+            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.specs["linx_reaction_net"])) 
         else:
             self.thermo_model_DNeff = None
             self.abundanceModel = None
-
-        self.return_PTBG = return_PTBG
 
     # need this outside of the jit context
     # since we want LINX to run on CPU
@@ -224,8 +195,11 @@ class Model(eqx.Module):
             output += (Pk,)
             aux += (self.SS.k_axis_Pk_output,)
 
-        if self.return_PTBG:
-            aux += (PT, BG)
+        if self.specs["output_perturbations"]:
+            aux += (PT,)
+
+        if self.specs["output_background"]:
+            aux += (BG,)
 
         return output, aux
 
@@ -311,7 +285,7 @@ class Model(eqx.Module):
             sys.exit()
 
         # If the user input either N_massless or Neff, but requested LINX, throw an error. LINX will compute the correct values.
-        if (input_N or input_Neff) and self.bbn_type.lower() == "linx":
+        if (input_N or input_Neff) and self.specs["bbn_type"].lower() == "linx":
             print(
                 "You have specified a value for N_nu_massless and/or Neff, but LINX instead expects a \n" \
                     "parameter 'Delta_Neff_init' which will be used to compute Neff. Refer to LINX \n" \
@@ -319,7 +293,7 @@ class Model(eqx.Module):
             )
             sys.exit()
 
-        if not input_N and not input_Neff and self.bbn_type.lower() != "linx":
+        if not input_N and not input_Neff and self.specs["bbn_type"].lower() != "linx":
             params["N_nu_massless"] = 3 - params['N_nu_massive']
             input_N = True
             print(
@@ -365,7 +339,7 @@ class Model(eqx.Module):
             params["Neff"] = (rho_nu_early+rho_extra)/rho_g * (8./7.) * (11./4.)**(4./3.)
             params["N_nu_massless"] = params["N_nu_massless"] + params["Neff"] - Neff_raw # Add difference to massless sector.
 
-        if self.bbn_type.lower() == "table":
+        if self.specs["bbn_type"].lower() == "table":
             # Applies if user requested BBN table to be user.
             # In this case Neff must already have been set, and can be used to interp YHe.
 
@@ -401,7 +375,7 @@ class Model(eqx.Module):
 
             # tabulated result is Yp_CMB
             params['YHe'] = res_YHe
-        elif self.bbn_type.lower() == "linx":
+        elif self.specs["bbn_type"].lower() == "linx":
             # Applies if user requested to run LINX.
             # For this branch to happen, Neff must NOT have already been set. 
             # Logic above has already accounted for this, since input_T and input_Neff must both be False

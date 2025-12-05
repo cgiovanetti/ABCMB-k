@@ -19,6 +19,13 @@ def load_specs(input_specs):
     specs["output_Pk"]    = input_specs.get("output_Pk", True)
     specs["output_k_max"] = input_specs.get("output_k_max", 0.5)
 
+    specs["output_background"]    = input_specs.get("output_background", False)
+    specs["output_perturbations"] = input_specs.get("output_perturbations", False)
+
+    ### BBN ###
+    specs["bbn_type"] = input_specs.get("bbn_type", "")
+    specs["linx_reaction_net"] = input_specs.get("linx_reaction_net", "key_PRIMAT_2023")
+
     ### TODO: HYREX RELATED specs PARAMS ###
 
     ### Boltzmann Hierarchy Cutoffs ###
