@@ -204,6 +204,8 @@ class Model(eqx.Module):
             output += (Pk,)
             aux += (self.SS.k_axis_Pk_output,)
 
+        aux += (params,)
+
         if self.specs["output_perturbations"]:
             aux += (PT,)
 
