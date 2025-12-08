@@ -325,7 +325,7 @@ class SpectrumSolver(eqx.Module):
             Scale factor
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
+        BG : background.Background
             Background cosmology module
         params : dict
             Dictionary of input and derived parameters
@@ -363,7 +363,7 @@ class SpectrumSolver(eqx.Module):
             Multipole
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
+        BG : background.Background
             Background cosmology module
         params : dict
             Dictionary of input and derived parameters
@@ -407,7 +407,7 @@ class SpectrumSolver(eqx.Module):
             Unlensed E-mode polarization power spectrum
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
+        BG : background.Background
             Background cosmology module
         params : dict
             Dictionary of input and derived parameters
@@ -527,7 +527,7 @@ class SpectrumSolver(eqx.Module):
         -----------
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
+        BG : background.Background
             Background cosmology module
         params : dict
             Dictionary of input and derived parameters
@@ -584,7 +584,7 @@ class SpectrumSolver(eqx.Module):
             Index into bessel_l_tab for multipole ℓ
         PT : perturbations.PerturbationTable
             Perturbation evolution table
-        BG : cosmology.Background
+        BG : background.Background
             Background cosmology module
         params : dict
             Dictionary of input and derived parameters

@@ -11,7 +11,7 @@ import os
 file_dir = os.path.dirname(__file__)
 
 from .hyrex import hyrex
-from . import cosmology, perturbations, spectrum, model_specs
+from . import background, perturbations, spectrum, model_specs
 from . import constants as cnst
 from .ABCMBTools import bilinear_interp
 
@@ -249,11 +249,11 @@ class Model(eqx.Module):
 
         Returns:
         --------
-        cosmology.Background
+        background.Background
             Background object
         """
         # params = self.add_derived_parameters(params)
-        BG = cosmology.Background(params, self.species_list, self.RM)
+        BG = background.Background(params, self.species_list, self.RM)
         return BG
 
     def add_derived_parameters(self, param_in : dict) -> dict:
