@@ -178,10 +178,9 @@ class PerturbationEvolver(eqx.Module):
         om = a*rho_m/jnp.sqrt(rho_r) * jnp.sqrt(8.*jnp.pi*cnst.G/3.) / cnst.c_Mpc_over_s # In units of 1/Mpc
 
         metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*params['R_nu'])*(5.+4.*params['R_nu'] - (16.*params['R_nu']*params['R_nu']+280.*params['R_nu']+325)/10./(2.*params['R_nu']+15.)*tau_ini*om))
-        metric_h_ini   = 0.5 * (k * tau_ini)**2 * (1.-om*tau_ini/5.)
 
         all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, params) for p in self.species_list])
-        y_ini = jnp.concatenate((jnp.array([metric_h_ini, metric_eta_ini]), all_fluid_ini))
+        y_ini = jnp.concatenate((jnp.array([metric_eta_ini]), all_fluid_ini))
         
         return y_ini
 
@@ -209,8 +208,7 @@ class PerturbationEvolver(eqx.Module):
         k, BG, params = args # CG: !!
         a  = jnp.exp(lna)
         aH = BG.aH(lna, params)
-        metric_h   = y[0]
-        metric_eta = y[1]
+        metric_eta = y[0]
 
         # Metric perturbation derivatives
         sum_rho_delta = 0.
@@ -228,7 +226,7 @@ class PerturbationEvolver(eqx.Module):
 
         # Now loop over all species and assemble their respective y_primes
         args = (BG, params, self.species_list, self.species_dict)
-        y_prime = jnp.array([metric_h_prime, metric_eta_prime])
+        y_prime = jnp.array([metric_eta_prime])
         for i in range(len(self.species_list)):
             species = self.species_list[i]
             y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, args)))
@@ -341,8 +339,7 @@ class PerturbationEvolver(eqx.Module):
         Photon = self.species_list[self.species_dict["Photon"]]
 
         # Shapes are (Nlna, Nk)
-        metric_h   = modes[0]
-        metric_eta = modes[1]
+        metric_eta = modes[0]
         delta_dm   = modes[DarkMatter.delta_idx]
         delta_b    = modes[Baryon.delta_idx]
         theta_b    = modes[Baryon.delta_idx+1]
@@ -408,7 +405,6 @@ class PerturbationEvolver(eqx.Module):
             sigma_g,
             Gg0,
             Gg2,
-            metric_h,
             metric_eta,
             metric_h_prime,
             metric_eta_prime,
@@ -449,8 +445,6 @@ class PerturbationTable(eqx.Module):
         Photon monopole polarization moments
     Gg2 : array
         Photon quadrupole polarization moments
-    metric_h : array
-        Metric perturbation h
     metric_eta : array
         Metric perturbation η
     metric_h_prime : array
@@ -475,7 +469,6 @@ class PerturbationTable(eqx.Module):
     Gg0       : jnp.array
     Gg2       : jnp.array
 
-    metric_h       : jnp.array
     metric_eta     : jnp.array
     metric_h_prime : jnp.array
     metric_eta_prime : jnp.array

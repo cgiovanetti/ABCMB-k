@@ -84,7 +84,7 @@ def populate_species(user_species, specs):
     )
 
     i = 0
-    diffrax_vector_idx = 2
+    diffrax_vector_idx = 1
 
     # Add baseline LCDM species if needed.
     #print(specs["use_LCDM_species"])
