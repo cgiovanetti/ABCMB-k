@@ -49,7 +49,7 @@ def load_specs(input_specs):
 
     ### Set perturbations initial condition time ###
     specs["start_small_k"] = input_specs.get("start_small_k", 0.0015)
-    specs["start_large_k"] = input_specs.get("start_small_k", 0.07)
+    specs["start_large_k"] = input_specs.get("start_large_k", 0.07)
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
