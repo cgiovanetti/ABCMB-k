@@ -307,9 +307,9 @@ class Model(eqx.Module):
         if not input_N and not input_Neff and self.specs["bbn_type"].lower() != "linx":
             params["N_nu_massless"] = 3 - params['N_nu_massive']
             input_N = True
-            print(
-                "You did not specify either N_nu_massless or Neff, and did not ask LINX to compute these quantities.\nN_nu_massless will be set to 3-N_nu_massive={}.".format(3-params["N_nu_massive"])
-            )
+            # print(
+            #     "You did not specify either N_nu_massless or Neff, and did not ask LINX to compute these quantities.\nN_nu_massless will be set to 3-N_nu_massive={}.".format(3-params["N_nu_massive"])
+            # )
             # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
             # params["Neff"] = 3.044
             # input_Neff = True
