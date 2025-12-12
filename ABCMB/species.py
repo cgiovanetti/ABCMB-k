@@ -538,7 +538,7 @@ class MasslessNeutrino(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = specs.get("l_max_ur", 17) + 1
+        self.num_ell_modes = specs.get("l_max_massless_nu", 17) + 1
 
     def rho(self, lna, args):
         """
@@ -695,7 +695,7 @@ class MassiveNeutrino(Fluid):
     def __init__(self, delta_idx, specs):
 
         super().__init__(delta_idx, specs)
-        self.num_ells_per_bin = specs.get("l_max_ncdm", 17) + 1
+        self.num_ells_per_bin = specs.get("l_max_massive_nu", 17) + 1
         self.num_ell_modes = 3 * self.num_ells_per_bin
 
     def rho(self, lna, args):

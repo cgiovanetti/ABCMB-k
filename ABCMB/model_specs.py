@@ -31,8 +31,8 @@ def load_specs(input_specs):
     ### Boltzmann Hierarchy Cutoffs ###
     specs["l_max_g"]     = input_specs.get("l_max_g", 12)
     specs["l_max_pol_g"] = input_specs.get("l_max_pol_g", 10)
-    specs["l_max_ur"]    = input_specs.get("l_max_ur", 17)
-    specs["l_max_ncdm"]  = input_specs.get("l_max_ncdm", 17)
+    specs["l_max_massless_nu"]    = input_specs.get("l_max_massless_nu", 17)
+    specs["l_max_massive_nu"]  = input_specs.get("l_max_massive_nu", 17)
 
     ### Perturbation k-grid resolution ###
     specs["k_step_sub"]             = input_specs.get("k_step_sub", 5.e-2)
