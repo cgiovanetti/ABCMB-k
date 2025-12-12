@@ -146,10 +146,10 @@ class SpectrumSolver(eqx.Module):
     k_axis_Pk_output : jnp.array
 
     k_pivot    : float = 0.05 # In 1/Mpc
-    switch_sw  : float = 1.
-    switch_isw : float = 1.
-    switch_dop : float = 1.
-    switch_pol : float = 1.
+    scale_sw  : float = 1.
+    scale_isw : float = 1.
+    scale_dop : float = 1.
+    scale_pol : float = 1.
 
     def __init__(self,
                  ellmin=2,
@@ -158,10 +158,10 @@ class SpectrumSolver(eqx.Module):
                  k_axis_transfer=jnp.geomspace(1.e-4, 0.4, 2500),
                  k_axis_Pk_output=jnp.geomspace(1.e-4, 0.1, 100),
                  k_pivot=0.05,
-                 switch_sw=1,
-                 switch_isw=1,
-                 switch_dop=1,
-                 switch_pol=1):
+                 scale_sw=1,
+                 scale_isw=1,
+                 scale_dop=1,
+                 scale_pol=1):
         """
         Initialize CMB spectrum solver.
 
@@ -178,13 +178,13 @@ class SpectrumSolver(eqx.Module):
             Whether to include lensing effects (default: True)
         k_pivot : float, optional
             Pivot scale for primordial spectrum (units: Mpc^{-1}, default: 0.05)
-        switch_sw : float, optional
+        scale_sw : float, optional
             Switch for Sachs-Wolfe term (default: 1)
-        switch_isw : float, optional
+        scale_isw : float, optional
             Switch for integrated Sachs-Wolfe term (default: 1)
-        switch_dop : float, optional
+        scale_dop : float, optional
             Switch for Doppler term (default: 1)
-        switch_pol : float, optional
+        scale_pol : float, optional
             Switch for polarization term (default: 1)
         """
 
@@ -208,10 +208,10 @@ class SpectrumSolver(eqx.Module):
         self.k_axis_Pk_output = k_axis_Pk_output
         self.k_pivot    = k_pivot
 
-        self.switch_sw  = switch_sw
-        self.switch_isw = switch_isw
-        self.switch_dop = switch_dop
-        self.switch_pol = switch_pol
+        self.scale_sw  = scale_sw
+        self.scale_isw = scale_isw
+        self.scale_dop = scale_dop
+        self.scale_pol = scale_pol
 
     def primordial_spectrum(self, k, params):
         """
@@ -631,20 +631,20 @@ class SpectrumSolver(eqx.Module):
         alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
 
         # Source terms
-        sourceT0 = self.switch_sw * g * (delta_g/4. + aH*alpha_prime) \
-                + self.switch_isw * (
+        sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
+                + self.scale_isw * (
                     g * (eta - aH*alpha_prime - 2.*aH*alpha) \
                     + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
                 ) \
-                + self.switch_dop * (
+                + self.scale_dop * (
                     aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
                     + g_prime*((theta_b / k_T0_axis**2) + alpha))
                 )
 
-        sourceT1 = self.switch_isw * expmkappa * \
+        sourceT1 = self.scale_isw * expmkappa * \
                 ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
 
-        sourceT2 = self.switch_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
+        sourceT2 = self.scale_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
         sourceE  = jnp.sqrt(6) * sourceT2
 

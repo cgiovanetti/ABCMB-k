@@ -99,10 +99,10 @@ class Model(eqx.Module):
             k_axis_transfer,
             k_axis_Pk_output,
             k_pivot=specs["k_pivot"],
-            switch_sw=specs["switch_sw"],
-            switch_isw=specs["switch_isw"],
-            switch_dop=specs["switch_dop"],
-            switch_pol=specs["switch_pol"]
+            scale_pol=specs["scale_pol"],
+            scale_isw=specs["scale_isw"],
+            scale_dop=specs["scale_dop"],
+            scale_pol=specs["scale_pol"]
         )
 
         # Initialize recombination model

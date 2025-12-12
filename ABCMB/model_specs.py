@@ -64,10 +64,10 @@ def load_specs(input_specs):
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
 
     ### Physical contributions to CMB temperature transfer function ###
-    specs["switch_sw"]  = input_specs.get("switch_sw", 1)
-    specs["switch_isw"] = input_specs.get("switch_isw", 1)
-    specs["switch_dop"] = input_specs.get("switch_dop", 1)
-    specs["switch_pol"] = input_specs.get("switch_pol", 1)
+    specs["scale_sw"]  = input_specs.get("scale_sw", 1)
+    specs["scale_isw"] = input_specs.get("scale_isw", 1)
+    specs["scale_dop"] = input_specs.get("scale_dop", 1)
+    specs["scale_pol"] = input_specs.get("scale_pol", 1)
 
     return specs
 
