@@ -99,7 +99,7 @@ class Model(eqx.Module):
             k_axis_transfer,
             k_axis_Pk_output,
             k_pivot=specs["k_pivot"],
-            scale_pol=specs["scale_pol"],
+            scale_sw=specs["scale_sw"],
             scale_isw=specs["scale_isw"],
             scale_dop=specs["scale_dop"],
             scale_pol=specs["scale_pol"]
