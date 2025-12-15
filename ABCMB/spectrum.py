@@ -669,9 +669,29 @@ class SpectrumSolver(eqx.Module):
             lna_axis, axis=0
         )
         
-        epsilon_tab = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1)) / chiT0**2
-        epsilon_tab = epsilon_tab.at[-1].set(jnp.zeros(k_T0_axis.size)) # Filter out the chiT0=0 part
-        epsilon_tab *= phi0_tab
+        # TODO: Fix this!
+        # epsilon_tab = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1)) / chiT0**2
+        # #epsilon_tab = epsilon_tab.at[-1].set(jnp.zeros(k_T0_axis.size)) # Filter out the chiT0=0 part
+        # epsilon_tab = epsilon_tab.at[-1].set(
+        # jnp.where(
+        #     l == 2,
+        #     jnp.ones(k_T0_axis.size)/15.,
+        #     jnp.zeros(k_T0_axis.size)
+        # )
+        # )
+        # epsilon_tab *= phi0_tab
+
+        epsilon_tab = phi0_tab / chiT0**2
+
+        # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
+        epsilon_tab = epsilon_tab.at[-1].set(
+            jnp.where(
+                l == 2,
+                jnp.ones(k_T0_axis.size)/15.,
+                jnp.zeros(k_T0_axis.size)
+            )
+        )
+        epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
         transferE = jnp.trapezoid(
             sourceE / aH * epsilon_tab,
