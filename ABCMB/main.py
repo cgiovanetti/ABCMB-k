@@ -283,12 +283,12 @@ class Model(eqx.Module):
         params['T_nu_massive']  = params.get('T_nu_massive', jnp.array(0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
         params['N_nu_massive']  = params.get('N_nu_massive', jnp.array(0))  # Literal number of massive neutrinos
         params['m_nu_massive']  = params.get('m_nu_massive', jnp.array(0.06)) # Massive neutrino mass, in eV
-        params['T_nu_massless'] = params.get('T_nu_massless', jnp.array(0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
 
         ### CHECKING INPUT COMPATIBILITY ###
 
         input_N    = params.get('N_nu_massless') != None
         input_Neff = params.get('Neff') != None
+        input_T_nu_massless = params.get('T_nu_massless') != None
 
         # If the user input both massless neutrino number and Neff, throw an error. Our code treats these as 1-to-1, see paper.
         if input_N and input_Neff:
@@ -296,11 +296,11 @@ class Model(eqx.Module):
             sys.exit()
 
         # If the user input either N_massless or Neff, but requested LINX, throw an error. LINX will compute the correct values.
-        if (input_N or input_Neff) and self.specs["bbn_type"].lower() == "linx":
+        if (input_N or input_Neff or input_T_nu_massless) and self.specs["bbn_type"].lower() == "linx":
             print(
-                "You have specified a value for N_nu_massless and/or Neff, but LINX instead expects a \n" \
-                    "parameter 'Delta_Neff_init' which will be used to compute Neff. Refer to LINX \n" \
-                    "docs or https://arxiv.org/abs/2408.14538 for more information."
+                "You have specified a value for N_nu_massless and/or Neff and/or T_nu_massless, \n"
+                "but LINX instead expects a parameter 'Delta_Neff_init' which will be used to \n" \
+                "compute Neff. Refer to LINX docs or https://arxiv.org/abs/2408.14538 for more info.\n" \
             )
             sys.exit()
 
@@ -318,6 +318,8 @@ class Model(eqx.Module):
             # )
         
         ### END OF INPUT COMPATIBILITY ###
+        # now that we have verified the user put in the right parameters we can set T_nu_massless
+        params['T_nu_massless'] = params.get('T_nu_massless', jnp.array(0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
 
         ### HELIUM FRACTION AND Neff ###
         # Regardless of bbn_type, these two parameters will be set by the end.
