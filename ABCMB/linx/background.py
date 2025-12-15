@@ -4,7 +4,7 @@ from jax import vmap
 
 import equinox as eqx
 
-from diffrax import diffeqsolve, ODETerm, Tsit5, PIDController, SaveAt, Event
+from diffrax import diffeqsolve, ODETerm, Tsit5, PIDController, SaveAt, Event, ForwardMode
 
 from . import thermo  
 from . import const
@@ -119,7 +119,8 @@ class BackgroundModel(eqx.Module):
             stepsize_controller = PIDController(
                 rtol=rtol, atol=atol
             ), 
-            max_steps=max_steps
+            max_steps=max_steps,
+            adjoint = ForwardMode()
         )
 
         a_vec = jnp.exp(sol.ys[0])

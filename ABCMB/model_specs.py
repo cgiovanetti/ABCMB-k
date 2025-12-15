@@ -31,8 +31,8 @@ def load_specs(input_specs):
     ### Boltzmann Hierarchy Cutoffs ###
     specs["l_max_g"]     = input_specs.get("l_max_g", 12)
     specs["l_max_pol_g"] = input_specs.get("l_max_pol_g", 10)
-    specs["l_max_ur"]    = input_specs.get("l_max_ur", 17)
-    specs["l_max_ncdm"]  = input_specs.get("l_max_ncdm", 17)
+    specs["l_max_massless_nu"]    = input_specs.get("l_max_massless_nu", 17)
+    specs["l_max_massive_nu"]  = input_specs.get("l_max_massive_nu", 17)
 
     ### Perturbation k-grid resolution ###
     specs["k_step_sub"]             = input_specs.get("k_step_sub", 5.e-2)
@@ -49,7 +49,7 @@ def load_specs(input_specs):
 
     ### Set perturbations initial condition time ###
     specs["start_small_k"] = input_specs.get("start_small_k", 0.0015)
-    specs["start_large_k"] = input_specs.get("start_small_k", 0.07)
+    specs["start_large_k"] = input_specs.get("start_large_k", 0.07)
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
@@ -64,10 +64,10 @@ def load_specs(input_specs):
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
 
     ### Physical contributions to CMB temperature transfer function ###
-    specs["switch_sw"]  = input_specs.get("switch_sw", 1)
-    specs["switch_isw"] = input_specs.get("switch_isw", 1)
-    specs["switch_dop"] = input_specs.get("switch_dop", 1)
-    specs["switch_pol"] = input_specs.get("switch_pol", 1)
+    specs["scale_sw"]  = input_specs.get("scale_sw", 1)
+    specs["scale_isw"] = input_specs.get("scale_isw", 1)
+    specs["scale_dop"] = input_specs.get("scale_dop", 1)
+    specs["scale_pol"] = input_specs.get("scale_pol", 1)
 
     return specs
 

@@ -4,7 +4,7 @@ sys.path.append('..')
 
 import jax.numpy as jnp
 import equinox as eqx
-from diffrax import diffeqsolve, ODETerm, Tsit5, Kvaerno3, PIDController, SaveAt
+from diffrax import diffeqsolve, ODETerm, Tsit5, Kvaerno3, PIDController, SaveAt, ForwardMode
 
 from . import nuclear as nucl
 from . import const as const 
@@ -268,7 +268,8 @@ class AbundanceModel(eqx.Module):
             ), saveat=saveat, stepsize_controller = PIDController(
                 rtol=rtol, atol=atol,
             ), 
-            max_steps=max_steps
+            max_steps=max_steps,
+            adjoint = ForwardMode()
         )
 
         if save_history: 
@@ -334,7 +335,8 @@ class AbundanceModel(eqx.Module):
             y0=1. / (2 * thermo.Hubble(rho_tot_init)), 
             dt0=None, max_steps=4096,
             saveat=SaveAt(ts=rho_tot_vec), 
-            stepsize_controller=PIDController(rtol=1e-8, atol=1e-10)
+            stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
+            adjoint = ForwardMode()
         )
 
         return sol_t.ys
@@ -397,7 +399,8 @@ class AbundanceModel(eqx.Module):
             t0=rho_tot_init, t1=rho_tot_fin, 
             y0=0., dt0=None, max_steps=4096,
             saveat=SaveAt(ts=rho_tot_vec),
-            stepsize_controller=PIDController(rtol=1e-8, atol=1e-10)
+            stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
+            adjoint = ForwardMode()
         )
 
         a_fin = const.T0CMB / T_g_vec[-1] 
