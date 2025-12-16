@@ -122,6 +122,33 @@ class SpectrumSolver(eqx.Module):
     Computes temperature and polarization angular power spectra by
     integrating transfer functions over wavenumber and time.
 
+    Attributes:
+    -----------
+    ells : jnp.array
+        Multipole values for output power spectra
+    ells_indices : jnp.array
+        Indices into bessel_l_tab corresponding to ells
+    lensing_ells : jnp.array
+        Extended multipole range for lensing calculations
+    lensing_ells_indices : jnp.array
+        Indices into bessel_l_tab for lensing multipoles
+    lensing : bool
+        Whether to include gravitational lensing effects
+    k_axis_transfer : jnp.array
+        Wavenumber grid for transfer function integration (units: Mpc^{-1})
+    k_axis_Pk_output : jnp.array
+        Wavenumber grid for matter power spectrum output (units: Mpc^{-1})
+    k_pivot : float
+        Pivot scale for primordial power spectrum normalization (units: Mpc^{-1}, default: 0.05)
+    scale_sw : float
+        Multiplicative factor for Sachs-Wolfe term (default: 1.0)
+    scale_isw : float
+        Multiplicative factor for integrated Sachs-Wolfe term (default: 1.0)
+    scale_dop : float
+        Multiplicative factor for Doppler term (default: 1.0)
+    scale_pol : float
+        Multiplicative factor for polarization term (default: 1.0)
+
     Methods:
     --------
     primordial_spectrum : Compute primordial power spectrum

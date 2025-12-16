@@ -666,6 +666,11 @@ class MassiveNeutrino(Fluid):
 
     Non-relativistic neutrinos with multiple angular momentum modes.
 
+    Attributes:
+    -----------
+    num_ells_per_bin : int
+        Number of multipole moments per momentum bin for massive neutrino hierarchy
+
     Methods:
     --------
     rho : Compute massive neutrino density (units: eV cm^{-3})
@@ -1166,6 +1171,13 @@ class Photon(StandardFluid):
     Photon fluid species implementation.
 
     Relativistic photons with temperature and polarization Boltzmann hierarchies.
+
+    Attributes:
+    -----------
+    num_F_ell_modes : int
+        Number of temperature multipole moments in Boltzmann hierarchy
+    num_G_ell_modes : int
+        Number of polarization multipole moments in Boltzmann hierarchy
 
     Methods:
     --------
