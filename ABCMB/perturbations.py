@@ -27,6 +27,18 @@ class PerturbationEvolver(eqx.Module):
     Evolves perturbations for all fluid species using Einstein-Boltzmann
     equations in synchronous gauge.
 
+    Attributes:
+    -----------
+    species_list : tuple  
+        A list of all fluids in the cosmology
+    species_dict : dict 
+        A dictionary containing the names of all fluids, in the same order as 
+        they appear in species_list.
+    k_axis_perturbations : jnp.array
+        A list of wavenumbers k at which to compute perturbations
+    specs : dict 
+        A dictionary containing run options
+
     Methods:
     --------
     full_evolution : Evolve perturbations for multiple k modes
