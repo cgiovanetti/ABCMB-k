@@ -22,6 +22,42 @@ class Background(eqx.Module):
     Computes background quantities including Hubble parameter, conformal time,
     recombination history, and optical depth evolution.
 
+    Attributes:
+    -----------
+    species_list : tuple
+        A list of all fluids in the cosmology
+    lna_tau_tab : jnp.array
+        Log scale factor axis used to tabulate conformal time
+    tau_tab : jnp.array 
+        Tabulated conformal time. 
+    tau0 : float 
+        Conformal time today in Mpc.
+    xe_tab : array_with_padding
+        Tabulated free electron fraction xe during recombination
+    lna_xe_tab : array_with_padding
+        Log scale factor axis corresponding to tabulated xe values.
+    Tm_tab : array_with_padding
+        Tabulated matter temperature Tm during recombination
+    lna_Tm_tab : array_with_padding
+        Log scale factor axis corresponding to tabulated Tm values.
+    kappa_func : diffrax.solution
+        Visibility function
+    tau_reio : float 
+        Optical depth to reionization
+    lna_rec : float
+        Log scale factor of recombination
+    rA_rec : float 
+        Comoving angular diameter distance at recombination in Mpc
+    rs_d : float 
+        Sound horizon at baryon decoupling in Mpc
+    z_d : float
+        Redshift of baryon decoupling
+    lna_transfer_start : float 
+        Log scale factor at which to begin integrating transfer functions.
+    lna_visibility_stop : float 
+        Log scale factor at which to stop integrating T1, T2, and E sources due to small visibility functions. 
+        Only used for l<400.
+
     Recombination Unrelated Methods:
     --------------------------------
     rho_tot : Compute total energy density (units: eV cm^{-3})
@@ -64,7 +100,7 @@ class Background(eqx.Module):
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
     rs_d       : float # Sound horizon at baryon decoupling
-    z_d        : float # redshift of baryon devoupling
+    z_d        : float # redshift of baryon decoupling
 
     # Transfer related
     lna_transfer_start : float # Time where transfer functions start integrating.
