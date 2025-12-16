@@ -45,9 +45,14 @@ def format_method_summaries(app, what, name, obj, options, lines):
     
     This function detects any section that uses hyphen underlining (NumPy convention)
     or ends with "Methods:" and applies consistent formatting.
+    
+    It avoids formatting prose sections (like "Notes:") where patterns like
+    "IDEA: text" or "TODO: text" should remain as plain text.
     """
     out = []
     in_custom_block = False
+    in_methods_block = False
+    in_prose_section = False
     just_opened_block = False
     pending_header = None
 
@@ -65,6 +70,12 @@ def format_method_summaries(app, what, name, obj, options, lines):
                 just_opened_block = True
                 pending_header = line
                 
+                # Check if this is a Methods section
+                in_methods_block = bool(re.search(r'Methods:', line, re.IGNORECASE))
+                
+                # Check if this is a prose section (Notes, Examples, etc.)
+                in_prose_section = bool(re.search(r'(Notes|Examples|See Also|References|Warnings):', line, re.IGNORECASE))
+                
                 # Output the header line with bold formatting
                 out.append(f"**{line.strip()}**")
                 # Skip the hyphen line (don't output it)
@@ -77,6 +88,8 @@ def format_method_summaries(app, what, name, obj, options, lines):
         # Also detect headings that end with "Methods:" (original behavior)
         if re.match(r'^\s*.*Methods:\s*$', line):
             in_custom_block = True
+            in_methods_block = True
+            in_prose_section = False
             just_opened_block = True
 
             # Output the header line with bold formatting
@@ -91,17 +104,33 @@ def format_method_summaries(app, what, name, obj, options, lines):
         # Blank line: close the block
         if line.strip() == "":
             in_custom_block = False
+            in_methods_block = False
+            in_prose_section = False
             just_opened_block = False
             out.append(line)
             i += 1
             continue
 
-        if in_custom_block:
+        if in_custom_block and not in_prose_section:
             # Look for "name : description ..."
             m = re.match(r'^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$', line)
             if m:
                 ident, desc = m.groups()
-                out.append(f'* ``{ident}``  {desc}')
+                # Skip if the identifier is all uppercase (likely prose like "IDEA:", "TODO:", "NOTE:")
+                # These are typically 2+ characters and all caps
+                if len(ident) >= 2 and ident.isupper():
+                    # This looks like prose text, not a method/attribute name
+                    out.append(line)
+                    i += 1
+                    continue
+                
+                # For Methods sections, use bullet with field-like format
+                # For other sections, keep inline format
+                if in_methods_block:
+                    out.append(f'* ``{ident}`` :')
+                    out.append(f'      {desc}')
+                else:
+                    out.append(f'* ``{ident}``  {desc}')
                 i += 1
                 continue
 
