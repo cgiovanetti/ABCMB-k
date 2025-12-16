@@ -6,7 +6,7 @@ ABCMB
 
    constants
    ABCMB.ABCMBTools
-   ABCMB.AbstractSpecies
+   ABCMB.species
    ABCMB.background
    ABCMB.main
    ABCMB.perturbations
