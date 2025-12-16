@@ -7,7 +7,7 @@ ABCMB
    constants
    ABCMB.ABCMBTools
    ABCMB.AbstractSpecies
-   ABCMB.cosmology
+   ABCMB.background
    ABCMB.main
    ABCMB.perturbations
    ABCMB.spectrum
