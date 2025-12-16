@@ -60,6 +60,7 @@ class Background(eqx.Module):
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
     kappa_func : "diffrax.solution"
+    tau_reio   : float 
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
     rs_d       : float # Sound horizon at baryon decoupling
@@ -101,6 +102,8 @@ class Background(eqx.Module):
                                                                         Delta_z_reion_He = params["Delta_z_reion_He"])
 
         self.kappa_func = self._tabulate_optical_depth(params)
+
+        self.tau_reio = self.kappa_func.evaluate(-5.)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
@@ -783,7 +786,6 @@ class Background(eqx.Module):
         result = solution.ys
         return result
         
-        rs = get_rs(self)
 
     def z_d(self, params):
         """
