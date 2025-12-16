@@ -32,6 +32,31 @@ class Model(eqx.Module):
     them for computation. Manages the full pipeline from background
     evolution through CMB power spectrum computation.
 
+    Attributes:
+    -----------
+    PE : perturbations.PerturbationEvolver
+        ABCMB perturbations module
+    SS : spectrum.SpectrumSolver
+        ABCMB spectrum module
+    RM : hyrex.recomb_model
+        HyRex recombination module
+    specs : dict
+        A dictionary of run options (expected to be static)
+    species_list : tuple 
+        A list of all fluids in the user cosmology
+    species_dict : dict 
+        A dictionary containing the names of all fluids, in the same order as 
+        they appear in species_list.
+    PArthENoPE_CLASS_table  : Array 
+        A 2D table for interpolation of the helium-4 mass fraction based
+        on the user's input baryon density and Neff
+    thermo_model_DNeff : linx.BackgroundModel
+        A LINX background model for BBN thermodynamics
+    abundanceModel : linx.AbundanceModel
+        A LINX abundance model used for computing the helium-4 mass fraction
+        given the user's input baryon density, Neff, neutron lifetime, and
+        nuclear reaction rates.
+
     Methods:
     --------
     run_cosmology : Compute CMB angular power spectra
@@ -69,6 +94,10 @@ class Model(eqx.Module):
 
         Parameters:
         -----------
+        input_specs : dict
+            A dictionary containing run options (expected to be static)
+        user_species : tuple
+            A tuple of user-defined fluids to be included in the cosmology
         """
 
         # Fill in all user defined and missing specs parameters
