@@ -1,7 +1,7 @@
-ABCMB.cosmology module
+ABCMB.background module
 ======================
 
-.. automodule:: ABCMB.cosmology
+.. automodule:: ABCMB.background
    :members:
    :show-inheritance:
    :undoc-members:
