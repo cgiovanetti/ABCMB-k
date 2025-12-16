@@ -235,8 +235,8 @@ class SpectrumSolver(eqx.Module):
         """
         Compute linear matter power spectrum at wavenumbers k and redshift z.
 
-        Parameters
-        ----------
+        Parameters:
+        -----------
         k : float or array
             Wavenumber (Mpc^{-1})
         z : float
@@ -246,8 +246,8 @@ class SpectrumSolver(eqx.Module):
         params : dict
             Dictionary of input and derived parameters
 
-        Returns
-        -------
+        Returns:
+        --------
         float or array
             Linear matter power spectrum P(k, z), units Mpc^3
         """
@@ -272,8 +272,8 @@ class SpectrumSolver(eqx.Module):
         Compute linear Baryon+DarkMatter power spectrum at wavenumbers k and redshift z.
         Does not include any other massive species present.
 
-        Parameters
-        ----------
+        Parameters:
+        -----------
         k : float or array
             Wavenumber (Mpc^{-1})
         z : float
@@ -283,8 +283,8 @@ class SpectrumSolver(eqx.Module):
         params : dict
             Dictionary of input and derived parameters
 
-        Returns
-        -------
+        Returns:
+        --------
         float or array
             Linear Baryon+DarkMatter power spectrum P_cb(k, z), units Mpc^3
         """
@@ -317,8 +317,8 @@ class SpectrumSolver(eqx.Module):
         Computes the lensing power spectrum at wavenumbers k and redshift z.
         Eq.(3.15) in astro-ph/0601594
 
-        Parameters
-        ----------
+        Parameters:
+        -----------
         k : float or array
             Wavenumber (Mpc^{-1})
         lna : float
@@ -330,8 +330,8 @@ class SpectrumSolver(eqx.Module):
         params : dict
             Dictionary of input and derived parameters
 
-        Returns
-        -------
+        Returns:
+        --------
         float or array
             Lensing matter power spectrum P(k, z), dimensionless.
         """
@@ -357,8 +357,8 @@ class SpectrumSolver(eqx.Module):
 
         Eq.(3.14) in astro-ph/0601594, except shifts ell -> ell+1/2 to match CLASS.
 
-        Parameters
-        ----------
+        Parameters:
+        -----------
         ell : float or array
             Multipole
         PT : perturbations.PerturbationTable
@@ -368,8 +368,8 @@ class SpectrumSolver(eqx.Module):
         params : dict
             Dictionary of input and derived parameters
 
-        Returns
-        -------
+        Returns:
+        --------
         float or array
             Angular lensing matter power spectrum Cl^phiphi, dimensionless.
         """

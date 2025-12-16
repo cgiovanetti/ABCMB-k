@@ -31,12 +31,9 @@ class Fluid(eqx.Module):
 
     Methods:
     --------
-    Background Quantities:
         rho : Compute energy density (units: eV cm^{-3})
         P   : Compute pressure (units: eV cm^{-3})
         w   : Compute equation of state parameter (units: dimensionless)
-
-    Perturbation Quantities:
         y_ini   : Adiabatic initial conditions, in synchronous gauge
         y_prime : Perturbation derivatives, in synchronous gauge
         rho_delta        : Perturbed density function δρ (units: eV cm^{-3})

@@ -22,4 +22,3 @@ Module contents
 .. automodule:: ABCMB
    :members:
    :show-inheritance:
-   :undoc-members:
