@@ -486,34 +486,3 @@ class PerturbationTable(eqx.Module):
     metric_eta_prime : jnp.array
     metric_alpha   : jnp.array
     metric_alpha_prime : jnp.array
-
-class MockPerturbationTable(PerturbationTable):
-
-    def __init__(self):
-        """
-        Initialize mock perturbation table from saved test data.
-
-        Loads pre-computed perturbation evolution from Module_Tests directory
-        for testing and validation purposes.
-        """
-        data = np.load(file_dir+"/../Module_Tests/perturbations.npz")
-
-        super().__init__(
-            k=jnp.array(data["k"]),
-            lna=jnp.array(data["lna"]),
-            delta_cdm=jnp.array(data["delta_cdm"]),
-            delta_b=jnp.array(data["delta_b"]),
-            theta_b=jnp.array(data["theta_b"]),
-            theta_b_prime=jnp.array(data["theta_b_prime"]),
-            delta_g=jnp.array(data["delta_g"]),
-            theta_g=jnp.array(data["theta_g"]),
-            sigma_g=jnp.array(data["sigma_g"]),
-            Gg0=jnp.array(data["Gg0"]),
-            Gg2=jnp.array(data["Gg2"]),
-            metric_h=jnp.array(data["metric_h"]),
-            metric_eta=jnp.array(data["metric_eta"]),
-            metric_h_prime=jnp.array(data["metric_h_prime"]),
-            metric_eta_prime=jnp.array(data["metric_eta_prime"]),
-            metric_alpha=jnp.array(data["metric_alpha"]),
-            metric_alpha_prime=jnp.array(data["metric_alpha_prime"]),
-        )
