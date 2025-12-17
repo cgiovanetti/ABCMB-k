@@ -6,4 +6,3 @@ equinox
 interpax
 jax["cuda12"]
 pytest
-classy
