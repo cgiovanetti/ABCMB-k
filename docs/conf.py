@@ -116,9 +116,8 @@ def format_method_summaries(app, what, name, obj, options, lines):
             m = re.match(r'^\s*([A-Za-z0-9_]+)\s*:\s*(.*)$', line)
             if m:
                 ident, desc = m.groups()
-                # Skip if the identifier is all uppercase (likely prose like "IDEA:", "TODO:", "NOTE:")
-                # These are typically 2+ characters and all caps
-                if len(ident) >= 2 and ident.isupper():
+                # Skip only specific prose markers like "IDEA:", "TODO:", "NOTE:"
+                if ident.upper() in ('IDEA', 'TODO', 'NOTE', 'WARNING', 'FIXME'):
                     # This looks like prose text, not a method/attribute name
                     out.append(line)
                     i += 1
