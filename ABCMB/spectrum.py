@@ -673,7 +673,7 @@ class SpectrumSolver(eqx.Module):
 
         sourceT2 = self.scale_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
-        sourceE  = jnp.sqrt(6) * sourceT2
+        sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
         # Bessel functions
         chiT0 = jnp.outer(tau0-tau, k_T0_axis)
