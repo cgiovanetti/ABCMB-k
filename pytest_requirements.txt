@@ -1,0 +1,9 @@
+numpy
+scipy
+matplotlib
+diffrax
+equinox
+interpax
+jax
+pytest
+classy
