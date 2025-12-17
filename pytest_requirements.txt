@@ -4,5 +4,6 @@ matplotlib
 diffrax
 equinox
 interpax
-jax["cuda12"]
+jax
 pytest
+classy

@@ -11,3 +11,21 @@ ABCMB<!-- omit from toc -->
 
 Autodifferentiable Boltzmann solver for the CMB (ABCMB) is a Python+JAX package for differentiable computation of the Cosmic Microwave Background.  ABCMB is **complete to linear order** in $\Lambda\rm{CDM}$ cosmology.  It computes the matter and CMB power spectra and includes effects like lensing, massive neutrinos, and a state-of-the-art treatment of the physics of recombination through the companion code [HyRex](https://github.com/TonyZhou729/HyRex).
 
+## Installation
+We recommend installing ABCMB in a clean conda environment.  After downloading and unpacking the code, in the code directory run 
+```
+conda create -n ABCMB
+conda activate ABCMB
+pip install -U -r requirements.txt
+
+```
+optionally specifying your preferred python version after the environment name.  Note that this will automatically attempt to install JAX for CUDA12; if you need a different CUDA version or are attempting to run on a CPU-only platform, refer to the [JAX documentation](https://docs.jax.dev/en/latest/installation.html) for a quick JAX installation guide.
+
+## Examples
+We have included several pedagogical jupyter notebooks to walk you through how to get started with ABCMB in our [example_notebooks](https://github.com/TonyZhou729/ABCMB/tree/main/example_notebooks) folder.  We suggest you start with [ABCMB_basics](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_basics.ipynb) to get a sense of how to run the code.  If you'd like to add new physics to ABCMB, check out [ABCMB_Fluids](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_Fluids.ipynb).  If you'd like to run ABCMB with the Big Bang Nucleosynthesis (BBN) code [LINX](https://github.com/cgiovanetti/LINX/tree/main) to do BBN+CMB joint analyses, check out [ABCMB_with_LINX](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_with_LINX.ipynb).
+
+## Issues
+Please feel free to open an issue if something is amiss in ABCMB!
+
+
+
