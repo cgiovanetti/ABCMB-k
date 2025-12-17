@@ -1,5 +1,5 @@
 # Base project dependencies
--r ../requirements.txt
+-r ../pytest_requirements.txt
 
 sphinx
 sphinx-rtd-theme
