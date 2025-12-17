@@ -299,7 +299,7 @@ def setup(app):
 
 
 templates_path = ['_templates']
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon', 'sphinx.ext.intersphinx']
+extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon', 'sphinx.ext.intersphinx',"sphinx.ext.viewcode"]
 intersphinx_mapping = {
     'hyrex': ('https://hyrex.readthedocs.io/en/latest/', None),
 }

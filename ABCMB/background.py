@@ -434,12 +434,12 @@ class Background(eqx.Module):
         Notes:
         ------
         The logic flow is equivalent to:
-        if lna < self.lna_xe_tab.arr[0]:
-            return self.xe_tab[0]
-        elif lna > self.lna_xe_tab.lastval
-            return self.xe_tab.lastval
-        else
-            return jnp.interp(lna, self.lna_xe_tab, self.xe_tab)
+
+        if lna < self.lna_xe_tab.arr[0]: return self.xe_tab[0]
+
+        elif lna > self.lna_xe_tab.lastval: return self.xe_tab.lastval
+        
+        else: return jnp.interp(lna, self.lna_xe_tab, self.xe_tab)
         """
         return jnp.where(
             lna < self.lna_xe_tab.arr[0],

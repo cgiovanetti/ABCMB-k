@@ -1,5 +1,5 @@
 ABCMB.background module
-======================
+=======================
 
 .. automodule:: ABCMB.background
    :members:

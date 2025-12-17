@@ -8,12 +8,12 @@ Submodules
    :maxdepth: 4
 
    ABCMB.ABCMBTools
-   ABCMB.AbstractSpecies
+   ABCMB.background
    ABCMB.constants
-   ABCMB.cosmology
    ABCMB.main
    ABCMB.perturbations
    ABCMB.setup
+   ABCMB.species
    ABCMB.spectrum
 
 Module contents
