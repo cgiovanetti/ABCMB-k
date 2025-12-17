@@ -1,9 +1,9 @@
 numpy
 scipy
 matplotlib
-jax
-pytest
 diffrax
 equinox
-classy
 interpax
+jax["cuda12"]
+pytest
+classy
