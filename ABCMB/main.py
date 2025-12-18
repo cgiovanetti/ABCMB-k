@@ -503,6 +503,10 @@ class Model(eqx.Module):
         params['omega_r']      = rho_r * a_early**4 / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional radiation density today
         params['R_nu']         = rho_nu / rho_r # Fractional radiation density in neutrinos, defined at early times. Used for setting adiabatic ICs.
 
+        # Special density parameter defined for computing adiabatic initial conditions
+        # Defined as Omega_m / sqrt{Omega_r} * H0, in units of 1/Mpc
+        params['om'] = params['omega_m'] / jnp.sqrt(params['omega_r']) * cnst.H0_over_h / cnst.c_Mpc_over_s
+
         # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
         params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
 

@@ -115,7 +115,7 @@ class Fluid(eqx.Module):
         return self.P(lna, args)/self.rho(lna, args)
 
     #@abc.abstractmethod
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for perturbation modes.
 
@@ -127,8 +127,6 @@ class Fluid(eqx.Module):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -327,7 +325,7 @@ class BackgroundFluid(Fluid):
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
 
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Trivial initial condition vector for background.
         """
@@ -470,7 +468,7 @@ class ColdDarkMatter(StandardFluid):
         """
         return 0.
     
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for cold dark matter perturbations.
 
@@ -480,8 +478,6 @@ class ColdDarkMatter(StandardFluid):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -490,7 +486,8 @@ class ColdDarkMatter(StandardFluid):
         array
             Initial density perturbation (units: dimensionless)
         """
-        delta = -(k*tau_ini)**2/4. * (1.-om*tau_ini/5.)
+        params = args
+        delta = -(k*tau_ini)**2/4. * (1.-params["om"]*tau_ini/5.)
         return jnp.array([delta])
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
@@ -580,7 +577,7 @@ class MasslessNeutrino(StandardFluid):
         params = args
         return self.rho(lna, params)/3.
 
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for massless neutrino perturbations.
 
@@ -590,8 +587,6 @@ class MasslessNeutrino(StandardFluid):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -603,10 +598,10 @@ class MasslessNeutrino(StandardFluid):
         params = args
         R_nu = params['R_nu']
 
-        delta = - (k*tau_ini)**2/3. * (1.-om*tau_ini/5.)
+        delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
         theta = - k*(k*tau_ini)**3/36./(4.*R_nu+15.) \
-                * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*om)
-        sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*om)
+                * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*params["om"])
+        sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*params["om"])
         
         # Return the four non-zero ell modes, and all higher ell-modes are zero to start.
         # For the neutrinos we track Fnu_2 = 2*sigma, for better structure within the hierarchy.
@@ -771,7 +766,7 @@ class MassiveNeutrino(Fluid):
         # Remove extra dimension if original input was scalar
         return jnp.squeeze(P_val) if jnp.ndim(lna) == 0 else P_val
 
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for massive neutrino perturbations.
 
@@ -781,8 +776,6 @@ class MassiveNeutrino(Fluid):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -797,10 +790,10 @@ class MassiveNeutrino(Fluid):
         # Initial conditions for massless neutrinos first, needed here.
         R_nu = params['R_nu']
 
-        delta = - (k*tau_ini)**2/3. * (1.-om*tau_ini/5.)
+        delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
         theta = - k*(k*tau_ini)**3/36./(4.*R_nu+15.) \
-                * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*om)
-        sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*om)
+                * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*params["om"])
+        sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*params["om"])
 
         idx_q1 = 0 # Psi0 index of first q
         idx_q2 = idx_q1 + self.num_ells_per_bin # Psi0 index of second q
@@ -1099,7 +1092,7 @@ class Baryon(StandardFluid):
         denom = (1.+BG.xe(lna))*(1.-params['YHe']) + cnst.mH / cnst.mHe * params['YHe']
         return cnst.mH / denom
 
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for baryon perturbations.
 
@@ -1109,8 +1102,6 @@ class Baryon(StandardFluid):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -1120,8 +1111,8 @@ class Baryon(StandardFluid):
             Initial perturbation mode values (units: dimensionless)
         """
         params = args
-        delta = -(k*tau_ini)**2/4. * (1.-om*tau_ini/5.)
-        theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*om*tau_ini)
+        delta = -(k*tau_ini)**2/4. * (1.-params["om"]*tau_ini/5.)
+        theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*params["om"]*tau_ini)
         return jnp.array([delta, theta])
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
@@ -1236,7 +1227,7 @@ class Photon(StandardFluid):
         params = args
         return self.rho(lna, params)/3.
 
-    def y_ini(self, k, tau_ini, om, args):
+    def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for photon perturbations.
 
@@ -1246,8 +1237,6 @@ class Photon(StandardFluid):
             Wavenumber (units: Mpc^{-1})
         tau_ini : float
             Initial conformal time (units: Mpc)
-        om : float
-            Matter density parameter
         args : dict
             Cosmological parameters (params)
 
@@ -1257,8 +1246,8 @@ class Photon(StandardFluid):
             Initial perturbation mode values (units: dimensionless)
         """
         params = args
-        delta = - (k*tau_ini)**2/3. * (1.-om*tau_ini/5.)
-        theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*om*tau_ini)
+        delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
+        theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*params["om"]*tau_ini)
         return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_ell_modes - 2)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
