@@ -135,7 +135,8 @@ class Background(eqx.Module):
         self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
                                                                         Delta_z_reion = params["Delta_z_reion"], 
                                                                         z_reion_He = params["z_reion_He"], 
-                                                                        Delta_z_reion_He = params["Delta_z_reion_He"])
+                                                                        Delta_z_reion_He = params["Delta_z_reion_He"],
+                                                                        exp_reion = params["exp_reion"])
 
         self.kappa_func = self._tabulate_optical_depth(params)
 
@@ -438,7 +439,7 @@ class Background(eqx.Module):
         if lna < self.lna_xe_tab.arr[0]: return self.xe_tab[0]
 
         elif lna > self.lna_xe_tab.lastval: return self.xe_tab.lastval
-        
+
         else: return jnp.interp(lna, self.lna_xe_tab, self.xe_tab)
         """
         return jnp.where(

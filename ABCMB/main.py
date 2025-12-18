@@ -195,18 +195,6 @@ class Model(eqx.Module):
 
         # let the user know the code is compiling
         print("")
-        # print("            __")
-        # print("           /  \\")
-        # print("          /    \\")
-        # print("         /"+'\033[1m' +"   /\\"+"\033[0m"+" \\")
-        # print("            "+'\033[1m' +"/  \\"+"\033[0m"+" \\     _     _")
-        # print("        /  "+'\033[1m' +"/ /\\ \\"+"\033[0m"+" \\   / \\   / \\ ")
-        # print("          "+'\033[1m' +"/ /__\\ \\"+"\033[0m"+" \\_/"+'\033[1m' +"___"+"\033[0m"+"\\_/"+'\033[1m' +"___"+"\033[0m"+"\\   __")
-        # print("       / "+'\033[1m' +"/ ______ \\  | _ \\ / ___"+"\033[0m"+"\\_/  \\   _")
-        # print("        "+'\033[1m' +"/ /      \\ \\ |  _// /    | \\/"+"\033[0m"+" \\_/"+'\033[1m' +"_"+"\033[0m"+"\\  ")
-        # print("______/"+'\033[1m' +"/ /        \\ \\| _ \\\\ \\___ ||\\/||| - )"+"\033[0m"+"/\\  ")
-        # print("      "+'\033[1m' +"/_/          \\_\\___/ \\____|||  |||_-_)"+"\033[0m"+"  \\/\\ is compiling...")
-        # print("                                                 \\/\\")
         print('              /\\  ')
         print('             /  \\   ')
         print('            / /\\ \\  ')
@@ -302,6 +290,7 @@ class Model(eqx.Module):
         params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
         params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
         params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
+        params['exp_reion']     = params.get('exp_reion',jnp.array(1.5))
 
         # Here we fill in a fake omega_Lambda just so that the DE energy density can be computed in a loop.
         # This fake quantity will not be used in anything, and later the correct omega_Lambda will be computed.
