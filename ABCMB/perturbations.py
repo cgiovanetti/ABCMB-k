@@ -182,16 +182,12 @@ class PerturbationEvolver(eqx.Module):
         ### CLASS Initial Conditions ###
         a = jnp.exp(lna_ini)
         tau_ini = BG.tau(lna_ini)
- 
-        rho_crit = 3*params["H0"]**2 / 8. / jnp.pi / cnst.G # Crit density today, eV/cm^3
-        rho_m = params["omega_m"]/params["h"]**2 * rho_crit / a**3
-        rho_r = params["omega_r"]/params["h"]**2 * rho_crit / a**4
-
-        om = a*rho_m/jnp.sqrt(rho_r) * jnp.sqrt(8.*jnp.pi*cnst.G/3.) / cnst.c_Mpc_over_s # In units of 1/Mpc
+        
+        om = params["om"]
 
         metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*params['R_nu'])*(5.+4.*params['R_nu'] - (16.*params['R_nu']*params['R_nu']+280.*params['R_nu']+325)/10./(2.*params['R_nu']+15.)*tau_ini*om))
 
-        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, om, params) for p in self.species_list])
+        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, params) for p in self.species_list])
         y_ini = jnp.concatenate((jnp.array([metric_eta_ini]), all_fluid_ini))
         
         return y_ini
