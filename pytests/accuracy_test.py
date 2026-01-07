@@ -8,7 +8,7 @@ sys.path.append(file_dir+'/../')
 # print(os.getcwd())
 import jax
 jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_debug_nans", True)
+#jax.config.update("jax_debug_nans", True)
 from ABCMB.main import Model
 import ABCMB.spectrum as spectrum
 from ABCMB import species
@@ -107,7 +107,7 @@ def test_accuracy_checker(h = 0.6762):
         else:
             cl = CLASS_Model.raw_cl(ellmax)
         cltt=cl["tt"][ellmin:]
-        ell = cl["ell"][ellmax:]
+        clee=cl["ee"][ellmin:]
 
         # ABCMB
 
@@ -118,17 +118,23 @@ def test_accuracy_checker(h = 0.6762):
         ABC_te = data[1] 
         ABC_ee = data[2] 
 
-        # Compare all ells
+        # Compare Cltt
         err_tt = abs(cltt-ABC_tt)/cltt
         print(err_tt.max())
 
+        # Compare Clee
+        err_ee = abs(clee-ABC_ee)/clee
+        print(err_ee.max())
+
+        # Compare P(k)
         ABC_Pk = data[3]
         ABC_k = label[1]
         CLA_Pk = np.vectorize(CLASS_Model.pk)(ABC_k, 0.)
         err_Pk = abs(CLA_Pk-ABC_Pk)/CLA_Pk
 
-        assert max(err_tt) <= 0.01, f"Accuracy check failed: {err_tt}"
-        assert max(err_Pk) <= 0.01, f"Accuracy check failed: {err_pk}"
+        assert max(err_tt) <= 0.01, f"Accuracy check failed at TT: {err_tt}"
+        assert max(err_ee) <= 0.01, f"Accuracy check failed at EE: {err_ee}"
+        assert max(err_Pk) <= 0.01, f"Accuracy check failed at P(k): {err_pk}"
     
     except Exception as e:
         pytest.fail(f"accuracy_checks raised an exception: {e}")

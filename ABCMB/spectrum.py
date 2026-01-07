@@ -64,10 +64,20 @@ def phi0(i, x):
     ------
     1312.2697 Eq. (3.19a)
     """
-    # Annoyingly the following line is not jit safe...
-    # For now I am passing in the idx corresponding to the theoretically desired l.
-    #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
-    return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi0_tab[:, i])
+    # For l=2 the fast interp routine is not accurate enough for polarization.
+    # We fix this by substituting the l=2 call with the known closed form expression, which is exact.
+    # For all higher l's, simple interpolation does the trick.  
+
+    # Compute j2. The line below catches the x=0 case and avoids the divergence. Here we replace x=0 with a large
+    # value, such that the result is approximately j2=0 after the divisions.
+    #xp = jnp.where(x==0, 1.e20, x)
+    #j2 = (3./xp**2 - 1) * jnp.sin(xp)/xp - 3.*jnp.cos(xp)/xp**2
+    j2 = (3./x**2 - 1) * jnp.sin(x)/x - 3.*jnp.cos(x)/x**2
+    return jnp.where(i==0,
+        j2,
+        tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi0_tab[:, i])
+    )
+    
 
 def phi1(i, x):
     """
@@ -89,7 +99,6 @@ def phi1(i, x):
     ------
     1312.2697 Eq. (3.19a)
     """
-    #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
     return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi1_tab[:, i])
 
 def phi2(i, x):
@@ -112,7 +121,6 @@ def phi2(i, x):
     ------
     1312.2697 Eq. (3.19a)
     """
-    #idx = jnp.where(bessel_l_tab == ell)[0][0].item()
     return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi2_tab[:, i])
 
 class SpectrumSolver(eqx.Module):
@@ -622,7 +630,7 @@ class SpectrumSolver(eqx.Module):
             (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE) angular power spectra
         """
         l = bessel_l_tab[idx]
-        k_T0_axis = self.k_axis_transfer
+        k_axis = self.k_axis_transfer
         lna_axis = PT.lna
 
         ### TRANSFER FUNCTION ###
@@ -643,7 +651,7 @@ class SpectrumSolver(eqx.Module):
 
         # Perturbations, all (Nk, Nlna) 2D vectors
         # Cubic Spline is necessary here for accuracy. 
-        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_T0_axis))
+        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
         delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
@@ -657,6 +665,18 @@ class SpectrumSolver(eqx.Module):
         alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
         alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
 
+        # # Found that this is much much faster than RegularGridInterpolator
+        # delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g[:-1, :])
+        # theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b[:-1, :])
+        # theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
+        # sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g[:-1, :])
+        # Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0[:-1, :])
+        # Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2[:-1, :])
+        # eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
+        # eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
+        # alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
+        # alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
+
         # Source terms
         sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
                 + self.scale_isw * (
@@ -664,58 +684,51 @@ class SpectrumSolver(eqx.Module):
                     + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
                 ) \
                 + self.scale_dop * (
-                    aH * (g*((theta_b_prime / k_T0_axis**2) + alpha_prime) \
-                    + g_prime*((theta_b / k_T0_axis**2) + alpha))
+                    aH * (g*((theta_b_prime / k_axis**2) + alpha_prime) \
+                    + g_prime*((theta_b / k_axis**2) + alpha))
                 )
 
         sourceT1 = self.scale_isw * expmkappa * \
-                ((aH*alpha_prime + 2.*aH*alpha - eta) * k_T0_axis)
+                ((aH*alpha_prime + 2.*aH*alpha - eta) * k_axis)
 
         sourceT2 = self.scale_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
         sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
         # Bessel functions
-        chiT0 = jnp.outer(tau0-tau, k_T0_axis)
+        chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
+        chi = jnp.where(chi==0, 1.e-20, chi)
+        #print(chi)
+        phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
 
-        # Note: our phi0's seem to be accurate up to lmax ~ 3000 or so.
-        phi0_tab = phi0(idx, chiT0)
+        # Transfer functions, separated into contributions for temperature.
         transferT0 = jnp.trapezoid(
             sourceT0 / aH * phi0_tab,
-            #sourceT0 / aH * spherical_jn(l, chiT0),
             lna_axis, axis=0
         )
 
         transferT1 = jnp.trapezoid(
-            sourceT1 / aH * phi1(idx, chiT0),
+            sourceT1 / aH * phi1(idx, chi),
             lna_axis, axis=0
         )
 
         transferT2 = jnp.trapezoid(
-            sourceT2 / aH * phi2(idx, chiT0),
+            sourceT2 / aH * phi2(idx, chi),
             lna_axis, axis=0
         )
-        
-        # TODO: Fix this!
-        # epsilon_tab = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1)) / chiT0**2
-        # #epsilon_tab = epsilon_tab.at[-1].set(jnp.zeros(k_T0_axis.size)) # Filter out the chiT0=0 part
-        # epsilon_tab = epsilon_tab.at[-1].set(
-        # jnp.where(
-        #     l == 2,
-        #     jnp.ones(k_T0_axis.size)/15.,
-        #     jnp.zeros(k_T0_axis.size)
-        # )
-        # )
-        # epsilon_tab *= phi0_tab
 
-        epsilon_tab = phi0_tab / chiT0**2
+        # The polarization bessel function is a rescaled version of the T0 bessel.
+        # Here dividing by chi^2 causes the last row to be infs (corresponding to tau=tau0 -> chi=0).
+        # But in practice, jl(x)/x^2 is convergent at x=0 so long as l>=2. So we fix this with a masking procedure.
+        epsilon_tab = phi0_tab / chi**2
 
         # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
         epsilon_tab = epsilon_tab.at[-1].set(
             jnp.where(
                 l == 2,
-                jnp.ones(k_T0_axis.size)/15.,
-                jnp.zeros(k_T0_axis.size)
+                jnp.ones(k_axis.size)/15.,
+                #jnp.zeros(k_axis.size),
+                jnp.zeros(k_axis.size)
             )
         )
         epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
@@ -725,18 +738,18 @@ class SpectrumSolver(eqx.Module):
             lna_axis, axis=0
         )
 
-        del chiT0
+        del chi
 
         transferT = transferT0 + transferT1 + transferT2
         ### END OF TRANSFER FUNCTION ###
 
-        ### LINE OF SIGHT INTEGRAL ###
-        integrandTT = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_T0_axis
-        integrandTE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_T0_axis
-        integrandEE = 4.*jnp.pi * params['A_s'] * (k_T0_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_T0_axis
+        # Now we integrate the transfer functions along the line of sight, and return. 
+        integrandTT = 4.*jnp.pi * params['A_s'] * (k_axis/self.k_pivot)**(params['n_s']-1.) * transferT**2 / k_axis
+        integrandTE = 4.*jnp.pi * params['A_s'] * (k_axis/self.k_pivot)**(params['n_s']-1.) * transferT*transferE / k_axis
+        integrandEE = 4.*jnp.pi * params['A_s'] * (k_axis/self.k_pivot)**(params['n_s']-1.) * transferE**2 / k_axis
         
         return (
-            jnp.trapezoid(integrandTT, k_T0_axis),
-            jnp.trapezoid(integrandTE, k_T0_axis),
-            jnp.trapezoid(integrandEE, k_T0_axis)
+            jnp.trapezoid(integrandTT, k_axis),
+            jnp.trapezoid(integrandTE, k_axis),
+            jnp.trapezoid(integrandEE, k_axis)
         )
