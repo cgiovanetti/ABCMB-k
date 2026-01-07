@@ -67,11 +67,6 @@ def phi0(i, x):
     # For l=2 the fast interp routine is not accurate enough for polarization.
     # We fix this by substituting the l=2 call with the known closed form expression, which is exact.
     # For all higher l's, simple interpolation does the trick.  
-
-    # Compute j2. The line below catches the x=0 case and avoids the divergence. Here we replace x=0 with a large
-    # value, such that the result is approximately j2=0 after the divisions.
-    #xp = jnp.where(x==0, 1.e20, x)
-    #j2 = (3./xp**2 - 1) * jnp.sin(xp)/xp - 3.*jnp.cos(xp)/xp**2
     j2 = (3./x**2 - 1) * jnp.sin(x)/x - 3.*jnp.cos(x)/x**2
     return jnp.where(i==0,
         j2,
@@ -650,21 +645,9 @@ class SpectrumSolver(eqx.Module):
         expmkappa = expmkappa[:, None]
         aH_dot    = aH_dot[:, None]
 
-        # Perturbations, all (Nk, Nlna) 2D vectors
+        # Perturbations, all (Nlna, Nk) 2D vectors
         # Cubic Spline is necessary here for accuracy. 
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_axis))
-
-        # # Found that this is much much faster than RegularGridInterpolator
-        # delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
-        # theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b)
-        # theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime)
-        # sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g)
-        # Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0)
-        # Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2)
-        # eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta)
-        # eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime)
-        # alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
-        # alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
 
         # Found that this is much much faster than RegularGridInterpolator
         delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g[:-1, :])
@@ -698,9 +681,14 @@ class SpectrumSolver(eqx.Module):
 
         # Bessel functions
         chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
-        #chi = jnp.where(chi==0, 1.e-20, chi)
-        #print(chi)
         phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
+
+        # Here we perform the time integral to get transfer functions from source functions.
+        # We have truncated the upper bound of the lna integral at the time step before lna=0, in order to
+        # avoid a few fake divergences where we need to handle dividing by zeros. (dangerous in JAX even if you do know what you're doing.)
+        # We can do so since all bessel functions with l>=2 evaluate to 0 at lna=0, so we miss nothing by droping the last term.
+        # However, in doing so we do miss a "triangle" term that is 1/2 * f(x_(N-1)) * dx, so we add this term by hand after
+        # every jnp.trapezoid rule call in this section. 
 
         # Transfer functions, separated into contributions for temperature.
         integrandT0 = sourceT0 / aH * phi0_tab
@@ -727,21 +715,18 @@ class SpectrumSolver(eqx.Module):
         transferT2 += delta_lna * integrandT2[-1] / 2.
         del integrandT2
 
-        # The polarization bessel function is a rescaled version of the T0 bessel.
-        # Here dividing by chi^2 causes the last row to be infs (corresponding to tau=tau0 -> chi=0).
-        # But in practice, jl(x)/x^2 is convergent at x=0 so long as l>=2. So we fix this with a masking procedure.
         epsilon_tab = phi0_tab / chi**2
         del chi
 
-        # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
-        epsilon_tab = epsilon_tab.at[-1].set(
-            jnp.where(
-                l == 2,
-                jnp.ones(k_axis.size)/15.,
-                #jnp.zeros(k_axis.size),
-                jnp.zeros(k_axis.size)
-            )
-        )
+        # # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
+        # epsilon_tab = epsilon_tab.at[-1].set(
+        #     jnp.where(
+        #         l == 2,
+        #         jnp.ones(k_axis.size)/15.,
+        #         #jnp.zeros(k_axis.size),
+        #         jnp.zeros(k_axis.size)
+        #     )
+        # )
         epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
         integrandE = sourceE / aH * epsilon_tab
