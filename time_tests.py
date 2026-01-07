@@ -11,14 +11,13 @@ import ABCMB.spectrum as spectrum
 from scipy.interpolate import interp1d
 import jax.numpy as jnp
 import numpy as np
-import matplotlib.pyplot as plt
 
 
 import time
 
 h = 0.6762
 
-model = Model(bbn_type='LINX')
+model = Model()
 # model = Model()
 
 for i in range(2):
