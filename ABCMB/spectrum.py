@@ -631,7 +631,8 @@ class SpectrumSolver(eqx.Module):
         """
         l = bessel_l_tab[idx]
         k_axis = self.k_axis_transfer
-        lna_axis = PT.lna
+        lna_axis = PT.lna[:-1]
+        delta_lna = PT.lna[-1] - PT.lna[-2]
 
         ### TRANSFER FUNCTION ###
         # Background quantities, all Nlna 1D vectors
@@ -653,29 +654,29 @@ class SpectrumSolver(eqx.Module):
         # Cubic Spline is necessary here for accuracy. 
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_axis))
 
-        # Found that this is much much faster than RegularGridInterpolator
-        delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
-        theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b)
-        theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime)
-        sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g)
-        Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0)
-        Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2)
-        eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta)
-        eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime)
-        alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
-        alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
-
         # # Found that this is much much faster than RegularGridInterpolator
-        # delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g[:-1, :])
-        # theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b[:-1, :])
-        # theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
-        # sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g[:-1, :])
-        # Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0[:-1, :])
-        # Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2[:-1, :])
-        # eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
-        # eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
-        # alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
-        # alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
+        # delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g)
+        # theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b)
+        # theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime)
+        # sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g)
+        # Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0)
+        # Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2)
+        # eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta)
+        # eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime)
+        # alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha)
+        # alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime)
+
+        # Found that this is much much faster than RegularGridInterpolator
+        delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g[:-1, :])
+        theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b[:-1, :])
+        theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
+        sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g[:-1, :])
+        Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0[:-1, :])
+        Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2[:-1, :])
+        eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
+        eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
+        alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
+        alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
 
         # Source terms
         sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
@@ -697,30 +698,40 @@ class SpectrumSolver(eqx.Module):
 
         # Bessel functions
         chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
-        chi = jnp.where(chi==0, 1.e-20, chi)
+        #chi = jnp.where(chi==0, 1.e-20, chi)
         #print(chi)
         phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
 
         # Transfer functions, separated into contributions for temperature.
+        integrandT0 = sourceT0 / aH * phi0_tab
         transferT0 = jnp.trapezoid(
-            sourceT0 / aH * phi0_tab,
+            integrandT0,
             lna_axis, axis=0
         )
+        transferT0 += delta_lna * integrandT0[-1] / 2.
+        del integrandT0
 
+        integrandT1 = sourceT1 / aH * phi1(idx, chi)
         transferT1 = jnp.trapezoid(
-            sourceT1 / aH * phi1(idx, chi),
+            integrandT1,
             lna_axis, axis=0
         )
+        transferT1 += delta_lna * integrandT1[-1] / 2.
+        del integrandT1
 
+        integrandT2 = sourceT2 / aH * phi2(idx, chi)
         transferT2 = jnp.trapezoid(
-            sourceT2 / aH * phi2(idx, chi),
+            integrandT2,
             lna_axis, axis=0
         )
+        transferT2 += delta_lna * integrandT2[-1] / 2.
+        del integrandT2
 
         # The polarization bessel function is a rescaled version of the T0 bessel.
         # Here dividing by chi^2 causes the last row to be infs (corresponding to tau=tau0 -> chi=0).
         # But in practice, jl(x)/x^2 is convergent at x=0 so long as l>=2. So we fix this with a masking procedure.
         epsilon_tab = phi0_tab / chi**2
+        del chi
 
         # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
         epsilon_tab = epsilon_tab.at[-1].set(
@@ -733,12 +744,13 @@ class SpectrumSolver(eqx.Module):
         )
         epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
+        integrandE = sourceE / aH * epsilon_tab
         transferE = jnp.trapezoid(
-            sourceE / aH * epsilon_tab,
+            integrandE,
             lna_axis, axis=0
         )
-
-        del chi
+        transferE += delta_lna * integrandE[-1] / 2.
+        del integrandE
 
         transferT = transferT0 + transferT1 + transferT2
         ### END OF TRANSFER FUNCTION ###

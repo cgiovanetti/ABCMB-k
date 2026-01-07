@@ -89,11 +89,7 @@ def test_accuracy_checker(h = 0.6762):
             "l_max_g": specs["l_max_g"],
             "l_max_pol_g": specs["l_max_pol_g"],
             "l_max_ur": specs["l_max_ur"], 
-            "l_max_ncdm":specs["l_max_ncdm"],
-            "radiation_streaming_trigger_tau_over_tau_k" : 20000,
-            "radiation_streaming_trigger_tau_c_over_tau" : 2000,
-            "ur_fluid_trigger_tau_over_tau_k" : 10000, 
-            "ncdm_fluid_trigger_tau_over_tau_k" : 15000
+            "l_max_ncdm":specs["l_max_ncdm"]
         } 
 
         CLASS_Model = Class()
@@ -117,6 +113,7 @@ def test_accuracy_checker(h = 0.6762):
         ABC_tt = data[0] 
         ABC_te = data[1] 
         ABC_ee = data[2] 
+        print(ABC_tt)
 
         # Compare Cltt
         err_tt = abs(cltt-ABC_tt)/cltt
