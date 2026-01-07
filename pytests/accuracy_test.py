@@ -89,11 +89,7 @@ def test_accuracy_checker(h = 0.6762):
             "l_max_g": specs["l_max_g"],
             "l_max_pol_g": specs["l_max_pol_g"],
             "l_max_ur": specs["l_max_ur"], 
-            "l_max_ncdm":specs["l_max_ncdm"],
-            "radiation_streaming_trigger_tau_over_tau_k" : 20000,
-            "radiation_streaming_trigger_tau_c_over_tau" : 2000,
-            "ur_fluid_trigger_tau_over_tau_k" : 10000, 
-            "ncdm_fluid_trigger_tau_over_tau_k" : 15000
+            "l_max_ncdm":specs["l_max_ncdm"]
         } 
 
         CLASS_Model = Class()
@@ -107,7 +103,7 @@ def test_accuracy_checker(h = 0.6762):
         else:
             cl = CLASS_Model.raw_cl(ellmax)
         cltt=cl["tt"][ellmin:]
-        ell = cl["ell"][ellmax:]
+        clee=cl["ee"][ellmin:]
 
         # ABCMB
 
@@ -118,17 +114,24 @@ def test_accuracy_checker(h = 0.6762):
         ABC_te = data[1] 
         ABC_ee = data[2] 
 
-        # Compare all ells
+        # Compare Cltt
         err_tt = abs(cltt-ABC_tt)/cltt
         print(err_tt.max())
 
+        # Compare Clee
+        err_ee = abs(clee-ABC_ee)/clee
+        print(err_ee.max())
+
+        # Compare P(k)
         ABC_Pk = data[3]
         ABC_k = label[1]
         CLA_Pk = np.vectorize(CLASS_Model.pk)(ABC_k, 0.)
         err_Pk = abs(CLA_Pk-ABC_Pk)/CLA_Pk
+        print(err_Pk.max())
 
-        assert max(err_tt) <= 0.01, f"Accuracy check failed: {err_tt}"
-        assert max(err_Pk) <= 0.01, f"Accuracy check failed: {err_pk}"
+        assert max(err_tt) <= 0.01, f"Accuracy check failed at TT: {err_tt}"
+        assert max(err_ee) <= 0.01, f"Accuracy check failed at EE: {err_ee}"
+        assert max(err_Pk) <= 0.01, f"Accuracy check failed at P(k): {err_pk}"
     
     except Exception as e:
         pytest.fail(f"accuracy_checks raised an exception: {e}")
