@@ -131,7 +131,6 @@ class Background(eqx.Module):
         ### RECOMBINATION RELATED ###
 
         # Run hyrex to tabulate recombination output
-        # TODO: get this running on CPU. Will require refactorization.
         self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
                                                                         Delta_z_reion = params["Delta_z_reion"], 
                                                                         z_reion_He = params["z_reion_He"], 
@@ -627,12 +626,7 @@ class Background(eqx.Module):
         float
             Optical depth (units: dimensionless)
         """
-        
-        # return jnp.where(
-        #     lna < self.lna_kappa_tab[0],
-        #     0.,
-        #     jnp.exp(-tools.fast_interp(lna, self.lna_kappa_tab[0], self.lna_kappa_tab[-1], self.kappa_tab))
-        # )
+
         return jnp.where(
             lna < -10.,
             0.,
@@ -663,7 +657,6 @@ class Background(eqx.Module):
         ------
         Used in computing source functions for CMB anisotropies.
         """
-        #return 1./self.tau_c(lna, params)*jnp.exp(-self.kappa(lna))
         return self.expmkappa(lna)/self.tau_c(lna, params)
 
     ###########################################
