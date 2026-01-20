@@ -91,7 +91,6 @@ def populate_species(user_species, specs):
     diffrax_vector_idx = 1
 
     # Add baseline LCDM species if needed.
-    #print(specs["use_LCDM_species"])
     if specs["use_LCDM_species"]:
         for s in lcdm_species:
             instance = s(diffrax_vector_idx, specs) # Creates an instance of s. init is now consistent across all species
