@@ -41,6 +41,10 @@ def load_specs(input_specs):
     specs["k_step_super_reduction"] = input_specs.get("k_step_super_reduction", 1.e-1)
     specs["k_min_tau0"]             = input_specs.get("k_min_tau0", 1.e-1)
     specs["k_max_tau0_over_l_max"]  = input_specs.get("k_max_tau0_over_l_max", 1.8)
+    specs["H0_fid"]                 = input_specs.get("H0_fid", 2.255560e-04)
+    specs["tau0_fid"]               = input_specs.get("tau0_fid",1.418668e+04)
+    specs["rs_rec_fid"]             = input_specs.get("rs_rec_fid", 1.446279e+02)
+
 
     ### Transfer integration k-grid resolution ###
     specs["k_transfer_linstep"] = input_specs.get("k_transfer_linstep", 4.5e-1)
@@ -111,9 +115,9 @@ def populate_species(user_species, specs):
 def get_k_axis_perturbations(specs):
     ks = np.zeros(2000)
 
-    H0_fid     = 2.255560e-04
-    tau0_fid   = 1.418668e+04
-    rs_rec_fid = 1.446279e+02
+    H0_fid     = specs["H0_fid"]
+    tau0_fid   = specs["tau0_fid"]
+    rs_rec_fid = specs["rs_rec_fid"]
     k_rec_fid  = 2.*jnp.pi/rs_rec_fid
 
     k_min = specs["k_min_tau0"] / tau0_fid

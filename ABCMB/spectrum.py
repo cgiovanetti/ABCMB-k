@@ -714,7 +714,7 @@ class SpectrumSolver(eqx.Module):
         epsilon_tab = epsilon_tab.at[-1].set(
             jnp.where(
                 l == 2,
-                jnp.ones(k_T0_axis.size)/15.,
+                jnp.ones(k_T0_axis.size)/15.,   
                 jnp.zeros(k_T0_axis.size)
             )
         )

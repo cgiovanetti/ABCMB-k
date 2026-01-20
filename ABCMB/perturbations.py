@@ -213,7 +213,7 @@ class PerturbationEvolver(eqx.Module):
         array
             Time derivatives of perturbation state
         """
-        k, BG, params = args # CG: !!
+        k, BG, params = args
         a  = jnp.exp(lna)
         aH = BG.aH(lna, params)
         metric_eta = y[0]
