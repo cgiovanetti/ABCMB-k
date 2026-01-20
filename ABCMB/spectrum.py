@@ -447,8 +447,6 @@ class SpectrumSolver(eqx.Module):
         tuple
             (ClTT, ClTE, ClEE) lensed power spectra
         """
-        #beta = jnp.linspace(0., jnp.pi/16., 5000)
-        #mu = jnp.cos(beta)
         # CLASS samples angle uniformly
         # 500 points is enough for lmax < 4000
         theta = jnp.linspace(0., jnp.pi/16., 500)
