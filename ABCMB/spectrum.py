@@ -25,6 +25,12 @@ bessel_phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
 bessel_phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
 bessel_phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
 
+# New
+bessel_x_new_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/xphi0.txt"))
+bessel_phi0_new_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi0.txt"))
+#bessel_phi1_new_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi1.txt"))
+#bessel_phi2_new_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi2.txt"))
+
 try:
     gpus = jax.devices('gpu')
     bessel_l_tab = jax.device_put(
@@ -40,6 +46,28 @@ try:
 except: 
     pass
 
+
+Q = lambda l, x : jnp.sqrt(x**2-l**2) - l*jnp.pi/2 + l * jnp.arcsin(l/x)
+J = lambda l, x : jnp.sqrt(2/jnp.pi/jnp.sqrt(x**2-l**2)) * jnp.cos(Q(l, x) - jnp.pi/4)
+j = lambda l, x : jnp.sqrt(jnp.pi/2/x) * J(l+1/2, x)
+
+def phi0_new(i, x):
+    """
+    New method for computing phi0 (or just jl)
+    We tabulated the bessel function between its smallest value (~1.e-10) out to xmin+50jnp.pi.
+    This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
+    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    """
+    l = bessel_l_tab[i]
+    return jnp.where(
+        x < bessel_x_new_tab[0, i],
+        0.,
+        jnp.where(
+            x >= bessel_x_new_tab[-1, i],
+            j(l, x),
+            tools.fast_interp(x, bessel_x_new_tab[:, i].min(), bessel_x_new_tab[:, i].max(), bessel_phi0_new_tab[:, i])
+        )
+    )
 
 def phi0(i, x):
     """
@@ -681,7 +709,9 @@ class SpectrumSolver(eqx.Module):
 
         # Bessel functions
         chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
-        phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
+        #phi0_tab = spherical_jn(l, chi)
+        phi0_tab = phi0_new(idx, chi)
+        #phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
 
         # Here we perform the time integral to get transfer functions from source functions.
         # We have truncated the upper bound of the lna integral at the time step before lna=0, in order to
@@ -700,6 +730,7 @@ class SpectrumSolver(eqx.Module):
         del integrandT0
 
         integrandT1 = sourceT1 / aH * phi1(idx, chi)
+        #integrandT1 = sourceT1 / aH * spherical_jn(l, chi, derivative=True)
         transferT1 = jnp.trapezoid(
             integrandT1,
             lna_axis, axis=0
@@ -708,6 +739,7 @@ class SpectrumSolver(eqx.Module):
         del integrandT1
 
         integrandT2 = sourceT2 / aH * phi2(idx, chi)
+        #integrandT2 = sourceT2 / aH * (6*chi*spherical_jn(l+1, chi) + (3*l*(l-1)-2*chi**2)*spherical_jn(l, chi))/2/chi**2
         transferT2 = jnp.trapezoid(
             integrandT2,
             lna_axis, axis=0
