@@ -71,11 +71,9 @@ class Model(eqx.Module):
     specs : dict
 
     species_list : tuple = ()
-    species_dict : dict  #= eqx.field(static=True) # Dict as fields must be static
-    #perturbed_species_list : tuple = ()
-    #perturbed_species_dict : dict  = eqx.field(static=True) # Dict as fields must be static
+    species_dict : dict 
     
-    PArthENoPE_CLASS_table  : Array #= eqx.field(converter=jnp.asarray)
+    PArthENoPE_CLASS_table  : Array 
     thermo_model_DNeff : BackgroundModel
     abundanceModel : AbundanceModel
 
@@ -231,7 +229,6 @@ class Model(eqx.Module):
 
         return output, aux
 
-    # @jit
     @eqx.filter_jit
     def get_PTBG(self, params : dict):
         """
@@ -269,7 +266,6 @@ class Model(eqx.Module):
         background.Background
             Background object
         """
-        # params = self.add_derived_parameters(params)
         BG = background.Background(params, self.species_list, self.RM)
         return BG
 
@@ -325,16 +321,7 @@ class Model(eqx.Module):
         if not input_N and not input_Neff and self.specs["bbn_type"].lower() != "linx":
             params["N_nu_massless"] = 3 - params['N_nu_massive']
             input_N = True
-            # print(
-            #     "You did not specify either N_nu_massless or Neff, and did not ask LINX to compute these quantities.\nN_nu_massless will be set to 3-N_nu_massive={}.".format(3-params["N_nu_massive"])
-            # )
-            # Default to Neff mode with standard Neff=3.044. Infer T_nu_massless later.
-            # params["Neff"] = 3.044
-            # input_Neff = True
-            # print(
-            #     "You did not specify either T_nu_massless or Neff, and did not ask LINX to compute these quantities.\nNeff will be set to a fiducial value of {}.".format(params["Neff"])
-            # )
-        
+
         ### END OF INPUT COMPATIBILITY ###
         # now that we have verified the user put in the right parameters we can set T_nu_massless
         params['T_nu_massless'] = params.get('T_nu_massless', jnp.array(0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
@@ -477,11 +464,6 @@ class Model(eqx.Module):
             rho1nu = 7/8 * (4/11)**(4/3) * rho_g
             
             params['N_nu_massless'] = (params["Neff"] - rho_extra/rho1nu) * ((4/11)**(1/3) / params["T_nu_massless"])**4
-            # if params['N_nu_massless'] < 0:
-            #     print("ABCMB got a negative N_nu_massless. This is most likely because you included an extra relativistic fluid but did not\n"
-            #     +"account for its contribution to Neff when inputting Neff. For this reason when studying BSM radiation we recommend inputting\n"
-            #     +"N_nu_massless and T_nu_massless instead of Neff to safely fix the neutrino contributions.")
-            #     sys.exit()
 
         # Loop over matter fluids to compute total matter density today.
         rho_m = 0.

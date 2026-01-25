@@ -49,10 +49,10 @@ class PerturbationEvolver(eqx.Module):
     make_output_table : Create interpolatable perturbation table
     """
 
-    species_list : tuple  #= eqx.static_field()
-    species_dict : dict  #= eqx.field(static=True)
+    species_list : tuple 
+    species_dict : dict  
     k_axis_perturbations : jnp.array
-    specs : dict #= eqx.field(static=True)
+    specs : dict
 
     def __init__(
         self,
@@ -97,7 +97,7 @@ class PerturbationEvolver(eqx.Module):
         # For GPUs we vmap over the wavenumbers instead
         def scan_fun(_, ki):
             # evolution_one_k returns shape (Nlna, Ny)
-            y = self.evolution_one_k(ki, lna, args)    # (Nlna, Ny)
+            y = self.evolution_one_k(ki, lna, args) 
             return None, y
 
         if jax.default_backend() =='gpu':
@@ -213,7 +213,7 @@ class PerturbationEvolver(eqx.Module):
         array
             Time derivatives of perturbation state
         """
-        k, BG, params = args # CG: !!
+        k, BG, params = args
         a  = jnp.exp(lna)
         aH = BG.aH(lna, params)
         metric_eta = y[0]
@@ -268,9 +268,8 @@ class PerturbationEvolver(eqx.Module):
         lna_start = self.get_starting_time(k, args) # Start and end times from tight coupling settings
         lna_end = 0.0
 
-        # For small k's the superhorizon time can be set relatively late, but I impose a cutoff of z~20000 for all modes
+        # For small k's the superhorizon time can be set relatively late, but we impose a cutoff of z~20000 for all modes
         # at the very least.
-        #lna_start = jnp.minimum(lna_start, lna[0])
         lna_start = jnp.minimum(lna_start, -10.)
     
         # Initial conditions for tight coupling
@@ -357,7 +356,7 @@ class PerturbationEvolver(eqx.Module):
         Gg0        = modes[Photon.delta_idx+Photon.num_F_ell_modes]
         Gg2        = modes[Photon.delta_idx+Photon.num_F_ell_modes+2]
 
-        # Now the stuff that needs to be backwards calculated.
+        # Now the items that need to be backwards calculated.
         karr = k[None, :]
         a  = jnp.exp(lna)[:, None]
         aH = BG.aH(lna, params)[:, None]

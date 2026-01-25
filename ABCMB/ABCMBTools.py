@@ -42,7 +42,6 @@ def wigner_d_matrix(mu, ells, m, n):
         beta = jnp.arccos(mu)
         norm = jnp.sqrt((2*m+1)/2) * jnp.sqrt(factorial(2*m)/(factorial(m+n)*factorial(m-n)))
         return norm * jnp.cos(beta/2.)**(m+n)*(-jnp.sin(beta/2.))**(m-n)
-        #return norm * jnp.sqrt((1+mu)/2)**(m+n) * jnp.sqrt((1-mu)/2)**(m-n)
 
     normA = jnp.sqrt((2*ells+3)/(2*ells+1))
     normC = jnp.sqrt((2*ells+3)/(2*ells-1))

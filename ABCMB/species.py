@@ -49,7 +49,6 @@ class Fluid(eqx.Module):
     def __init__(self, delta_idx, specs):
         self.delta_idx = delta_idx
 
-    #@abc.abstractmethod
     def rho(self, lna, args):
         """
         Compute energy density.
@@ -71,7 +70,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement an energy density function.")
 
-    #@abc.abstractmethod
     def P(self, lna, args):
         """
         Compute pressure.
@@ -114,7 +112,6 @@ class Fluid(eqx.Module):
         """
         return self.P(lna, args)/self.rho(lna, args)
 
-    #@abc.abstractmethod
     def y_ini(self, k, tau_ini, args):
         """
         Compute initial conditions for perturbation modes.
@@ -137,7 +134,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement the initial conditions of their perturbation modes.")
 
-    #@abc.abstractmethod
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
         Compute time derivatives of perturbation modes.
@@ -166,7 +162,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    #@abc.abstractmethod
     def rho_delta(self, lna, y, args):
         """
         Compute density perturbation.
@@ -187,7 +182,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    #@abc.abstractmethod
     def rho_plus_P_theta(self, lna, y, args):
         """
         Compute velocity perturbation.
@@ -208,7 +202,6 @@ class Fluid(eqx.Module):
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
-    #@abc.abstractmethod
     def rho_plus_P_sigma(self, lna, y, args):
         """
         Compute shear perturbation.
@@ -364,7 +357,6 @@ class DarkEnergy(BackgroundFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        #self.num_ell_modes = 0 # Dark energy does not contribute to perturbations.
 
     def rho(self, lna, args):
         """
@@ -420,12 +412,11 @@ class ColdDarkMatter(StandardFluid):
     """
 
     name = "ColdDarkMatter"
-    num_ell_modes = 1
+    num_ell_modes = 1  # CDM only receives density perturbation in synchronous gauge.
     is_matter = True
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        #self.num_ell_modes = 1 # CDM only receives density perturbation in synchronous gauge.
 
     def rho(self, lna, args):
         """
@@ -555,7 +546,6 @@ class MasslessNeutrino(StandardFluid):
         a = jnp.exp(lna)
         rho = params['N_nu_massless'] * 2. * 7./8. * jnp.pi**2/30. * params['T_nu_massless']**4 * params['TCMB0']**4 / a**4 # eV^4
         rho = rho / (cnst.c * cnst.hbar)**3 # Convert to eV cm^{-3}
-        #return params['omega_nu'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
         return rho
     
     def P(self, lna, args):
@@ -714,12 +704,13 @@ class MassiveNeutrino(Fluid):
         params = args
 
         # Ensure lna is at least 1D for broadcasting
-        lna_arr = jnp.atleast_1d(lna)          # shape (N,)
-        a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_nu_massive'] * params['TCMB0'] / a             # shape (N, 1)
-        x = params['m_nu_massive'] / T             # shape (N, 1)
+        lna_arr = jnp.atleast_1d(lna)  # shape (N,)
+        # shape (N,1):
+        a = jnp.exp(lna_arr)[:, None]         
+        T = params['T_nu_massive'] * params['TCMB0'] / a  
+        x = params['m_nu_massive'] / T 
 
-        # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
+        # q_5p, w_5p are shape (5,), broadcast with (N, 1)
         integrand = (1. + jnp.exp(-self.q_5p)) / self.q_5p**2 \
                     * jnp.sqrt(self.q_5p**2 + x**2)           # (N, 5)
 
@@ -751,11 +742,12 @@ class MassiveNeutrino(Fluid):
 
         # Ensure lna is at least 1D for broadcasting
         lna_arr = jnp.atleast_1d(lna)          # shape (N,)
-        a = jnp.exp(lna_arr)[:, None]          # shape (N, 1)
-        T = params['T_nu_massive'] * params['TCMB0'] / a             # shape (N, 1)
-        x = params['m_nu_massive'] / T             # shape (N, 1)
+        # shape (N,1)
+        a = jnp.exp(lna_arr)[:, None] 
+        T = params['T_nu_massive'] * params['TCMB0'] / a 
+        x = params['m_nu_massive'] / T 
 
-        # q_5p, w_5p are shape (5,) → broadcast with (N, 1)
+        # q_5p, w_5p are shape (5,), broadcast with (N, 1)
         integrand = (1. + jnp.exp(-self.q_5p)) / jnp.sqrt(self.q_5p**2 + x**2) # (N, 5)
 
         # Dot product along last axis with w_5p
@@ -990,7 +982,6 @@ class Baryon(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        #self.num_ell_modes = 2
 
     def rho(self, lna, args):
         """
@@ -1206,7 +1197,6 @@ class Photon(StandardFluid):
         params = args
         a = jnp.exp(lna)
         return jnp.pi**2/15. * params["TCMB0"]**4 / a**4 / (cnst.c * cnst.hbar)**3
-        #return params['omega_g'] * (3.*cnst.H0_over_h**2/8./jnp.pi/cnst.G) / jnp.exp(lna)**4
 
     def P(self, lna, args):
         """
