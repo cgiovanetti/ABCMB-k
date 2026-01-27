@@ -1,0 +1,28 @@
+WARNING: Could not find any nv files on this host!
+/bin/bash: line 1:  : command not found
+ERROR:2025-12-16 18:01:27,882:jax._src.xla_bridge:487: Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/ext3/miniforge3/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 485, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/ext3/miniforge3/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 328, in initialize
+    _check_cuda_versions(raise_on_first_error=True)
+  File "/ext3/miniforge3/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 285, in _check_cuda_versions
+    local_device_count = cuda_versions.cuda_device_count()
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:113: operation cuInit(0) failed: Unknown CUDA error 303; cuGetErrorName failed. This probably means that JAX was unable to load the CUDA libraries.
+[CpuDevice(id=0)]
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+Compile time: 202.93427348136902s
+Performed 10 runs with average 48.92466635704041s +/- 2.3449986925753055s
+[51.34601569 49.11883497 47.71771049 51.40880823 47.60223508 51.28396058
+ 47.14723134 49.54849005 50.46228385 43.61109328]
