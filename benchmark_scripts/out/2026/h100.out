@@ -1,0 +1,18 @@
+/bin/bash: line 1:  : command not found
+W0110 16:18:49.633710 1366531 gpu_collective_performance_model.cc:410] /.singularity.d/libs/libnvidia-ml.so.1: undefined symbol: nvmlDeviceGetGpuFabricInfoV
+[CudaDevice(id=0)]
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+Compile time: 142.26063990592957s
+Performed 10 runs with average 8.088752460479736s +/- 0.047972655160386554s
+[8.07057285 7.99935699 8.02911973 8.05725861 8.08907986 8.09627438
+ 8.14734244 8.11338902 8.13125849 8.15387225]

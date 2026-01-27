@@ -18,18 +18,18 @@ file_dir = os.path.dirname(__file__)
 config.update("jax_enable_x64", True)
 
 # 2D arrays of tabulated spherical functions over l and x axes.
-l_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/l.txt"), dtype="int")
-xphi0_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/xphi0.txt"))
-phi0_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi0.txt"))
-xphi1_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/xphi1.txt"))
-phi1_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi1.txt"))
-xphi2_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/xphi2.txt"))
-phi2_tab = jnp.array(np.loadtxt(file_dir+"/new_bessel_tab/phi2.txt"))
+bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/l.txt"), dtype="int")
+xphi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi0.txt"))
+phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
+xphi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi1.txt"))
+phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
+xphi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi2.txt"))
+phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
 
 try:
     gpus = jax.devices('gpu')
-    l_tab = jax.device_put(
-        l_tab, device=gpus[0])
+    bessel_l_tab = jax.device_put(
+        bessel_l_tab, device=gpus[0])
     xphi0_tab = jax.device_put(
         xphi0_tab, device=gpus[0])
     phi0_tab = jax.device_put(
@@ -52,11 +52,11 @@ j = lambda l, x : jnp.sqrt(jnp.pi/2/x) * J(l+1/2, x)
 def phi0(i, x):
     """
     New method for computing phi0 (or just jl)
-    We tabulated the bessel function between its smallest value (~1.e-10) out to xmin+50jnp.pi.
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    l = l_tab[i]
+    l = bessel_l_tab[i]
     return jnp.where(
         x < xphi0_tab[0, i],
         0.,
@@ -70,11 +70,11 @@ def phi0(i, x):
 def phi1(i, x):
     """
     New method for computing phi1, or jl'.
-    We tabulated the bessel function between its smallest value (~1.e-10) out to xmin+50jnp.pi.
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    l = l_tab[i]
+    l = bessel_l_tab[i]
     return jnp.where(
         x < xphi1_tab[0, i],
         0.,
@@ -88,11 +88,11 @@ def phi1(i, x):
 def phi2(i, x):
     """
     New method for computing phi2 = (3 jl'' + jl)/2
-    We tabulated the bessel function between its smallest value (~1.e-10) out to xmin+50jnp.pi.
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    l = l_tab[i]
+    l = bessel_l_tab[i]
     return jnp.where(
         x < xphi2_tab[0, i],
         0.,
@@ -115,11 +115,11 @@ class SpectrumSolver(eqx.Module):
     ells : jnp.array
         Multipole values for output power spectra
     ells_indices : jnp.array
-        Indices into l_tab corresponding to ells
+        Indices into bessel_l_tab corresponding to ells
     lensing_ells : jnp.array
         Extended multipole range for lensing calculations
     lensing_ells_indices : jnp.array
-        Indices into l_tab for lensing multipoles
+        Indices into bessel_l_tab for lensing multipoles
     lensing : bool
         Whether to include gravitational lensing effects
     k_axis_transfer : jnp.array
@@ -206,13 +206,13 @@ class SpectrumSolver(eqx.Module):
         self.lensing = lensing
 
         self.ells = jnp.arange(ellmin, ellmax+1)
-        ell_idx_min = jnp.where(l_tab<=ellmin)[0][-1]
-        ell_idx_max = jnp.where(l_tab>=ellmax)[0][0]
+        ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
+        ell_idx_max = jnp.where(bessel_l_tab>=ellmax)[0][0]
         self.ells_indices = jnp.arange(ell_idx_min, ell_idx_max+1)
         
         if self.lensing:
             lensing_ellmax = ellmax+500
-            lensing_ell_idx_max = jnp.where(l_tab>=lensing_ellmax)[0][0]
+            lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
             self.lensing_ells = jnp.arange(ellmin, lensing_ellmax+1)
             self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
         else:
@@ -569,7 +569,7 @@ class SpectrumSolver(eqx.Module):
             ee_raw = Cls_raw[:, 2]
 
         # Cubic spline for smooth Cl over user requested ells
-        lensing_ells = l_tab[self.lensing_ells_indices]
+        lensing_ells = bessel_l_tab[self.lensing_ells_indices]
         tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
         te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
         ee_unlensed = CubicSpline(lensing_ells, ee_raw, check=False)(self.lensing_ells)
@@ -596,7 +596,7 @@ class SpectrumSolver(eqx.Module):
         Parameters:
         -----------
         idx : int
-            Index into l_tab for multipole ℓ
+            Index into bessel_l_tab for multipole ℓ
         PT : perturbations.PerturbationTable
             Perturbation evolution table
         BG : background.Background
@@ -609,7 +609,7 @@ class SpectrumSolver(eqx.Module):
         tuple
             (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE) angular power spectra
         """
-        l = l_tab[idx]
+        l = bessel_l_tab[idx]
         k_axis = self.k_axis_transfer
         lna_axis = PT.lna[:-1]
         delta_lna = PT.lna[-1] - PT.lna[-2]
