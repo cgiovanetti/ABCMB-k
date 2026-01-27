@@ -17,106 +17,91 @@ file_dir = os.path.dirname(__file__)
 
 config.update("jax_enable_x64", True)
 
-bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/l.txt", dtype="int"))
-bessel_x_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/x.txt"))
-
 # 2D arrays of tabulated spherical functions over l and x axes.
-bessel_phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
-bessel_phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
-bessel_phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
+bessel_l_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/l.txt"), dtype="int")
+xphi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi0.txt"))
+phi0_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi0.txt"))
+xphi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi1.txt"))
+phi1_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi1.txt"))
+xphi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/xphi2.txt"))
+phi2_tab = jnp.array(np.loadtxt(file_dir+"/bessel_tab/phi2.txt"))
 
 try:
     gpus = jax.devices('gpu')
     bessel_l_tab = jax.device_put(
         bessel_l_tab, device=gpus[0])
-    bessel_x_tab = jax.device_put(
-        bessel_x_tab, device=gpus[0])
-    bessel_phi0_tab = jax.device_put(
-        bessel_phi0_tab, device=gpus[0])
-    bessel_phi1_tab = jax.device_put(
-        bessel_phi1_tab, device=gpus[0])
-    bessel_phi2_tab = jax.device_put(
-        bessel_phi2_tab, device=gpus[0])
+    xphi0_tab = jax.device_put(
+        xphi0_tab, device=gpus[0])
+    phi0_tab = jax.device_put(
+        phi0_tab, device=gpus[0])
+    xphi1_tab = jax.device_put(
+        xphi1_tab, device=gpus[0])
+    phi1_tab = jax.device_put(
+        phi1_tab, device=gpus[0])
+    xphi2_tab = jax.device_put(
+        xphi2_tab, device=gpus[0])
+    phi2_tab = jax.device_put(
+        phi2_tab, device=gpus[0])
 except: 
     pass
 
+Q = lambda l, x : jnp.sqrt(x**2-l**2) - l*jnp.pi/2 + l * jnp.arcsin(l/x)
+J = lambda l, x : jnp.sqrt(2/jnp.pi/jnp.sqrt(x**2-l**2)) * jnp.cos(Q(l, x) - jnp.pi/4)
+j = lambda l, x : jnp.sqrt(jnp.pi/2/x) * J(l+1/2, x)
 
 def phi0(i, x):
     """
-    Compute spherical Bessel function φ₀.
-
-    First integer argument i indicates we are computing this for l = bessel_l_tab[i]
-    float argument x is the argument of the bessel function.
-
-    Parameters:
-    -----------
-    i : int
-        Index into bessel_l_tab for multipole ℓ
-    x : float
-        Argument of spherical Bessel function
-
-    Returns:
-    --------
-    float
-        φ₀(x) for multipole ℓ = bessel_l_tab[i]
-
-    Notes:
-    ------
-    1312.2697 Eq. (3.19a)
+    New method for computing phi0 (or just jl)
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
+    This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
+    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    # For l=2 the fast interp routine is not accurate enough for polarization.
-    # We fix this by substituting the l=2 call with the known closed form expression, which is exact.
-    # For all higher l's, simple interpolation does the trick.  
-    j2 = (3./x**2 - 1) * jnp.sin(x)/x - 3.*jnp.cos(x)/x**2
-    return jnp.where(i==0,
-        j2,
-        tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi0_tab[:, i])
+    l = bessel_l_tab[i]
+    return jnp.where(
+        x < xphi0_tab[0, i],
+        0.,
+        jnp.where(
+            x >= xphi0_tab[-1, i],
+            j(l, x),
+            tools.fast_interp(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
+        )
     )
-    
 
 def phi1(i, x):
     """
-    Compute spherical Bessel function φ₁.
-
-    Parameters:
-    -----------
-    i : int
-        Index into bessel_l_tab for multipole ℓ
-    x : float
-        Argument of spherical Bessel function
-
-    Returns:
-    --------
-    float
-        φ₁(x) for multipole ℓ = bessel_l_tab[i]
-
-    Notes:
-    ------
-    1312.2697 Eq. (3.19a)
+    New method for computing phi1, or jl'.
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
+    This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
+    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi1_tab[:, i])
+    l = bessel_l_tab[i]
+    return jnp.where(
+        x < xphi1_tab[0, i],
+        0.,
+        jnp.where(
+            x >= xphi1_tab[-1, i],
+            l/x*j(l, x) - j(l+1, x),
+            tools.fast_interp(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
+        )
+    )
 
 def phi2(i, x):
     """
-    Compute spherical Bessel function φ₂.
-
-    Parameters:
-    -----------
-    i : int
-        Index into bessel_l_tab for multipole ℓ
-    x : float
-        Argument of spherical Bessel function
-
-    Returns:
-    --------
-    float
-        φ₂(x) for multipole ℓ = bessel_l_tab[i]
-
-    Notes:
-    ------
-    1312.2697 Eq. (3.19a)
+    New method for computing phi2 = (3 jl'' + jl)/2
+    We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
+    This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
+    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
-    return tools.fast_interp(x, bessel_x_tab.min(), bessel_x_tab.max(), bessel_phi2_tab[:, i])
+    l = bessel_l_tab[i]
+    return jnp.where(
+        x < xphi2_tab[0, i],
+        0.,
+        jnp.where(
+            x >= xphi2_tab[-1, i],
+            ((3*l*(l-1)-2*x**2)*j(l, x)+6*x*j(l+1, x))/2/x**2,
+            tools.fast_interp(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
+        )
+    )
 
 class SpectrumSolver(eqx.Module):
     """
@@ -679,6 +664,7 @@ class SpectrumSolver(eqx.Module):
 
         # Bessel functions
         chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
+        #phi0_tab = spherical_jn(l, chi)
         phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
 
         # Here we perform the time integral to get transfer functions from source functions.
@@ -698,6 +684,7 @@ class SpectrumSolver(eqx.Module):
         del integrandT0
 
         integrandT1 = sourceT1 / aH * phi1(idx, chi)
+        #integrandT1 = sourceT1 / aH * spherical_jn(l, chi, derivative=True)
         transferT1 = jnp.trapezoid(
             integrandT1,
             lna_axis, axis=0
@@ -706,6 +693,7 @@ class SpectrumSolver(eqx.Module):
         del integrandT1
 
         integrandT2 = sourceT2 / aH * phi2(idx, chi)
+        #integrandT2 = sourceT2 / aH * (6*chi*spherical_jn(l+1, chi) + (3*l*(l-1)-2*chi**2)*spherical_jn(l, chi))/2/chi**2
         transferT2 = jnp.trapezoid(
             integrandT2,
             lna_axis, axis=0
@@ -716,15 +704,6 @@ class SpectrumSolver(eqx.Module):
         epsilon_tab = phi0_tab / chi**2
         del chi
 
-        # # Mask out the x=0 part. For l=2 this is 1/15, and for l>2 it's 0.
-        # epsilon_tab = epsilon_tab.at[-1].set(
-        #     jnp.where(
-        #         l == 2,
-        #         jnp.ones(k_axis.size)/15.,
-        #         #jnp.zeros(k_axis.size),
-        #         jnp.zeros(k_axis.size)
-        #     )
-        # )
         epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
         integrandE = sourceE / aH * epsilon_tab

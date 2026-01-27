@@ -4,12 +4,12 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:v100:1
-#SBATCH --time=0:30:00
+#SBATCH --time=1:00:00
 #SBATCH --mem=16GB
 #SBATCH --job-name=v100
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=zz1994@nyu.edu
-#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/v100.out
+#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/bessel/v100.out
 
 module purge
 

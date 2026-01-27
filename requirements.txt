@@ -4,5 +4,5 @@ matplotlib
 diffrax
 equinox
 interpax
-jax
+jax==0.8.1
 pytest

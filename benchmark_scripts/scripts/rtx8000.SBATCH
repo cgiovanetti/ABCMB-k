@@ -4,12 +4,12 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:rtx8000:1
-#SBATCH --time=0:30:00
+#SBATCH --time=1:00:00
 #SBATCH --mem=16GB
 #SBATCH --job-name=rtx
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=zz1994@nyu.edu
-#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/rtx8000_2026.out
+#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/bessel/rtx8000.out
 
 module purge
 
