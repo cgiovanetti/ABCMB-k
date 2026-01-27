@@ -49,6 +49,9 @@ def load_specs(input_specs):
     ### Transfer integration k-grid resolution ###
     specs["k_transfer_linstep"] = input_specs.get("k_transfer_linstep", 4.5e-1)
     specs["k_transfer_logstep"] = input_specs.get("k_transfer_logstep", 170.)
+    specs["tau_rec_fid"]        = input_specs.get("tau_rec_fid", 281.040565)
+
+    ### Pivot scale ###
     specs["k_pivot"]            = input_specs.get("k_pivot", 0.05)
 
     ### Set perturbations initial condition time ###
@@ -171,7 +174,7 @@ def get_k_axis_perturbations(specs):
 def get_k_axis_transfer(specs):
     ks = np.zeros(8000)
 
-    k_period = 4.518444e-04
+    k_period = 2*jnp.pi/(specs["tau0_fid"] - specs["tau_rec_fid"])
 
     k = specs["k_min"]
     ks[0] = k
