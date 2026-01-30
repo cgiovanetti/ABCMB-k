@@ -59,7 +59,7 @@ class recomb_model(eqx.Module):
 
         self.idx_4He_equil = jnp.where(self.lna_axis_full <= -jnp.log(self.He4equil_redshift))[0]
 
-    def __call__(self, args,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def __call__(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
 
@@ -67,16 +67,6 @@ class recomb_model(eqx.Module):
         -----------
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
-        z_reion : float, optional
-            Reionization redshift (default: 11)
-        Delta_z_reion : float, optional
-            Reionization transition width (default: 0.5)
-        z_reion_He : float, optional
-            Reionization redshift of singly-ionized helium (default: 3.5)
-        Delta_z_reion_He : float, optional
-            Reionization transition width for singly-ionized helium (default: 0.5)
-        exp_reion : float, optional
-            Power of 1+z appearing in tanh argument during reionization (default: 3/2)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -92,9 +82,9 @@ class recomb_model(eqx.Module):
             (xe_full_reion, lna_full, Tm, lna_Tm) - complete ionization history
             with reionization, log scale factor, matter temperature, and temperature grid
         """
-        return self.get_history(args, z_reion, Delta_z_reion, z_reion_He, Delta_z_reion_He, exp_reion, rtol, atol, solver, max_steps)
+        return self.get_history(args, rtol, atol, solver, max_steps)
     
-    def get_history(self, args,  z_reion = 11, Delta_z_reion = 0.5, z_reion_He = 3.5, Delta_z_reion_He = 0.5, exp_reion = 1.5,rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
+    def get_history(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
 
@@ -105,16 +95,6 @@ class recomb_model(eqx.Module):
         -----------
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
-        z_reion : float, optional
-            Reionization redshift of hydorgen and neutral helium (default: 11)
-        Delta_z_reion : float, optional
-            Reionization transition width for hydorgen and neutral helium (default: 0.5)
-        z_reion_He : float, optional
-            Reionization redshift of singly-ionized helium (default: 3.5)
-        Delta_z_reion_He : float, optional
-            Reionization transition width for singly-ionized helium (default: 0.5)
-        exp_reion : float, optional
-            Power of 1+z appearing in tanh argument during reionization (default: 3/2)
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -137,6 +117,8 @@ class recomb_model(eqx.Module):
 
         xe_4He, lna_4He = helium_model(lna_axis_4Heequil)(args)
         xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift)(args)
+
+        return (xe_full, lna_full, Tm, lna_Tm)
 
         ### Hydrogen Reionization ###
         # We patch a simple tanh solution to the tail of the electron fraction result.

@@ -4,6 +4,7 @@ import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, Tsit5, SaveAt, PIDController, ForwardMode
+import optimistix as optx
 
 from .hyrex.array_with_padding import array_with_padding
 from .hyrex import recomb_functions
@@ -96,7 +97,8 @@ class Background(eqx.Module):
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
     kappa_func : "diffrax.solution"
-    tau_reio   : float 
+    tau_reion  : float 
+    z_reion    : float
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
     rs_d       : float # Sound horizon at baryon decoupling
@@ -127,19 +129,8 @@ class Background(eqx.Module):
 
         self.tau_tab = self._tabulate_conformal_time(params)
         self.tau0 =self.tau(0.)
-        
-        ### RECOMBINATION RELATED ###
 
-        # Run hyrex to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
-                                                                        Delta_z_reion = params["Delta_z_reion"], 
-                                                                        z_reion_He = params["z_reion_He"], 
-                                                                        Delta_z_reion_He = params["Delta_z_reion_He"],
-                                                                        exp_reion = params["exp_reion"])
-
-        self.kappa_func = self._tabulate_optical_depth(params)
-
-        self.tau_reio = self.kappa_func.evaluate(-5.)
+        self.run_recombination(params, RM)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
@@ -152,6 +143,67 @@ class Background(eqx.Module):
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH,in_axes=[0,None])(lna_vals,params)*self.tau_c(lna_vals,params)
         self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
+
+    def run_recombination(self, params, RM):
+        """
+        Call HyRex to get the primary recombination history, then patch on tanh reionization.
+        For now assumes the user will specify tau_reio. 
+        """
+        ### RECOMBINATION ###
+
+        # Run hyrex to tabulate recombination output
+        xe, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params))
+
+        ### REIONIZATION ###
+
+        def xe_reion(lna_axis, z_reion):
+            # Start with Hydrogen recombination
+            fHe = params['YHe'] / 4 / (1-params['YHe'])
+            z = 1/jnp.exp(lna_axis) - 1
+            y = (1+z)**(params["exp_reion"])
+
+            y_reion = (1+z_reion)**(params["exp_reion"])
+            Delta_y_reion = params["exp_reion"] * (1+z_reion)**(params["exp_reion"]-1) * params["Delta_z_reion"]
+            tanh_arg = (y_reion - y) / Delta_y_reion
+            xe_reion_H = (1+fHe)/2 * (1 + jnp.tanh(tanh_arg))
+
+            # The above accounts for hydrogen and the first ionization level of helium.
+            # Let's also account for the second ionization of helium:
+            tanh_arg_He = (params["z_reion_He"] - z)/params["Delta_z_reion_He"]
+            xe_reion_HeII = fHe/2 * (1 + jnp.tanh(tanh_arg_He))
+
+            return xe_reion_H + xe_reion_HeII
+            
+        def tau_reion_fn(z_reion):
+            lna_axis = jnp.linspace(-5., 0., 2000)
+            xe_reion_correction = xe_reion(lna_axis, z_reion)
+            # Free electron number density belonging only to reionized hydrogen. 
+            ne = self.nH(lna_axis, params) * xe_reion_correction
+            Gamma = jnp.exp(lna_axis)*ne*cnst.thomson_xsec*cnst.c/cnst.c_Mpc_over_s
+            aH = self.aH(lna_axis, params)
+            # Optical depth integrand
+            integrand = Gamma/aH
+            return jnp.trapezoid(integrand, lna_axis)
+
+        def tau_target_fn(z_reion, args):
+            target = args
+            return tau_reion_fn(z_reion) - target
+        # Solve for z_reion based on input tau_reion
+        solver = optx.Newton(rtol=1e-5, atol=1e-5)
+        sol = optx.root_find(tau_target_fn, solver, 7.6, params["tau_reion"])
+        z_reion_sol = sol.value
+        self.z_reion = z_reion_sol
+
+        # Now get the correct reionization tanh
+        xe_reion_correction = xe_reion(self.lna_xe_tab.arr, z_reion_sol)
+        xe_full_arr = xe_reion_correction + xe.arr 
+        xe_full = array_with_padding(xe_full_arr)
+
+        self.xe_tab = xe_full
+
+        self.kappa_func = self._tabulate_optical_depth(params)
+
+        self.tau_reion = params["tau_reion"]
 
 
     def rho_tot(self, lna, params):
