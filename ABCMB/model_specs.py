@@ -10,6 +10,9 @@ def load_specs(input_specs):
 
     specs["use_LCDM_species"] = input_specs.get("use_LCDM_species", True)
 
+    ### INPUT RELATED specs PARAMS ###
+    specs["input_tau_reion"] = input_specs.get("input_tau_reion", True) # For reionization, input tau_reion the optical depth, or z_reion the hydrogen redshift?
+
     ### OUTPUT RELATED specs PARAMS ###
     specs["output_Cl"] = input_specs.get("output_Cl", True)
     specs["l_min"]     = input_specs.get("l_min", 2)

@@ -119,29 +119,3 @@ class recomb_model(eqx.Module):
         xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift)(args)
 
         return (xe_full, lna_full, Tm, lna_Tm)
-
-        ### Hydrogen Reionization ###
-        # We patch a simple tanh solution to the tail of the electron fraction result.
-        fHe = params['YHe'] / 4 / (1-params['YHe'])
-        z = 1/jnp.exp(lna_full.arr) - 1
-        y = (1+z)**(exp_reion)
-
-        y_reion = (1+z_reion)**(exp_reion)
-        Delta_y_reion = exp_reion * (1+z_reion)**(exp_reion-1) * Delta_z_reion
-        tanh_arg = (y_reion - y) / Delta_y_reion
-
-        xe_reion_correction = (1+fHe)/2 * (1 + jnp.tanh(tanh_arg))
-        
-        ### Helium Reionization ###
-        # The above accounts for hydrogen and the first ionization level of helium.
-        # Let's also account for the second ionization of helium:
-        tanh_arg_He = (z_reion_He - z)/Delta_z_reion_He
-        xe_HeII_reion_correction = fHe/2 * (1 + jnp.tanh(tanh_arg_He))
-        xe_full_arr = xe_reion_correction + xe_HeII_reion_correction + xe_full.arr 
-
-        xe_full_reion = array_with_padding(xe_full_arr)
-        ### End of Reionization ###
-
-        # best return the whole array-with-padding object 
-        # so we can interpolate over the padding
-        return (xe_full_reion, lna_full, Tm, lna_Tm)  
