@@ -42,7 +42,9 @@ class Background(eqx.Module):
         Log scale factor axis corresponding to tabulated Tm values.
     kappa_func : diffrax.solution
         Visibility function
-    tau_reio : float 
+    z_reion : float
+        Redshift of hydrogen reionization in the CAMB parameterization.
+    tau_reion : float 
         Optical depth to reionization
     lna_rec : float
         Log scale factor of recombination
@@ -870,7 +872,10 @@ class Background(eqx.Module):
 
 class ReionizationModel(eqx.Module):
     """
-    Computes the reionization correction to the free electron fraction.
+    Object for computing the reionization correction to the free electron fraction.
+    Provides the base methods 
+        xe_reion : calculates the tanh electron fraction correction at redshifts lna, given z_reion and params
+        tau_reion_fn : calculates the optical depth to reionization.
     At the moment we only support the CAMB tanh parameterization, but we need different approaches
     based on whether the use inputs the optical depth tau_reion or the reionization redshift z_reion.
     """
@@ -911,12 +916,25 @@ class ReionizationModel(eqx.Module):
         return jnp.trapezoid(integrand, lna_axis)
 
 class ReionizationModelFromZ(ReionizationModel):
-    
+    """
+    Concrete extension of the base ReionizationModel Class.
+    This object is used when the user direcly inputs the redshift of reionization.
+    In this case the tanh correction and the optical depth can be computed directly,
+    and simply returned.
+    """
+
     def __init__(self, BG, params):
         self.z_reion = params.get("z_reion", jnp.array(7.6711))
         self.tau_reion = self.tau_reion_fn(self.z_reion, BG, params)
 
 class ReionizationModelFromTau(ReionizationModel):
+
+    """
+    Concrete extension of the base ReionizationModel Class.
+    This object is used when the user inputs the optical depth and wishes to infer the redshift.
+    The init finder will use an optimistix root finder to find the appropriate redshift.
+    Then the appropriate tanh correction may be called and returned, as well as the inferred reionization redshift.
+    """
 
     def __init__(self, BG, params):
 
