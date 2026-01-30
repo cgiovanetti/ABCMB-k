@@ -4,6 +4,7 @@ import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, Tsit5, SaveAt, PIDController, ForwardMode
+import optimistix as optx
 
 from .hyrex.array_with_padding import array_with_padding
 from .hyrex import recomb_functions
@@ -13,7 +14,6 @@ from . import constants as cnst
 import os
 file_dir = os.path.dirname(__file__)
 config.update("jax_enable_x64", True)
-
 
 class Background(eqx.Module):
     """
@@ -42,7 +42,9 @@ class Background(eqx.Module):
         Log scale factor axis corresponding to tabulated Tm values.
     kappa_func : diffrax.solution
         Visibility function
-    tau_reio : float 
+    z_reion : float
+        Redshift of hydrogen reionization in the CAMB parameterization.
+    tau_reion : float 
         Optical depth to reionization
     lna_rec : float
         Log scale factor of recombination
@@ -96,7 +98,8 @@ class Background(eqx.Module):
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
     kappa_func : "diffrax.solution"
-    tau_reio   : float 
+    z_reion    : float
+    tau_reion  : float 
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
     rs_d       : float # Sound horizon at baryon decoupling
@@ -106,7 +109,7 @@ class Background(eqx.Module):
     lna_transfer_start : float # Time where transfer functions start integrating.
     lna_visibility_stop : float # Time to stop integrating T1, T2, and E sources due to small visibility functions. Only used for l<400
 
-    def __init__(self,params, species_list, RM):
+    def __init__(self,params, species_list, RecModel, ReionModel):
         """
         Initialize Background cosmology module.
 
@@ -119,27 +122,18 @@ class Background(eqx.Module):
             Cosmological parameters
         species_list : tuple
             List of fluid species for energy density calculations
-        RM : callable
+        RecModel : callable
             Recombination module for computing xe and Tm histories
+        ReionModel : callable
+            Reionization module for computing the xe correction. 
         """
         # self.params = params
         self.species_list = species_list
 
         self.tau_tab = self._tabulate_conformal_time(params)
         self.tau0 =self.tau(0.)
-        
-        ### RECOMBINATION RELATED ###
 
-        # Run hyrex to tabulate recombination output
-        self.xe_tab, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RM((self,params),z_reion = params["z_reion"], 
-                                                                        Delta_z_reion = params["Delta_z_reion"], 
-                                                                        z_reion_He = params["z_reion_He"], 
-                                                                        Delta_z_reion_He = params["Delta_z_reion_He"],
-                                                                        exp_reion = params["exp_reion"])
-
-        self.kappa_func = self._tabulate_optical_depth(params)
-
-        self.tau_reio = self.kappa_func.evaluate(-5.)
+        self.run_recombination(params, RecModel, ReionModel)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
@@ -153,6 +147,28 @@ class Background(eqx.Module):
         aH_tau_c_vals = vmap(self.aH,in_axes=[0,None])(lna_vals,params)*self.tau_c(lna_vals,params)
         self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
 
+    def run_recombination(self, params, RecModel, ReionModel):
+        """
+        Call HyRex to get the primary recombination history, then patch on tanh reionization.
+        For now assumes the user will specify tau_reio. 
+        """
+        ### RECOMBINATION ###
+
+        # Run hyrex to tabulate recombination output
+        xe, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RecModel((self,params))
+
+        ### REIONIZATION ###
+        reion_model = ReionModel(self, params)
+        self.z_reion = reion_model.z_reion
+        self.tau_reion = reion_model.tau_reion
+
+        xe_reion_correction = reion_model.xe_reion(self.lna_xe_tab.arr, self.z_reion, params)
+        xe_full_arr = xe_reion_correction + xe.arr 
+        xe_full = array_with_padding(xe_full_arr)
+
+        self.xe_tab = xe_full
+
+        self.kappa_func = self._tabulate_optical_depth(params)
 
     def rho_tot(self, lna, params):
         """
@@ -853,3 +869,80 @@ class Background(eqx.Module):
             Sound horizon at decoupling (units: Mpc)
         """
         return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(), self.z_d())
+
+class ReionizationModel(eqx.Module):
+    """
+    Object for computing the reionization correction to the free electron fraction.
+    Provides the base methods 
+        xe_reion : calculates the tanh electron fraction correction at redshifts lna, given z_reion and params
+        tau_reion_fn : calculates the optical depth to reionization.
+    At the moment we only support the CAMB tanh parameterization, but we need different approaches
+    based on whether the use inputs the optical depth tau_reion or the reionization redshift z_reion.
+    """
+
+    z_reion : jnp.float64
+    tau_reion : jnp.float64
+
+    def xe_reion(self, lna, z_reion, params):
+        """
+        Passing in an lna array should get you the correct tanh patching based on the
+        reionization parameter. 
+        """
+        fHe = params['YHe'] / 4 / (1-params['YHe'])
+        z = 1/jnp.exp(lna) - 1
+        y = (1+z)**(params["exp_reion"])
+
+        y_reion = (1+z_reion)**(params["exp_reion"])
+        Delta_y_reion = params["exp_reion"] * (1+z_reion)**(params["exp_reion"]-1) * params["Delta_z_reion"]
+        tanh_arg = (y_reion - y) / Delta_y_reion
+        xe_reion_H = (1+fHe)/2 * (1 + jnp.tanh(tanh_arg))
+
+        # The above accounts for hydrogen and the first ionization level of helium.
+        # Let's also account for the second ionization of helium:
+        tanh_arg_He = (params["z_reion_He"] - z)/params["Delta_z_reion_He"]
+        xe_reion_HeII = fHe/2 * (1 + jnp.tanh(tanh_arg_He))
+
+        return xe_reion_H + xe_reion_HeII
+
+    def tau_reion_fn(self, z_reion, BG, params):
+        lna_axis = jnp.linspace(-5., 0., 2000)
+        xe_reion_correction = self.xe_reion(lna_axis, z_reion, params)
+        # Free electron number density belonging only to reionized hydrogen. 
+        ne = BG.nH(lna_axis, params) * xe_reion_correction
+        Gamma = jnp.exp(lna_axis)*ne*cnst.thomson_xsec*cnst.c/cnst.c_Mpc_over_s
+        aH = BG.aH(lna_axis, params)
+        # Optical depth integrand
+        integrand = Gamma/aH
+        return jnp.trapezoid(integrand, lna_axis)
+
+class ReionizationModelFromZ(ReionizationModel):
+    """
+    Concrete extension of the base ReionizationModel Class.
+    This object is used when the user direcly inputs the redshift of reionization.
+    In this case the tanh correction and the optical depth can be computed directly,
+    and simply returned.
+    """
+
+    def __init__(self, BG, params):
+        self.z_reion = params.get("z_reion", jnp.array(7.6711))
+        self.tau_reion = self.tau_reion_fn(self.z_reion, BG, params)
+
+class ReionizationModelFromTau(ReionizationModel):
+
+    """
+    Concrete extension of the base ReionizationModel Class.
+    This object is used when the user inputs the optical depth and wishes to infer the redshift.
+    The init finder will use an optimistix root finder to find the appropriate redshift.
+    Then the appropriate tanh correction may be called and returned, as well as the inferred reionization redshift.
+    """
+
+    def __init__(self, BG, params):
+
+        def tau_target_fn(z_reion, args):
+            target = args
+            return self.tau_reion_fn(z_reion, BG, params) - target
+
+        solver = optx.Newton(rtol=1e-5, atol=1e-5)
+        sol = optx.root_find(tau_target_fn, solver, 7.6, params.get("tau_reion", jnp.array(0.05430842)))
+        self.z_reion = sol.value
+        self.tau_reion = params.get("tau_reion", jnp.array(0.05430842))

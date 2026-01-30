@@ -1,4 +1,4 @@
-from jax import jit, config
+from jax import jit, config, lax
 import jax.numpy as jnp
 from jaxtyping import Array
 import numpy as np
@@ -38,7 +38,7 @@ class Model(eqx.Module):
         ABCMB perturbations module
     SS : spectrum.SpectrumSolver
         ABCMB spectrum module
-    RM : hyrex.recomb_model
+    RecModel : hyrex.recomb_model
         HyRex recombination module
     specs : dict
         A dictionary of run options (expected to be static)
@@ -67,7 +67,7 @@ class Model(eqx.Module):
 
     PE : perturbations.PerturbationEvolver
     SS : spectrum.SpectrumSolver
-    RM : hyrex.recomb_model
+    RecModel : hyrex.recomb_model
     specs : dict
 
     species_list : tuple = ()
@@ -133,7 +133,7 @@ class Model(eqx.Module):
         )
 
         # Initialize recombination model
-        self.RM = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
+        self.RecModel = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
 
         # Initialize BBN model
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
@@ -266,7 +266,21 @@ class Model(eqx.Module):
         background.Background
             Background object
         """
-        BG = background.Background(params, self.species_list, self.RM)
+        def get_BG_z_reion(args):
+            params, species_list, RecModel = args
+            return background.Background(params, species_list, RecModel, background.ReionizationModelFromZ)
+
+        def get_BG_tau_reion(args):
+            params, species_list, RecModel = args
+            return background.Background(params, species_list, RecModel, background.ReionizationModelFromTau)
+
+        BG = lax.cond(
+            self.specs["input_tau_reion"],
+            get_BG_tau_reion,
+            get_BG_z_reion,
+            (params, self.species_list, self.RecModel)
+        )
+        
         return BG
 
     def add_derived_parameters(self, param_in : dict) -> dict:
@@ -282,7 +296,12 @@ class Model(eqx.Module):
         params['A_s']           = params.get('A_s', jnp.array(2.e-9))
         params['n_s']           = params.get('n_s', jnp.array(0.965))
         params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
-        params['z_reion']       = params.get('z_reion', jnp.array(11.0))
+
+        # Reionization
+        if self.specs["input_tau_reion"]:
+            params['tau_reion'] = params.get('tau_reion', jnp.array(0.05430842))
+        else:
+            params['z_reion'] = params.get('z_reion', jnp.array(7.6711))
         params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
         params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
         params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
