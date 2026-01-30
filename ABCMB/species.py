@@ -347,6 +347,10 @@ class DarkEnergy(BackgroundFluid):
 
     Represents a constant energy density fluid with negative pressure.
 
+    Required input parameters: None.
+
+    Required derived parameters: params['omega_Lambda']
+
     Methods:
     --------
     rho : Compute dark energy density (units: eV cm^{-3})
@@ -402,6 +406,10 @@ class ColdDarkMatter(StandardFluid):
 
     Non-relativistic, pressureless dark matter with density
     perturbations but no velocity or shear modes.
+
+    Required input parameters: params['omega_cdm'].
+
+    Required derived parameters: params['om'].
 
     Methods:
     --------
@@ -512,6 +520,10 @@ class MasslessNeutrino(StandardFluid):
     Massless neutrinos fluid species implementation.
 
     Represents relativistic neutrinos with multiple angular momentum modes.
+
+    Required input parameters: params['N_nu_massless'], params['T_nu_massless'], params['TCMB0']
+
+    Required derived parameters: params['R_nu'], params['om']
 
     Methods:
     --------
@@ -650,6 +662,11 @@ class MassiveNeutrino(Fluid):
     Massive neutrinos fluid species implementation.
 
     Non-relativistic neutrinos with multiple angular momentum modes.
+
+    Required input parameters: params['N_nu_massive'], params['T_nu_massive'], 
+    params['m_nu_massive'], params['TCMB0']
+
+    Required derived parameters: params['R_nu'], params['om']
 
     Attributes:
     -----------
@@ -966,6 +983,10 @@ class Baryon(StandardFluid):
 
     Non-relativistic baryons with density and velocity perturbations.
 
+    Required input parameters: params['omega_b'], params['YHe']
+
+    Required derived parameters: params['R_nu'], params['R_b'], params['om']
+
     Methods:
     --------
     rho : Compute baryon density (units: eV cm^{-3})
@@ -1153,6 +1174,10 @@ class Photon(StandardFluid):
     Photon fluid species implementation.
 
     Relativistic photons with temperature and polarization Boltzmann hierarchies.
+
+    Required input parameters: params['TCMB0']
+
+    Required derived parameters: params['R_nu'], params['R_nu'], params['om']
 
     Attributes:
     -----------
