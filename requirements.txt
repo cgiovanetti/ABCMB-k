@@ -3,6 +3,7 @@ scipy
 matplotlib
 diffrax
 equinox
+optimistix
 interpax
 jax==0.8.1
 pytest

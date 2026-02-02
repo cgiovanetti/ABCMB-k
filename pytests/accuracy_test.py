@@ -38,6 +38,11 @@ def test_accuracy_checker(h = 0.6762):
             'N_nu_massive': 0,
             'T_nu_massive': 0.71611,
             'm_nu_massive': 0.06,
+            "tau_reion" : 0.0544,
+            "Delta_z_reion": 0.5,
+            "z_reion_He": 3.5,
+            "Delta_z_reion_He": 0.5,
+            "exp_reion" : 1.5
         }
 
         specs = {
@@ -81,11 +86,11 @@ def test_accuracy_checker(h = 0.6762):
             "N_ncdm": full_params["N_nu_massive"],
             #"reio_parametrization" : "reio_none",
             "reio_parametrization" : "reio_camb",
-            "z_reio" : 11,
-            "reionization_width" : 0.5,
-            "helium_fullreio_redshift" : 3.5,
-            "helium_fullreio_width" : 0.5,
-            "reionization_exponent" : 1.5,
+            "tau_reio" : params["tau_reion"],
+            "reionization_width" : params["Delta_z_reion"],
+            "helium_fullreio_redshift" : params["z_reion_He"],
+            "helium_fullreio_width" : params["Delta_z_reion_He"],
+            "reionization_exponent" : params["exp_reion"],
             "l_max_g": specs["l_max_g"],
             "l_max_pol_g": specs["l_max_pol_g"],
             "l_max_ur": specs["l_max_ur"], 
