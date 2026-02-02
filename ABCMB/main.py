@@ -275,7 +275,7 @@ class Model(eqx.Module):
         params = param_in.copy()
 
         # Default parameters except Neff and YHe
-        params['h']             = params.get('h', jnp.array(0.7))
+        params['h']             = params.get('h', jnp.array(0.67))
         params['H0']            = params['h'] * cnst.H0_over_h
         params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
         params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
