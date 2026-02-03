@@ -37,7 +37,7 @@ class Fluid(eqx.Module):
         y_ini   : Adiabatic initial conditions, in synchronous gauge
         y_prime : Perturbation derivatives, in synchronous gauge
         rho_delta        : Perturbed density function δρ (units: eV cm^{-3})
-        rho_plus_P_theta : Velocity perturbation  (units: eV cm^{-3})
+        rho_plus_P_theta : Velocity perturbation  (units: eV cm^{-3} Mpc^{-1})
         rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
@@ -198,7 +198,7 @@ class Fluid(eqx.Module):
         Returns:
         --------
         float
-            Velocity perturbation (units: eV cm^{-3})
+            Velocity perturbation (units: eV cm^{-3} Mpc^{-1})
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
@@ -232,7 +232,7 @@ class StandardFluid(Fluid):
     Methods:
     --------
     rho_delta : Compute standard density perturbation (units: eV cm^{-3})
-    rho_plus_P_theta : Compute standard velocity perturbation (units: eV cm^{-3})
+    rho_plus_P_theta : Compute standard velocity perturbation (units: eV cm^{-3} Mpc^{-1})
     rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
@@ -277,7 +277,7 @@ class StandardFluid(Fluid):
         Returns:
         --------
         float
-            Velocity perturbation (units: eV cm^{-3})
+            Velocity perturbation (units: eV cm^{-3} Mpc^{-1})
         """
         params = args
         return jnp.where(
@@ -680,7 +680,7 @@ class MassiveNeutrino(Fluid):
     y_ini : Compute initial perturbation conditions 
     y_prime : Compute perturbation time derivatives 
     rho_delta : Compute density perturbation (units: eV cm^{-3})
-    rho_plus_P_theta : Compute velocity perturbation (units: eV cm^{-3})
+    rho_plus_P_theta : Compute velocity perturbation (units: eV cm^{-3} Mpc^{-1})
     rho_plus_P_sigma : Compute shear perturbation (units: eV cm^{-3})
     """
 
@@ -927,7 +927,7 @@ class MassiveNeutrino(Fluid):
         Returns:
         --------
         float
-            Velocity perturbation (units: eV cm^{-3})
+            Velocity perturbation (units: eV cm^{-3} Mpc^{-1})
         """
         params = args
         a = jnp.exp(lna)
