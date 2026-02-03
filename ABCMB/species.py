@@ -130,7 +130,7 @@ class Fluid(eqx.Module):
         Returns:
         --------
         array
-            Initial perturbation mode values (units: dimensionless)
+            Initial perturbation mode values
         """
         raise NotImplementedError("Fluid species must implement the initial conditions of their perturbation modes.")
 
@@ -158,7 +158,7 @@ class Fluid(eqx.Module):
         Returns:
         --------
         array
-            Time derivatives of perturbation modes (units: dimensionless)
+            Time derivatives of perturbation modes
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
 
@@ -415,8 +415,8 @@ class ColdDarkMatter(StandardFluid):
     --------
     rho : Compute cold dark matter density (units: eV cm^{-3})
     P : Compute cold dark matter pressure (units: eV cm^{-3})
-    y_ini : Compute initial perturbation conditions (units: dimensionless)
-    y_prime : Compute perturbation time derivatives (units: dimensionless)
+    y_ini : Compute initial perturbation conditions
+    y_prime : Compute perturbation time derivatives
     """
 
     name = "ColdDarkMatter"
@@ -595,7 +595,7 @@ class MasslessNeutrino(StandardFluid):
         Returns:
         --------
         array
-            Initial perturbation mode values (units: dimensionless)
+            Initial perturbation mode values (units: 1/Mpc for theta, else dimensionless)
         """
         params = args
         R_nu = params['R_nu']
@@ -631,7 +631,7 @@ class MasslessNeutrino(StandardFluid):
         Returns:
         --------
         array
-            Time derivatives of perturbation modes (units: dimensionless)
+            Time derivatives of perturbation modes (units: 1/Mpc for theta, else dimensionless)
         """
         BG, params, _, _ = args
         aH    = BG.aH(lna, params)
@@ -677,8 +677,8 @@ class MassiveNeutrino(Fluid):
     --------
     rho : Compute massive neutrino density (units: eV cm^{-3})
     P : Compute massive neutrino pressure (units: eV cm^{-3})
-    y_ini : Compute initial perturbation conditions (units: dimensionless)
-    y_prime : Compute perturbation time derivatives (units: dimensionless)
+    y_ini : Compute initial perturbation conditions 
+    y_prime : Compute perturbation time derivatives 
     rho_delta : Compute density perturbation (units: eV cm^{-3})
     rho_plus_P_theta : Compute velocity perturbation (units: eV cm^{-3})
     rho_plus_P_sigma : Compute shear perturbation (units: eV cm^{-3})
@@ -791,7 +791,7 @@ class MassiveNeutrino(Fluid):
         Returns:
         --------
         array
-            Initial perturbation mode values (units: dimensionless)
+            Initial perturbation mode values (units: 1/Mpc for kPsi1, else dimensionless)
         """
         params = args
         res = jnp.zeros(self.num_ell_modes)
@@ -839,7 +839,7 @@ class MassiveNeutrino(Fluid):
         Returns:
         --------
         array
-            Time derivatives of perturbation modes (units: dimensionless)
+            Time derivatives of perturbation modes (units: 1/Mpc for kPsi1, else dimensionless)
         """
         BG, params, _, _ = args
         res = jnp.zeros(self.num_ell_modes)
@@ -993,8 +993,8 @@ class Baryon(StandardFluid):
     P : Compute baryon pressure (units: eV cm^{-3})
     cs2 : Compute sound speed squared (units: dimensionless)
     mean_mass : Compute mean baryon mass (units: eV)
-    y_ini : Compute initial perturbation conditions (units: dimensionless)
-    y_prime : Compute perturbation time derivatives (units: dimensionless)
+    y_ini : Compute initial perturbation conditions 
+    y_prime : Compute perturbation time derivatives 
     """
     
     name = "Baryon"
@@ -1120,7 +1120,7 @@ class Baryon(StandardFluid):
         Returns:
         --------
         array
-            Initial perturbation mode values (units: dimensionless)
+            Initial perturbation mode values (units: 1/Mpc for theta, else dimensionless)
         """
         params = args
         delta = -(k*tau_ini)**2/4. * (1.-params["om"]*tau_ini/5.)
@@ -1149,7 +1149,7 @@ class Baryon(StandardFluid):
         Returns:
         --------
         array
-            Time derivatives of perturbation modes (units: dimensionless)
+            Time derivatives of perturbation modes (units: 1/Mpc for theta, else dimensionless)
         """
         BG, params, species_list, species_dict = args
         # Get photon class from list
@@ -1190,8 +1190,8 @@ class Photon(StandardFluid):
     --------
     rho : Compute photon density (units: eV cm^{-3})
     P : Compute photon pressure (units: eV cm^{-3})
-    y_ini : Compute initial perturbation conditions (units: dimensionless)
-    y_prime : Compute perturbation time derivatives (units: dimensionless)
+    y_ini : Compute initial perturbation conditions 
+    y_prime : Compute perturbation time derivatives 
     """
     num_F_ell_modes : int = eqx.field(static=True)
     num_G_ell_modes : int = eqx.field(static=True)
@@ -1258,7 +1258,7 @@ class Photon(StandardFluid):
         Returns:
         --------
         array
-            Initial perturbation mode values (units: dimensionless)
+            Initial perturbation mode values (units: 1/Mpc for theta, else dimensionless)
         """
         params = args
         delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
@@ -1287,7 +1287,7 @@ class Photon(StandardFluid):
         Returns:
         --------
         array
-            Time derivatives of perturbation modes (units: dimensionless)
+            Time derivatives of perturbation modes (units: 1/Mpc for theta, else dimensionless)
         """
         BG, params, species_list, species_dict = args
         # Get Baryon from list

@@ -120,8 +120,10 @@ class SpectrumSolver(eqx.Module):
         Extended multipole range for lensing calculations
     lensing_ells_indices : jnp.array
         Indices into bessel_l_tab for lensing multipoles
-    lensing_theta : jnparray
-        Angular axis for computing the lensed power spectra from lensed correlation functions
+    lensing_mus : jnp.array
+        Used for lensing, the Gauss-Legendre quadrature roots for the correlation function -> Cl integral.
+    lensing_ws : jnp.array
+        Used for lensing, the Gauss-Legendre quadrature weights for the correlation function -> Cl integral.
     lensing : bool
         Whether to include gravitational lensing effects
     k_axis_transfer : jnp.array

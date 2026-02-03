@@ -186,8 +186,12 @@ def d4n(mu, ells, n):
 
 ### END OF WIGNER ROTATION FOR LENSING ###
 
+### LENSING INTEGRAL QUADRATURE METHODS ###
 def _pn_and_pnm1_scan(z, n):
-    """Return P_n(z), P_{n-1}(z) for vector z using lax.scan."""
+    """
+    Return P_n(z), P_{n-1}(z), Legendre polynomials for vector z using lax.scan.
+    Used in function below to find quadrature roots and weights.
+    """
     z = jnp.asarray(z)
     p1 = jnp.ones_like(z)      # P_0
     p2 = jnp.zeros_like(z)     # P_{-1} (dummy)
@@ -203,7 +207,26 @@ def _pn_and_pnm1_scan(z, n):
     (p_n, p_nm1), _ = lax.scan(step, (p1, p2), jnp.arange(1, n+1))
     return p_n, p_nm1
 
-def gauss_legendre_weights(n: int, tol: float = 1.e-16, max_it: int = 50, dtype=jnp.float64):
+def gauss_legendre_weights(n, tol=1.e-16, max_it=50):
+    """
+    Iteratively finds the roots and weights for Gauss-Legendre quadrature integration
+    between -1 and 1, given the number of roots n requested.
+
+    Parameters:
+    -----------
+    n : int
+        Number of roots desired, typically set by lmax of the lensed power spectrum.
+    tol : jnp.float64
+        Accuracy tolerance on the Newton root finder.
+    max_it : int
+        Maximum iteration on the Newton root finder.
+
+    Returns:
+    --------
+    (mu, w) : (jnp.array, jnp.array)
+        The roots mu and weights w. 
+    """
+    dtype=jnp.float64
     m = (n + 1) // 2
     i = jnp.arange(1, m + 1, dtype=dtype)
     z0 = jnp.cos(jnp.array(jnp.pi, dtype=dtype) * (i - 0.25) / (n + 0.5))
@@ -241,8 +264,6 @@ def gauss_legendre_weights(n: int, tol: float = 1.e-16, max_it: int = 50, dtype=
     w  = w.at[n-m:].set(w_half[::-1])
 
     return mu, w
-
-
 
 def fast_interp(x, xp_min, xp_max, fp):
     """

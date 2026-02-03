@@ -289,19 +289,19 @@ class Model(eqx.Module):
         params = param_in.copy()
 
         # Default parameters except Neff and YHe
-        params['h']             = params.get('h', jnp.array(0.67))
+        params['h']             = params.get('h', jnp.array(0.6736))
         params['H0']            = params['h'] * cnst.H0_over_h
         params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
-        params['omega_b']       = params.get("omega_b", jnp.array(0.02238))
-        params['A_s']           = params.get('A_s', jnp.array(2.e-9))
-        params['n_s']           = params.get('n_s', jnp.array(0.965))
+        params['omega_b']       = params.get("omega_b", jnp.array(0.02237))
+        params['A_s']           = params.get('A_s', jnp.array(2.1e-9))
+        params['n_s']           = params.get('n_s', jnp.array(0.9649))
         params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
 
         # Reionization
         if self.specs["input_tau_reion"]:
-            params['tau_reion'] = params.get('tau_reion', jnp.array(0.05430842))
+            params['tau_reion'] = params.get('tau_reion', jnp.array(0.0544))
         else:
-            params['z_reion'] = params.get('z_reion', jnp.array(7.6711))
+            params['z_reion'] = params.get('z_reion', jnp.array(7.67))
         params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
         params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
         params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
