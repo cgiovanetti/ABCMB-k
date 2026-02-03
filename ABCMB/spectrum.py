@@ -120,6 +120,8 @@ class SpectrumSolver(eqx.Module):
         Extended multipole range for lensing calculations
     lensing_ells_indices : jnp.array
         Indices into bessel_l_tab for lensing multipoles
+    lensing_theta : jnparray
+        Angular axis for computing the lensed power spectra from lensed correlation functions
     lensing : bool
         Whether to include gravitational lensing effects
     k_axis_transfer : jnp.array
@@ -154,6 +156,8 @@ class SpectrumSolver(eqx.Module):
 
     lensing_ells : jnp.array
     lensing_ells_indices : jnp.array
+    lensing_mus  : jnp.array
+    lensing_ws   : jnp.array
 
     lensing : bool
 
@@ -215,9 +219,17 @@ class SpectrumSolver(eqx.Module):
             lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
             self.lensing_ells = jnp.arange(ellmin, lensing_ellmax+1)
             self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
+            #self.lensing_theta = jnp.linspace(0., jnp.pi/16., lensing_ellmax // 8) # Size recommended by CLASS
+            num_mu = lensing_ellmax + 70
+            mu, w = tools.gauss_legendre_weights(num_mu)
+            self.lensing_mus = jnp.concatenate((mu, jnp.array([1.])))
+            self.lensing_ws = jnp.concatenate((w, jnp.array([0.])))
         else:
             self.lensing_ells = self.ells
             self.lensing_ells_indices = self.ells_indices
+            #self.lensing_theta = jnp.array([0.]) # Not needed
+            self.lensing_mus = jnp.array([0.]) # Not needed
+            self.lensing_ws  = jnp.array([0.]) # Not needed
 
         self.k_axis_transfer = k_axis_transfer
         self.k_axis_Pk_output = k_axis_Pk_output
@@ -434,10 +446,11 @@ class SpectrumSolver(eqx.Module):
         """
         # CLASS samples angle uniformly
         # 500 points is enough for lmax < 4000
-        theta = jnp.linspace(0., jnp.pi/16., 500)
+        #theta = jnp.linspace(0., jnp.pi/16., 500)
 
         # Flip mu so that mu is in ascending order, works better for trapz.
-        mu = jnp.flip(jnp.cos(theta))
+        #mu = jnp.flip(jnp.cos(self.lensing_theta))
+        mu = self.lensing_mus
 
         # Compute lensing Cl
         Clpp = self.lensing_Cl(ells, PT, BG, params)
@@ -491,7 +504,7 @@ class SpectrumSolver(eqx.Module):
                 X000**2 * d00 \
                 + 8./ells/(ells+1)*Cgl2*X000_prime**2*d1m1 \
                 + Cgl2**2 * (X000_prime**2*d00 + X220**2*d2m2) \
-                - d00
+                #- d00
             ), 
             axis=1
         )
@@ -501,7 +514,7 @@ class SpectrumSolver(eqx.Module):
                 X022**2 * d22 \
                 + 2*Cgl2*X132*X121*d31 \
                 + Cgl2**2 * (X022_prime**2*d22 + X242*X220*d40) \
-                - d22
+                #- d22
             ), 
             axis=1
         )
@@ -511,7 +524,7 @@ class SpectrumSolver(eqx.Module):
                 X022**2 * d2m2 \
                 + Cgl2*(X121**2*d1m1 + X132**2*d3m3) \
                 + 1./2.*Cgl2**2 * (2*X022_prime**2*d2m2 + X220**2*d00 + X242**2*d4m4) \
-                - d2m2
+                #- d2m2
             ), 
             axis=1
         )
@@ -521,14 +534,21 @@ class SpectrumSolver(eqx.Module):
                 X022*X000*d02 \
                 + Cgl2 * 2*X000_prime/jnp.sqrt(llp1) * (X121*d11 + X132*d3m1) \
                 + 1./2.*Cgl2**2 * ((2*X022_prime*X000_prime+X220**2)*d20+X220*X242*dm24) \
-                - d02
+                #- d02
             ), 
             axis=1
         )
         
-        ClTT = 2.*jnp.pi * jnp.trapezoid(ksi[:, None]*d00, mu, axis=0) + ClTT_unlensed
-        ClTE = 2.*jnp.pi * jnp.trapezoid(ksix[:, None]*d20, mu, axis=0) + ClTE_unlensed
-        ClEE = 1./2. * 2.*jnp.pi * jnp.trapezoid(ksip[:, None]*d22+ksim[:, None]*d2m2, mu, axis=0) + ClEE_unlensed
+        #ClTT = 2.*jnp.pi * jnp.trapezoid(ksi[:, None]*d00, mu, axis=0) + ClTT_unlensed
+        #ClTE = 2.*jnp.pi * jnp.trapezoid(ksix[:, None]*d20, mu, axis=0) + ClTE_unlensed
+        #ClEE = 1./2. * 2.*jnp.pi * jnp.trapezoid(ksip[:, None]*d22+ksim[:, None]*d2m2, mu, axis=0) + ClEE_unlensed
+        w = self.lensing_ws[:, None]
+        ClTT = 2*jnp.pi * jnp.sum(ksi[:, None]*d00*w, axis=0)
+        ClTE = 2*jnp.pi * jnp.sum(ksix[:, None]*d20*w, axis=0)
+        ClEE = 1./2. * 2*jnp.pi * jnp.sum(
+            (ksip[:, None]*d22 + ksim[:, None]*d2m2)*w,
+            axis=0
+        )
 
         return (ClTT, ClTE, ClEE)
 
