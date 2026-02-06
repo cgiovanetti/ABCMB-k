@@ -19,7 +19,7 @@ conda activate ABCMB
 pip install -U -r requirements.txt
 
 ```
-optionally specifying your preferred python version after the environment name.  Note that this will automatically attempt to install JAX for CUDA12; if you need a different CUDA version or are attempting to run on a CPU-only platform, refer to the [JAX documentation](https://docs.jax.dev/en/latest/installation.html) for a quick JAX installation guide.
+optionally specifying your preferred python version after the environment name.  Note that this will automatically attempt to install JAX for CPU; to install for GPU, refer to the [JAX documentation](https://docs.jax.dev/en/latest/installation.html) for a quick JAX installation guide.
 
 ## Examples
 We have included several pedagogical jupyter notebooks to walk you through how to get started with ABCMB in our [example_notebooks](https://github.com/TonyZhou729/ABCMB/tree/main/example_notebooks) folder.  We suggest you start with [ABCMB_basics](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_basics.ipynb) to get a sense of how to run the code.  If you'd like to add new physics to ABCMB, check out [ABCMB_Fluids](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_Fluids.ipynb).  If you'd like to run ABCMB with the Big Bang Nucleosynthesis (BBN) code [LINX](https://github.com/cgiovanetti/LINX/tree/main) to do BBN+CMB joint analyses, check out [ABCMB_with_LINX](https://github.com/TonyZhou729/ABCMB/blob/main/example_notebooks/ABCMB_with_LINX.ipynb).
