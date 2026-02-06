@@ -2,7 +2,7 @@ numpy
 scipy
 matplotlib
 diffrax
-equinox=0.13.2
+equinox==0.13.2
 optimistix
 interpax
 jax==0.8.1
