@@ -17,8 +17,13 @@ import time
 
 h = 0.6762
 
-model = Model()
-# model = Model()
+specs = {
+    "output_Cl" : True,
+    "output_Pk" : True,
+    "lensing" : True
+}
+
+model = Model(specs)
 
 for i in range(2):
     start=time.time()
