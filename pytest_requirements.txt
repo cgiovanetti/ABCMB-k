@@ -2,9 +2,9 @@ numpy
 scipy
 matplotlib
 diffrax
-equinox==0.13.2
+equinox
 optimistix
 interpax
-jax==0.8.1
+jax
 pytest
 classy
