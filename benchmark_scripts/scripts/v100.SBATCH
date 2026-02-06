@@ -9,7 +9,7 @@
 #SBATCH --job-name=v100
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=zz1994@nyu.edu
-#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/bessel/v100.out
+#SBATCH --output=/home/zz1994/packages/ABCMB/benchmark_scripts/out/1e-4/v100.out
 
 module purge
 
@@ -17,4 +17,4 @@ singularity exec --nv \
 	    --overlay /scratch/zz1994/singgpu/overlay-15GB-500K.ext3:ro \
 	    /scratch/work/public/singularity/cuda12.6.3-cudnn9.5.1-ubuntu22.04.5.sif \
 	    /bin/bash -c "source /ext3/env.sh;\    
-        python /home/zz1994/packages/ABCMB/benchmark_scripts/benchmark.py"
+        python /home/zz1994/packages/ABCMB/benchmark_scripts/benchmark2.py"

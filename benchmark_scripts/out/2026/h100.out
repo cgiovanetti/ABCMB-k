@@ -1,5 +1,5 @@
 /bin/bash: line 1:  : command not found
-W0110 16:18:49.633710 1366531 gpu_collective_performance_model.cc:410] /.singularity.d/libs/libnvidia-ml.so.1: undefined symbol: nvmlDeviceGetGpuFabricInfoV
+W0126 21:26:53.210715  609779 gpu_collective_performance_model.cc:410] /.singularity.d/libs/libnvidia-ml.so.1: undefined symbol: nvmlDeviceGetGpuFabricInfoV
 [CudaDevice(id=0)]
 
               /\  
@@ -12,7 +12,7 @@ W0110 16:18:49.633710 1366531 gpu_collective_performance_model.cc:410] /.singula
        /_/          \_|___/ \___/||  |||_-) is compiling...
 \_____/      
 
-Compile time: 142.26063990592957s
-Performed 10 runs with average 8.088752460479736s +/- 0.047972655160386554s
-[8.07057285 7.99935699 8.02911973 8.05725861 8.08907986 8.09627438
- 8.14734244 8.11338902 8.13125849 8.15387225]
+Compile time: 139.23706340789795s
+Performed 10 runs with average 8.1787353515625s +/- 0.04298410188950722s
+[8.16251874 8.10531187 8.11917949 8.15187716 8.17406893 8.18780684
+ 8.23862839 8.19498372 8.22213197 8.23084641]
