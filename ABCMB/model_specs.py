@@ -70,7 +70,7 @@ def load_specs(input_specs):
     # Step size controller
     specs["k_split_PE"]      = input_specs.get("k_split_PE", 0.01)
     specs["rtol_small_k_PE"] = input_specs.get("rtol_small_k_PE", 1.e-5)
-    specs["rtol_large_k_PE"] = input_specs.get("rtol_large_k_PE", 1.e-3)
+    specs["rtol_large_k_PE"] = input_specs.get("rtol_large_k_PE", 1.e-4)
     specs["atol_small_k_PE"] = input_specs.get("atol_small_k_PE", 1.e-10)
     specs["atol_large_k_PE"] = input_specs.get("atol_large_k_PE", 1.e-6)
     specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)

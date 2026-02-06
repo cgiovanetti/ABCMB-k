@@ -76,6 +76,7 @@ def test_accuracy_checker(h = 0.6762):
             "l_max_scalars" : ellmax,
             "P_k_max_1/Mpc" : specs["output_k_max"],
             "lensing" : "yes" if specs["lensing"] else "no",
+            "accurate_lensing" : 1,
             "H0": full_params["h"]*100,
             "omega_b": full_params["omega_b"],
             "omega_cdm": full_params["omega_cdm"],
