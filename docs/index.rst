@@ -8,7 +8,7 @@ ABCMB documentation
 
 ABCMB is a fully differentiable Boltzmann solver for the CMB.   It computes the matter and CMB power spectra and includes effects like lensing, massive neutrinos, and a state-of-the-art treatment of the physics of recombination through the companion code HyRex.
 
-`HyRex Documentation <https://hyrex.readthedocs.io/en/latest/>`_ is maintained separately. 
+`HyRex Documentation <https://hyrex.readthedocs.io/en/latest/>`_ and `LINX documentation <https://linx.readthedocs.io/en/latest/>`_ are maintained separately. 
 
 Installation
 ------------
@@ -23,7 +23,7 @@ The high-level organization of ABCMB is as follows:
    :align: center
    :width: 700px
 
-In most cases, the user will only need to initialize **ABCMB.main.Model** and call **Model.run_cosmology** explicitly; the other modules will be called by these two top-level modules.
+In most cases, the user will only need to initialize **ABCMB.main.Model** and call **Model.run_cosmology** explicitly; the other modules will be called by this top-level function.
 
 Examples
 --------
