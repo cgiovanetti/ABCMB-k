@@ -20,11 +20,9 @@ We recommend always doing so in a conda environment, preferably even a clean one
 
 If you'd like to clone the repo instead, after cloning you can run
 ```
-conda create -n ABCMB
-conda activate ABCMB
 pip install .
 ```
-from the code directory.  Optionally specify your preferred python version after the environment name.  
+from the code directory. 
 
 Note that both methods of installing will automatically attempt to install JAX for CPU; to install for GPU, refer to the [JAX documentation](https://docs.jax.dev/en/latest/installation.html) for a quick JAX installation guide.
 
