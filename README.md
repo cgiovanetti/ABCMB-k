@@ -23,7 +23,6 @@ If you'd like to clone the repo instead, after cloning you can run
 conda create -n ABCMB
 conda activate ABCMB
 pip install .
-
 ```
 from the code directory.  Optionally specify your preferred python version after the environment name.  
 
