@@ -1,4 +1,4 @@
-from jax import jit, config, lax
+from jax import jit, config, lax, tree_util
 import jax.numpy as jnp
 from jaxtyping import Array
 import numpy as np
@@ -168,8 +168,7 @@ class Model(eqx.Module):
 
         
         full_params = self.add_derived_parameters(params)
-        output, aux = self.run_cosmology_abbr(full_params)
-        return output, aux
+        return self.run_cosmology_abbr(full_params)
         
     ### JITTED OR JITTABLE FUNCTIONS ###
 
@@ -205,30 +204,24 @@ class Model(eqx.Module):
         print('\\_____/      ')
         print("")
 
+        # Compute background and linear perturbations
         PT, BG = self.get_PTBG(params)
-        output = ()
-        aux = ()
 
-        if self.specs["output_Cl"]:
-            Cls = self.SS.get_Cl(PT, BG, params)
-            ells = self.SS.ells
-            output += Cls
-            aux += (ells,)
+        # Compute CMB power spectra
+        Cls = self.SS.get_Cl(PT, BG, params)
+        l = self.SS.ells
         
-        if self.specs["output_Pk"]:
-            Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
-            output += (Pk,)
-            aux += (self.SS.k_axis_Pk_output,)
+        # Compute linear matter power spectrum
+        Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
+        k = self.SS.k_axis_Pk_output
 
-        aux += (params,)
+        # Package
+        output = Output(
+            Cls[0], Cls[1], Cls[2], Pk,
+            l, k, BG, PT, params
+        )
 
-        if self.specs["output_perturbations"]:
-            aux += (PT,)
-
-        if self.specs["output_background"]:
-            aux += (BG,)
-
-        return output, aux
+        return output
 
     @eqx.filter_jit
     def get_PTBG(self, params : dict):
@@ -513,3 +506,76 @@ class Model(eqx.Module):
         params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
 
         return params
+
+class Output(eqx.Module):
+    """
+    Object containing final and intermediate results from one cosmological simulation.
+    Contains the power spectra (CMB & P(k)) whose derivatives can be taken.
+    Also contains auxillary data such as l, k, background, perturbations and full params which are static
+    and cannot be taken gradient on.
+    """
+
+    # Power spectra
+    ClTT : jnp.array
+    ClTE : jnp.array
+    ClEE : jnp.array
+    Pk   : jnp.array
+
+    l  : jnp.array
+    k  : jnp.array
+    BG : background.Background
+    PT : perturbations.PerturbationTable
+    params : dict
+
+@tree_util.register_pytree_node_class
+class Output_tree:
+    """
+    Object containing final and intermediate results from one cosmological simulation.
+    Contains the power spectra (CMB & P(k)) whose derivatives can be taken.
+    Also contains auxillary data such as l, k, background, perturbations and full params which are static
+    and cannot be taken gradient on.
+    """
+
+    # Power spectra
+    ClTT : jnp.array
+    ClTE : jnp.array
+    ClEE : jnp.array
+    Pk   : jnp.array
+
+    # Auxillary data
+    # l  : jnp.array = eqx.field(static=True) # Force static to avoid pytree registration.
+    # k  : jnp.array = eqx.field(static=True) 
+    # BG : background.Background = eqx.field(static=True) 
+    # PT : perturbations.PerturbationTable = eqx.field(static=True)
+    # params : dict = eqx.field(static=True)
+
+    l  : jnp.array
+    k  : jnp.array
+    BG : background.Background
+    PT : perturbations.PerturbationTable
+    params : dict
+
+    def __init__(self, *, ClTT, ClTE, ClEE, Pk, l, k, BG, PT, params):
+        self.ClTT = ClTT
+        self.ClTE = ClTE
+        self.ClEE = ClEE
+        self.Pk = Pk
+        self.l = l
+        self.k = k
+        self.BG = BG
+        self.PT = PT
+        self.params = params
+
+    # PyTree interface:
+    # children = things JAX traces/differentiates
+    # aux_data = static stuff carried along (not traced/differentiated)
+    def tree_flatten(self):
+        children = (self.ClTT, self.ClTE, self.ClEE, self.Pk)              # <-- ONLY these get grads
+        aux_data = (self.l, self.k, self.BG, self.PT, self.params)  # <-- static metadata
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        ClTT, ClTE, ClEE, Pk = children
+        l, k, BG, PT, params = aux_data
+        return cls(ClTT=ClTT, ClTE=ClTE, ClEE=ClEE, Pk=Pk, l=l, k=k, BG=BG, PT=PT, params=params)
