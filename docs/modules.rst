@@ -1,13 +1,13 @@
-ABCMB
-=====
+Detailed API documentation
+==========================
 
 .. toctree::
    :maxdepth: 2
 
-   constants
-   ABCMB.ABCMBTools
-   ABCMB.background
-   ABCMB.main
-   ABCMB.perturbations
-   ABCMB.species
-   ABCMB.spectrum
+   abcmb.ABCMBTools
+   abcmb.background
+   abcmb.constants
+   abcmb.main
+   abcmb.perturbations
+   abcmb.species
+   abcmb.spectrum
