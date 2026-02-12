@@ -23,7 +23,7 @@ specs = {
     "lensing" : True
 }
 
-model = Model(specs)
+model = Model(**specs)
 
 for i in range(2):
     start=time.time()
