@@ -9,9 +9,9 @@ sys.path.append(file_dir+'/../')
 import jax
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_debug_nans", True)
-from ABCMB.main import Model
-import ABCMB.spectrum as spectrum
-from ABCMB import species
+from abcmb.main import Model
+import abcmb.spectrum as spectrum
+from abcmb import species
 from scipy.interpolate import interp1d
 import jax.numpy as jnp
 import numpy as np
@@ -137,7 +137,7 @@ def test_accuracy_checker(h = 0.6762):
 
         assert max(err_tt) <= 0.01, f"Accuracy check failed at TT: {err_tt}"
         assert max(err_ee) <= 0.01, f"Accuracy check failed at EE: {err_ee}"
-        assert max(err_Pk) <= 0.01, f"Accuracy check failed at P(k): {err_pk}"
+        assert max(err_Pk) <= 0.01, f"Accuracy check failed at P(k): {err_Pk}"
     
     except Exception as e:
         pytest.fail(f"accuracy_checks raised an exception: {e}")
