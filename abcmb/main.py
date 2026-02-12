@@ -289,23 +289,23 @@ class Model(eqx.Module):
         params = param_in.copy()
 
         # Default parameters except Neff and YHe
-        params['h']             = params.get('h', jnp.array(0.6736))
-        params['H0']            = params['h'] * cnst.H0_over_h
-        params['omega_cdm']     = params.get('omega_cdm', jnp.array(0.120))
-        params['omega_b']       = params.get("omega_b", jnp.array(0.02237))
-        params['A_s']           = params.get('A_s', jnp.array(2.1e-9))
-        params['n_s']           = params.get('n_s', jnp.array(0.9649))
-        params['TCMB0']         = params.get('TCMB0', jnp.array(2.34865418e-4))
+        params['h']             = jnp.array(params.get('h', 0.6736))
+        params['H0']            = jnp.array(params['h'] * cnst.H0_over_h)
+        params['omega_cdm']     = jnp.array(params.get('omega_cdm', 0.120))
+        params['omega_b']       = jnp.array(params.get("omega_b", 0.02237))
+        params['A_s']           = jnp.array(params.get('A_s', 2.1e-9))
+        params['n_s']           = jnp.array(params.get('n_s', 0.9649))
+        params['TCMB0']         = jnp.array(params.get('TCMB0', 2.34865418e-4))
 
         # Reionization
         if self.specs["input_tau_reion"]:
-            params['tau_reion'] = params.get('tau_reion', jnp.array(0.0544))
+            params['tau_reion'] = jnp.array(params.get('tau_reion', 0.0544))
         else:
-            params['z_reion'] = params.get('z_reion', jnp.array(7.67))
-        params['Delta_z_reion'] = params.get('Delta_z_reion', jnp.array(0.5))
-        params['z_reion_He']    = params.get('z_reion_He', jnp.array(3.5))
-        params['Delta_z_reion_He'] = params.get('Delta_z_reion_He', jnp.array(0.5))
-        params['exp_reion']     = params.get('exp_reion',jnp.array(1.5))
+            params['z_reion'] = jnp.array(params.get('z_reion', 7.67))
+        params['Delta_z_reion'] = jnp.array(params.get('Delta_z_reion', 0.5))
+        params['z_reion_He']    = jnp.array(params.get('z_reion_He', 3.5))
+        params['Delta_z_reion_He'] = jnp.array(params.get('Delta_z_reion_He', 0.5))
+        params['exp_reion']     = jnp.array(params.get('exp_reion',1.5))
 
         # Here we fill in a fake omega_Lambda just so that the DE energy density can be computed in a loop.
         # This fake quantity will not be used in anything, and later the correct omega_Lambda will be computed.
@@ -313,9 +313,9 @@ class Model(eqx.Module):
         params['omega_Lambda'] = 0.
 
         # Massive neutrinos
-        params['T_nu_massive']  = params.get('T_nu_massive', jnp.array(0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
-        params['N_nu_massive']  = params.get('N_nu_massive', jnp.array(0))  # Literal number of massive neutrinos
-        params['m_nu_massive']  = params.get('m_nu_massive', jnp.array(0.06)) # Massive neutrino mass, in eV
+        params['T_nu_massive']  = jnp.array(params.get('T_nu_massive', 0.71611)) # Massive neutrino temperature, as a ratio to TCMB.
+        params['N_nu_massive']  = jnp.array(params.get('N_nu_massive', 0))  # Number of massive neutrinos
+        params['m_nu_massive']  = jnp.array(params.get('m_nu_massive', 0.06)) # Massive neutrino mass, in eV
 
         ### CHECKING INPUT COMPATIBILITY ###
 
@@ -343,7 +343,7 @@ class Model(eqx.Module):
 
         ### END OF INPUT COMPATIBILITY ###
         # now that we have verified the user put in the right parameters we can set T_nu_massless
-        params['T_nu_massless'] = params.get('T_nu_massless', jnp.array(0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
+        params['T_nu_massless'] = jnp.array(params.get('T_nu_massless', 0.71636856)) # Massless neutrino temperature, as a ratio to TCMB
 
         ### HELIUM FRACTION AND Neff ###
         # Regardless of bbn_type, these two parameters will be set by the end.
@@ -417,10 +417,10 @@ class Model(eqx.Module):
             # For this branch to happen, Neff must NOT have already been set. 
             # Logic above has already accounted for this, since input_T and input_Neff must both be False
             # for LINX to execute.
-            params['Delta_Neff_init'] = params.get('Delta_Neff_init', 0.)
+            params['Delta_Neff_init'] = jnp.array(params.get('Delta_Neff_init', 0.))
             (
                 t_vec_ref, a_vec_ref, rho_g_vec, rho_nu_vec, rho_NP_vec, P_NP_vec, Neff_vec 
-            ) = eqx.filter_jit(self.thermo_model_DNeff,backend='cpu')(jnp.asarray(params['Delta_Neff_init']))
+            ) = eqx.filter_jit(self.thermo_model_DNeff,backend='cpu')(params['Delta_Neff_init'])
 
             # convert user input omega_b to eta_fac LINX expects
             eta_fac = params['omega_b'] * linxconst.Omegabh2_to_eta0/linxconst.eta0
@@ -460,7 +460,7 @@ class Model(eqx.Module):
             input_Neff = True
         else:
             # Applies if user wanted neither LINX or BBN table. 
-            params['YHe'] = params.get('YHe', jnp.array(0.245))
+            params['YHe'] = jnp.array(params.get('YHe', 0.245))
 
 
         # Case 2: User specifies the total Neff of the universe, including neutrinos and all other relativistic species at early times.
