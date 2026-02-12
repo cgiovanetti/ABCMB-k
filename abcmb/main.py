@@ -81,8 +81,8 @@ class Model(eqx.Module):
     # In the init, all species that are present within the model should be set to True.
     # All couplings present between species should be set to true. 
     def __init__(self,
-                 input_specs = {},
-                 user_species=None
+                 user_species=None,
+                 **kwargs
                  ):
         """
         Initialize Model instance.
@@ -92,14 +92,15 @@ class Model(eqx.Module):
 
         Parameters:
         -----------
-        input_specs : dict
-            A dictionary containing run options (expected to be static)
         user_species : tuple
             A tuple of user-defined fluids to be included in the cosmology
+        **kwargs : dict
+            Configuration options passed as keyword arguments.
+            Any unknown keys will be preserved for custom species extensibility.
         """
 
         # Fill in all user defined and missing specs parameters
-        specs = model_specs.load_specs(input_specs)
+        specs = model_specs.load_specs(kwargs)
         self.specs = specs
 
         # Populate all species
