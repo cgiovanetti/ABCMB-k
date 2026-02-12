@@ -39,3 +39,9 @@ Finally, you may be seeing recompilation because you've encountered a bug!  Afte
 Can I add new methods to my custom fluids beyond what ABCMB expects?
 --------------------------------------------------------------------
 Yes!  ``abcmb.species.Baryon`` is a good example of a fluid that has extra methods. 
+
+Help!  My new fluid is breaking the differential equation solver!
+-----------------------------------------------------------------
+There are a couple of initialization parameters that you can adjust if you find your new cosmology is giving the solver a hard time.  If you're seeing diffrax reached its ``max_steps``, you can increase this parameter with the ``max_steps_PE`` initialization parameter to your ``Model``.  It defulats to 2048, but reasonable extensions to LCDM can require 4096 or sometimes even more.
+
+If increasing ``max_steps_PE`` doesn't help, you can also try adjusting the relative and absolute tolerances of the solver.  These are ``rtol_small_k_PE``, ``rtol_large_k_PE`` (relative tolerances at small and large k, respectively), and ``atol_small_k_PE`` and ``atol_large_k_PE`` (absolute tolerances at small and large k).  Their defults are 1e-5, 1e-4, 1e-10, and 1e-6, respectively; making these 1-2 orders of magnitude smaller or larger may help, though note your accuracy will be reduced if the tolerance is too large.
