@@ -83,6 +83,11 @@ def load_specs(input_specs):
     specs["scale_dop"] = input_specs.get("scale_dop", 1)
     specs["scale_pol"] = input_specs.get("scale_pol", 1)
 
+    # Preserve any unknown keys for custom species extensibility
+    for key, value in input_specs.items():
+        if key not in specs:
+            specs[key] = value
+
     return specs
 
 def populate_species(user_species, specs):
