@@ -6,8 +6,8 @@ import os
 import jax
 print(jax.devices())
 jax.config.update("jax_enable_x64", True)
-from ABCMB.main import Model
-import ABCMB.spectrum as spectrum
+from abcmb.main import Model
+import abcmb.spectrum as spectrum
 from scipy.interpolate import interp1d
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +23,7 @@ specs = {
     "lensing" : True
 }
 
-model = Model(specs)
+model = Model(**specs)
 
 for i in range(2):
     start=time.time()
@@ -45,7 +45,7 @@ for i in range(2):
     # }
     params = {}
     
-    ell, ABC_Cl = model.run_cosmology(params)
+    out, aux = model.run_cosmology(params)
 
-    print(ABC_Cl[0])
+    print(out[0])
     print(time.time()-start)
