@@ -7,18 +7,18 @@ Submodules
 .. toctree::
    :maxdepth: 4
 
-   ABCMB.ABCMBTools
-   ABCMB.background
-   ABCMB.constants
-   ABCMB.main
-   ABCMB.perturbations
-   ABCMB.setup
-   ABCMB.species
-   ABCMB.spectrum
+   abcmb.ABCMBTools
+   abcmb.background
+   abcmb.constants
+   abcmb.main
+   abcmb.perturbations
+   abcmb.setup
+   abcmb.species
+   abcmb.spectrum
 
 Module contents
 ---------------
 
-.. automodule:: ABCMB
+.. automodule:: abcmb
    :members:
    :show-inheritance:

@@ -1,6 +1,6 @@
-ABCMB.ABCMBTools module
+abcmb.ABCMBTools module
 =======================
 
-.. automodule:: ABCMB.ABCMBTools
+.. automodule:: abcmb.ABCMBTools
    :members:
    :show-inheritance:

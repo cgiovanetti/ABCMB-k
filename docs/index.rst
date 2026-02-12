@@ -23,7 +23,7 @@ The high-level organization of ABCMB is as follows:
    :align: center
    :width: 700px
 
-In most cases, the user will only need to initialize **ABCMB.main.Model** and call **Model.run_cosmology** explicitly; the other modules will be called by this top-level function.
+In most cases, the user will only need to initialize **abcmb.main.Model** and call **Model.run_cosmology** explicitly; the other modules will be called by this top-level function.
 
 Examples
 --------

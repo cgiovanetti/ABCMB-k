@@ -1,6 +1,6 @@
-ABCMB.main module
+abcmb.main module
 =================
 
-.. automodule:: ABCMB.main
+.. automodule:: abcmb.main
    :members:
    :show-inheritance:

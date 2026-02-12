@@ -1,7 +1,7 @@
-ABCMB.constants module
+abcmb.constants module
 ======================
 
-.. automodule:: ABCMB.constants
+.. automodule:: abcmb.constants
    :members:
    :show-inheritance:
    :undoc-members:

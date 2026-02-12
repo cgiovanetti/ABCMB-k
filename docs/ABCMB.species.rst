@@ -1,6 +1,6 @@
-ABCMB.species module
+abcmb.species module
 ============================
 
-.. automodule:: ABCMB.species
+.. automodule:: abcmb.species
    :members:
    :show-inheritance:

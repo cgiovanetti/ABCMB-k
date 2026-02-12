@@ -1,6 +1,6 @@
-ABCMB.setup module
+abcmb.setup module
 ==================
 
-.. automodule:: ABCMB.setup
+.. automodule:: abcmb.setup
    :members:
    :show-inheritance:

@@ -1,6 +1,6 @@
-ABCMB.perturbations module
+abcmb.perturbations module
 ==========================
 
-.. automodule:: ABCMB.perturbations
+.. automodule:: abcmb.perturbations
    :members:
    :show-inheritance:

@@ -1,6 +1,6 @@
-ABCMB.background module
+abcmb.background module
 =======================
 
-.. automodule:: ABCMB.background
+.. automodule:: abcmb.background
    :members:
    :show-inheritance:
