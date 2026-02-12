@@ -1,6 +1,6 @@
-ABCMB.spectrum module
+abcmb.spectrum module
 =====================
 
-.. automodule:: ABCMB.spectrum
+.. automodule:: abcmb.spectrum
    :members:
    :show-inheritance:
