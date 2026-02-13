@@ -27,9 +27,9 @@ def wigner_d_matrix(mu, ells, m, n):
     ells : array
         Multipole values [m, m+1, m+2, ..., ellmax]
     m : int
-        First index (must be positive and >= |n|)
+        First index (must be positive and >= abs(n))
     n : int
-        Second index (must satisfy |n| <= m)
+        Second index (must satisfy abs(n) <= m)
 
     Returns:
     --------
@@ -102,14 +102,14 @@ def d1n(mu, ells, n):
     ells : array
         Multipole values
     n : int
-        Second index (|n| <= 1)
+        Second index (abs(n) <= 1)
 
     Returns:
     --------
     array
         d^ell_{1n} elements
     """
-    # Wigner matrices where m=1, and |n|<=m.
+    # Wigner matrices where m=1, and abs(n)<=m.
     ells_patched = jnp.concatenate((jnp.array([1]), ells))
     res = wigner_d_matrix(mu, ells_patched, 1, n)
     return res[:, 1:]
@@ -125,14 +125,14 @@ def d2n(mu, ells, n):
     ells : array
         Multipole values
     n : int
-        Second index (|n| <= 2)
+        Second index (abs(n) <= 2)
 
     Returns:
     --------
     array
         d^ell_{2n} elements
     """
-    # Wigner matrices where m=2, and |n|<=m.
+    # Wigner matrices where m=2, and abs(n)<=m.
     res = wigner_d_matrix(mu, ells, 2, n)
     return res
 
@@ -147,14 +147,14 @@ def d3n(mu, ells, n):
     ells : array
         Multipole values
     n : int
-        Second index (|n| <= 3)
+        Second index (abs(n) <= 3)
 
     Returns:
     --------
     array
         d^ell_{3n} elements, zero-padded for ell < 3
     """
-    # Wigner matrices where m=3, and |n|<=m.
+    # Wigner matrices where m=3, and abs(n)<=m.
     ells_sliced = ells[1:] # Compute starting at ell=3
     res = wigner_d_matrix(mu, ells_sliced, 3, n)
     res_patched = jnp.concatenate((jnp.zeros((mu.size, 1)), res), axis=1) # Pad zeros for ell<3.
@@ -171,14 +171,14 @@ def d4n(mu, ells, n):
     ells : array
         Multipole values
     n : int
-        Second index (|n| <= 4)
+        Second index (abs(n) <= 4)
 
     Returns:
     --------
     array
         d^ell_{4n} elements, zero-padded for ell < 4
     """
-    # Wigner matrices where m=4, and |n|<=m.
+    # Wigner matrices where m=4, and abs(n)<=m.
     ells_sliced = ells[2:] # Compute starting at ell=4
     res = wigner_d_matrix(mu, ells_sliced, 4, n)
     res_patched = jnp.concatenate((jnp.zeros((mu.size, 2)), res), axis=1) # Pad zeros for ell<4.

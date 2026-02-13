@@ -59,7 +59,7 @@ class Model(eqx.Module):
 
     Methods:
     --------
-    run_cosmology : Compute CMB angular power spectra
+    __call__ : Compute CMB angular power spectra
     get_PTBG : Get perturbation table and background cosmology
     get_BG : Get background cosmology
     add_derived_parameters : Compute derived parameters
@@ -148,7 +148,7 @@ class Model(eqx.Module):
 
     # need this outside of the jit context
     # since we want LINX to run on CPU
-    def run_cosmology(self, params : dict = {}):
+    def __call__(self, params : dict = {}):
         """
         Compute CMB angular power spectra for given parameters.
 
@@ -504,6 +504,22 @@ class Model(eqx.Module):
 
         # Having inferred correct omega_m and omega_r, compute correct omega_Lambda
         params['omega_Lambda'] = params['h']**2 - params['omega_r'] - params['omega_m']
+
+        # There is NO NEED to modify this list!!  This is to make sure any new
+        # user-defined keys will not trigger recompilation by wrapping them in
+        # jnp.array, as is done manually above for all other keys.
+        expected_keys = {
+            'h', 'H0', 'omega_cdm', 'omega_b', 'A_s', 'n_s', 'TCMB0',
+            'tau_reion', 'z_reion', 'Delta_z_reion', 'z_reion_He', 'Delta_z_reion_He', 'exp_reion',
+            'omega_Lambda', 'T_nu_massive', 'N_nu_massive', 'm_nu_massive',
+            'N_nu_massless', 'Neff', 'T_nu_massless',
+            'Delta_Neff_init', 'tau_n_fac', 'nuclear_rates_q', 'YHe',
+            'omega_m', 'R_b', 'omega_r', 'R_nu', 'om'
+        }
+        
+        for key, value in param_in.items():
+            if key not in expected_keys:
+                params[key] = jnp.array(value)
 
         return params
 

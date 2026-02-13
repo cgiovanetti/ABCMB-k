@@ -874,10 +874,13 @@ class ReionizationModel(eqx.Module):
     """
     Object for computing the reionization correction to the free electron fraction.
     Provides the base methods 
-        xe_reion : calculates the tanh electron fraction correction at redshifts lna, given z_reion and params
-        tau_reion_fn : calculates the optical depth to reionization.
+
+    xe_reion : calculates the tanh electron fraction correction at redshifts lna, given z_reion and params
+    tau_reion_fn : calculates the optical depth to reionization.
+    
     At the moment we only support the CAMB tanh parameterization, but we need different approaches
     based on whether the use inputs the optical depth tau_reion or the reionization redshift z_reion.
+
     """
 
     z_reion : jnp.float64
