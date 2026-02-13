@@ -110,7 +110,7 @@ def test_accuracy_checker(h = 0.6762):
 
         # ABCMB
 
-        data, label = model.run_cosmology(params)
+        data, label = model(params)
         ells = label[0]
 
         ABC_tt = data[0] 
