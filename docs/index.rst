@@ -35,10 +35,11 @@ Three pedagogical example notebooks demonstrating how to use ABCMB are available
 
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Contents:
 
    modules
+   FAQ
 
    
 
