@@ -18,22 +18,14 @@ def load_specs(input_specs):
     specs["input_tau_reion"] = input_specs.get("input_tau_reion", True) 
 
     ### OUTPUT RELATED specs PARAMS ###
-    specs["output_Cl"] = input_specs.get("output_Cl", True)
     specs["l_min"]     = input_specs.get("l_min", 2)
     specs["l_max"]     = input_specs.get("l_max", 2500)
     specs["lensing"]   = input_specs.get("lensing", False)
-
-    specs["output_Pk"]    = input_specs.get("output_Pk", True)
-    specs["output_k_max"] = input_specs.get("output_k_max", 0.5)
-
-    specs["output_background"]    = input_specs.get("output_background", False)
-    specs["output_perturbations"] = input_specs.get("output_perturbations", False)
+    specs["k_max"] = input_specs.get("k_max", 0.5)
 
     ### BBN ###
     specs["bbn_type"] = input_specs.get("bbn_type", "")
     specs["linx_reaction_net"] = input_specs.get("linx_reaction_net", "key_PRIMAT_2023")
-
-    ### TODO: HYREX RELATED specs PARAMS ###
 
     ### Boltzmann Hierarchy Cutoffs ###
     specs["l_max_g"]     = input_specs.get("l_max_g", 12)
@@ -51,7 +43,6 @@ def load_specs(input_specs):
     specs["H0_fid"]                 = input_specs.get("H0_fid", 2.255560e-04)
     specs["tau0_fid"]               = input_specs.get("tau0_fid",1.418668e+04)
     specs["rs_rec_fid"]             = input_specs.get("rs_rec_fid", 1.446279e+02)
-
 
     ### Transfer integration k-grid resolution ###
     specs["k_transfer_linstep"] = input_specs.get("k_transfer_linstep", 4.5e-1)
@@ -167,9 +158,9 @@ def get_k_axis_perturbations(specs):
             i += 1
             ks[i] = k
 
-    # If the user wants P(k) and specified a k_max above the current, we should add these as well.
-    if specs["output_Pk"] and k < specs["output_k_max"]:
-        k_max = specs["output_k_max"]
+    # If the user specified a k_max above the current, we should add these as well.
+    if k < specs["k_max"]:
+        k_max = specs["k_max"]
         
         while k < k_max:
             step = 0.005
@@ -179,7 +170,7 @@ def get_k_axis_perturbations(specs):
             ks[i] = k
 
     ks = ks[np.where(ks>0)]
-    k_axis_Pk_output = ks[np.where(ks<=specs["output_k_max"])]
+    k_axis_Pk_output = ks[np.where(ks<=specs["k_max"])]
 
     return jnp.array(ks), jnp.array(k_axis_Pk_output)
 
