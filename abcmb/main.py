@@ -59,7 +59,7 @@ class Model(eqx.Module):
 
     Methods:
     --------
-    run_cosmology : Compute CMB angular power spectra
+    __call__ : Compute CMB angular power spectra
     get_PTBG : Get perturbation table and background cosmology
     get_BG : Get background cosmology
     add_derived_parameters : Compute derived parameters
@@ -148,7 +148,7 @@ class Model(eqx.Module):
 
     # need this outside of the jit context
     # since we want LINX to run on CPU
-    def run_cosmology(self, params : dict = {}):
+    def __call__(self, params : dict = {}):
         """
         Compute CMB angular power spectra for given parameters.
 
