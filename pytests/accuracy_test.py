@@ -110,12 +110,12 @@ def test_accuracy_checker(h = 0.6762):
 
         # ABCMB
 
-        data, label = model.run_cosmology(params)
-        ells = label[0]
+        output = model(params)
+        ells = output.l
 
-        ABC_tt = data[0] 
-        ABC_te = data[1] 
-        ABC_ee = data[2] 
+        ABC_tt = output.ClTT
+        ABC_te = output.ClTE
+        ABC_ee = output.ClEE
 
         # Compare Cltt
         err_tt = abs(cltt-ABC_tt)/cltt
@@ -126,8 +126,8 @@ def test_accuracy_checker(h = 0.6762):
         print(err_ee.max())
 
         # Compare P(k)
-        ABC_Pk = data[3]
-        ABC_k = label[1]
+        ABC_Pk = output.Pk
+        ABC_k = output.k
         CLA_Pk = np.vectorize(CLASS_Model.pk)(ABC_k, 0.)
         err_Pk = abs(CLA_Pk-ABC_Pk)/CLA_Pk
         print(err_Pk.max())

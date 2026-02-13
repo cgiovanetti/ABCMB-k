@@ -1,4 +1,4 @@
-from jax import jit, config, lax
+from jax import jit, config, lax, tree_util
 import jax.numpy as jnp
 from jaxtyping import Array
 import numpy as np
@@ -59,7 +59,7 @@ class Model(eqx.Module):
 
     Methods:
     --------
-    run_cosmology : Compute CMB angular power spectra
+    __call__ : Compute CMB angular power spectra
     get_PTBG : Get perturbation table and background cosmology
     get_BG : Get background cosmology
     add_derived_parameters : Compute derived parameters
@@ -148,7 +148,7 @@ class Model(eqx.Module):
 
     # need this outside of the jit context
     # since we want LINX to run on CPU
-    def run_cosmology(self, params : dict = {}):
+    def __call__(self, params : dict = {}):
         """
         Compute CMB angular power spectra for given parameters.
 
@@ -168,8 +168,7 @@ class Model(eqx.Module):
 
         
         full_params = self.add_derived_parameters(params)
-        output, aux = self.run_cosmology_abbr(full_params)
-        return output, aux
+        return self.run_cosmology_abbr(full_params)
         
     ### JITTED OR JITTABLE FUNCTIONS ###
 
@@ -205,30 +204,24 @@ class Model(eqx.Module):
         print('\\_____/      ')
         print("")
 
+        # Compute background and linear perturbations
         PT, BG = self.get_PTBG(params)
-        output = ()
-        aux = ()
 
-        if self.specs["output_Cl"]:
-            Cls = self.SS.get_Cl(PT, BG, params)
-            ells = self.SS.ells
-            output += Cls
-            aux += (ells,)
+        # Compute CMB power spectra
+        Cls = self.SS.get_Cl(PT, BG, params)
+        l = self.SS.ells
         
-        if self.specs["output_Pk"]:
-            Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
-            output += (Pk,)
-            aux += (self.SS.k_axis_Pk_output,)
+        # Compute linear matter power spectrum
+        Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
+        k = self.SS.k_axis_Pk_output
 
-        aux += (params,)
+        # Package
+        output = Output(
+            Cls[0], Cls[1], Cls[2], Pk,
+            l, k, BG, PT, params
+        )
 
-        if self.specs["output_perturbations"]:
-            aux += (PT,)
-
-        if self.specs["output_background"]:
-            aux += (BG,)
-
-        return output, aux
+        return output
 
     @eqx.filter_jit
     def get_PTBG(self, params : dict):
@@ -529,3 +522,23 @@ class Model(eqx.Module):
                 params[key] = jnp.array(value)
 
         return params
+
+class Output(eqx.Module):
+    """
+    Object containing final and intermediate results from one cosmological simulation.
+    Contains the power spectra (CMB & P(k)) as well as auxillary fields including
+    the multipoles l for the Cls, wavenumbers k for P(k), background BG, perturbations PT, and 
+    a full list of parameters (input + derived) in the params dictionary.
+    """
+
+    # Power spectra
+    ClTT : jnp.array
+    ClTE : jnp.array
+    ClEE : jnp.array
+    Pk   : jnp.array
+
+    l  : jnp.array
+    k  : jnp.array
+    BG : background.Background
+    PT : perturbations.PerturbationTable
+    params : dict
