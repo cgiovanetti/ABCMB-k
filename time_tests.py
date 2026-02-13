@@ -45,7 +45,7 @@ for i in range(2):
     # }
     params = {}
     
-    out, aux = model.run_cosmology(params)
+    out, aux = model(params)
 
     print(out[0])
     print(time.time()-start)

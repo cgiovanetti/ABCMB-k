@@ -7,9 +7,9 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'ABCMB'
-copyright = '2025, Zilu Zhou, Cara Giovanetti, and Hongwan Liu'
+copyright = '2026, Zilu Zhou, Cara Giovanetti, and Hongwan Liu'
 author = 'Zilu Zhou, Cara Giovanetti, and Hongwan Liu'
-release = '0.0'
+release = '0.1.2'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
