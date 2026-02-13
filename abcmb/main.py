@@ -510,9 +510,9 @@ class Model(eqx.Module):
 class Output(eqx.Module):
     """
     Object containing final and intermediate results from one cosmological simulation.
-    Contains the power spectra (CMB & P(k)) whose derivatives can be taken.
-    Also contains auxillary data such as l, k, background, perturbations and full params which are static
-    and cannot be taken gradient on.
+    Contains the power spectra (CMB & P(k)) as well as auxillary fields including
+    the multipoles l for the Cls, wavenumbers k for P(k), background BG, perturbations PT, and 
+    a full list of parameters (input + derived) in the params dictionary.
     """
 
     # Power spectra
@@ -526,56 +526,3 @@ class Output(eqx.Module):
     BG : background.Background
     PT : perturbations.PerturbationTable
     params : dict
-
-@tree_util.register_pytree_node_class
-class Output_tree:
-    """
-    Object containing final and intermediate results from one cosmological simulation.
-    Contains the power spectra (CMB & P(k)) whose derivatives can be taken.
-    Also contains auxillary data such as l, k, background, perturbations and full params which are static
-    and cannot be taken gradient on.
-    """
-
-    # Power spectra
-    ClTT : jnp.array
-    ClTE : jnp.array
-    ClEE : jnp.array
-    Pk   : jnp.array
-
-    # Auxillary data
-    # l  : jnp.array = eqx.field(static=True) # Force static to avoid pytree registration.
-    # k  : jnp.array = eqx.field(static=True) 
-    # BG : background.Background = eqx.field(static=True) 
-    # PT : perturbations.PerturbationTable = eqx.field(static=True)
-    # params : dict = eqx.field(static=True)
-
-    l  : jnp.array
-    k  : jnp.array
-    BG : background.Background
-    PT : perturbations.PerturbationTable
-    params : dict
-
-    def __init__(self, *, ClTT, ClTE, ClEE, Pk, l, k, BG, PT, params):
-        self.ClTT = ClTT
-        self.ClTE = ClTE
-        self.ClEE = ClEE
-        self.Pk = Pk
-        self.l = l
-        self.k = k
-        self.BG = BG
-        self.PT = PT
-        self.params = params
-
-    # PyTree interface:
-    # children = things JAX traces/differentiates
-    # aux_data = static stuff carried along (not traced/differentiated)
-    def tree_flatten(self):
-        children = (self.ClTT, self.ClTE, self.ClEE, self.Pk)              # <-- ONLY these get grads
-        aux_data = (self.l, self.k, self.BG, self.PT, self.params)  # <-- static metadata
-        return children, aux_data
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        ClTT, ClTE, ClEE, Pk = children
-        l, k, BG, PT, params = aux_data
-        return cls(ClTT=ClTT, ClTE=ClTE, ClEE=ClEE, Pk=Pk, l=l, k=k, BG=BG, PT=PT, params=params)
