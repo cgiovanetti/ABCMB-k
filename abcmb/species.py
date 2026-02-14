@@ -19,7 +19,7 @@ class Fluid(eqx.Module):
     delta_idx : int
         Default = 0
         Position of the first perturbation equation in the Diffrax vector. For most fluids this is the density perturbation mode "delta".
-    num_ell_modes : int 
+    num_moments : int 
         Default = 0
         Number of equations that need to be simultaneously evolved in the perturbations module. 
     name : str
@@ -42,7 +42,7 @@ class Fluid(eqx.Module):
     """
 
     delta_idx     : int = eqx.field(default=0)
-    num_ell_modes : int = eqx.field(default=0, static=True)
+    num_moments : int = eqx.field(default=0, static=True)
     name          : str = eqx.field(default="")
     is_matter     : bool = eqx.field(default=False) # Does the fluid contribute towards matter overdensity today.
 
@@ -281,7 +281,7 @@ class StandardFluid(Fluid):
         """
         params = args
         return jnp.where(
-            self.num_ell_modes > 1,
+            self.num_moments > 1,
             (self.rho(lna, params)+self.P(lna, params)) * y[self.delta_idx+1],
             0.
         )
@@ -306,14 +306,14 @@ class StandardFluid(Fluid):
         """
         params = args
         return jnp.where(
-            self.num_ell_modes > 2,
+            self.num_moments > 2,
             (self.rho(lna, params)+self.P(lna, params)) * y[self.delta_idx+2],
             0.
         )
 
 class BackgroundFluid(Fluid):
     
-    num_ell_modes = 0
+    num_moments = 0
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
@@ -420,7 +420,7 @@ class ColdDarkMatter(StandardFluid):
     """
 
     name = "ColdDarkMatter"
-    num_ell_modes = 1  # CDM only receives density perturbation in synchronous gauge.
+    num_moments = 1  # CDM only receives density perturbation in synchronous gauge.
     is_matter = True
 
     def __init__(self, delta_idx, specs):
@@ -535,7 +535,7 @@ class MasslessNeutrino(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
-        self.num_ell_modes = specs["l_max_massless_nu"] + 1
+        self.num_moments = specs["l_max_massless_nu"] + 1
 
     def rho(self, lna, args):
         """
@@ -607,7 +607,7 @@ class MasslessNeutrino(StandardFluid):
         
         # Return the four non-zero ell modes, and all higher ell-modes are zero to start.
         # For the neutrinos we track Fnu_2 = 2*sigma, for better structure within the hierarchy.
-        return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_ell_modes-3)))
+        return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_moments-3)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -637,7 +637,7 @@ class MasslessNeutrino(StandardFluid):
         aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
 
-        L = jnp.arange(self.num_ell_modes) + self.delta_idx
+        L = jnp.arange(self.num_moments) + self.delta_idx
         F = y[L]
         delta = F[0]
         theta = F[1]
@@ -650,7 +650,7 @@ class MasslessNeutrino(StandardFluid):
         F3_prime = 1./7. * k/aH * (6.*sigma - 4.*F[4])
 
         # Rest of the Boltzmann Hierarchy
-        lmax = self.num_ell_modes-1
+        lmax = self.num_moments-1
         L = jnp.arange(4, lmax)
         Fl_prime    = 1./(2.*L+1.)*k/aH * (L*F[L-1]-(L+1)*F[L+1])
         Flmax_prime = k/aH*F[lmax-1] - (lmax+1)/aH/tau*F[lmax]
@@ -700,7 +700,7 @@ class MassiveNeutrino(Fluid):
 
         super().__init__(delta_idx, specs)
         self.num_ells_per_bin = specs["l_max_massive_nu"] + 1
-        self.num_ell_modes = 3 * self.num_ells_per_bin
+        self.num_moments = 3 * self.num_ells_per_bin
 
     def rho(self, lna, args):
         """
@@ -794,7 +794,7 @@ class MassiveNeutrino(Fluid):
             Initial perturbation mode values (units: 1/Mpc for kPsi1, else dimensionless)
         """
         params = args
-        res = jnp.zeros(self.num_ell_modes)
+        res = jnp.zeros(self.num_moments)
 
         # Initial conditions for massless neutrinos first, needed here.
         R_nu = params['R_nu']
@@ -842,7 +842,7 @@ class MassiveNeutrino(Fluid):
             Time derivatives of perturbation modes (units: 1/Mpc for kPsi1, else dimensionless)
         """
         BG, params, _, _ = args
-        res = jnp.zeros(self.num_ell_modes)
+        res = jnp.zeros(self.num_moments)
 
         a = jnp.exp(lna)
         T = params['T_nu_massive'] * params['TCMB0'] / a
@@ -998,7 +998,7 @@ class Baryon(StandardFluid):
     """
     
     name = "Baryon"
-    num_ell_modes = 2
+    num_moments = 2
     is_matter = True
 
     def __init__(self, delta_idx, specs):
@@ -1201,7 +1201,7 @@ class Photon(StandardFluid):
         super().__init__(delta_idx, specs)
         self.num_F_ell_modes = specs["l_max_g"] + 1
         self.num_G_ell_modes = specs["l_max_pol_g"] + 1
-        self.num_ell_modes = self.num_F_ell_modes + self.num_G_ell_modes
+        self.num_moments = self.num_F_ell_modes + self.num_G_ell_modes
 
     def rho(self, lna, args):
         """
@@ -1263,7 +1263,7 @@ class Photon(StandardFluid):
         params = args
         delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
         theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*params["om"]*tau_ini)
-        return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_ell_modes - 2)))
+        return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_moments - 2)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
