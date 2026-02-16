@@ -53,8 +53,8 @@ def load_specs(input_specs):
     specs["k_pivot"]            = input_specs.get("k_pivot", 0.05)
 
     ### Set perturbations initial condition time ###
-    specs["start_small_k"] = input_specs.get("start_small_k", 0.0015)
-    specs["start_large_k"] = input_specs.get("start_large_k", 0.07)
+    specs["R_tc"] = input_specs.get("R_tc", 0.0015)
+    specs["R_large"] = input_specs.get("R_large", 0.07)
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)

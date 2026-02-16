@@ -141,12 +141,12 @@ class PerturbationEvolver(eqx.Module):
         # a) τc/τh  →  f1(lna) = BG.tau_c * BG.aH
         f1 = BG.tau_c(lna_start_range, params) * BG.aH(lna_start_range, params)
         # invert f1(lna) = thr1  →  lna = interp(thr1, f1, lna_range)
-        lna1 = jnp.interp(self.specs["start_small_k"], f1, lna_start_range)    # jnp.interp ends up being 
+        lna1 = jnp.interp(self.specs["R_tc"], f1, lna_start_range)    # jnp.interp ends up being 
                                                         # faster than fast_interp through here
         # b) τh/τk  →  f2(lna) = k / BG.aH
         f2 = k / BG.aH(lna_start_range, params)
         # invert f2(lna) = thr2
-        lna2 = jnp.interp(self.specs["start_large_k"], f2, lna_start_range)
+        lna2 = jnp.interp(self.specs["R_large"], f2, lna_start_range)
 
         lna_ini = jnp.minimum(lna1, lna2)
 
