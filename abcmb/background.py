@@ -374,7 +374,7 @@ class Background(eqx.Module):
             saveat=saveat,
             stepsize_controller=controller,
             args=params,
-            adjoint=adjoint
+            adjoint=adjoint,
         )
 
         # Numerical jitter causes this interpolation to go out of bounds on
@@ -614,14 +614,14 @@ class Background(eqx.Module):
         adjoint=ForwardMode()
         sol = diffeqsolve(
             term,
-            solver=Kvaerno5(),            # Higher order integrator for more accuracy
+            solver=Kvaerno5(),           
             stepsize_controller=stepsize_controller,
-            t0=0.,                 # Initial x value (~0 in this case)
-            t1=-10.,                  # Final x value (smallest x value)
-            dt0=-1.e-3,                  # Initial step size
+            t0=0.,                
+            t1=-10.,                  
+            dt0=-1.e-3,                 
             max_steps=2048,
-            y0=0.0,                     # Initial value tau(x=0) = 0
-            saveat=SaveAt(dense=True), # Save at all points in x, reverse order since integrating backwards
+            y0=0.0,                     
+            saveat=SaveAt(dense=True),
             adjoint=adjoint
         )
         return sol
