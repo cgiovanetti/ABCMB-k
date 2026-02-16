@@ -526,9 +526,27 @@ class Model(eqx.Module):
 class Output(eqx.Module):
     """
     Object containing final and intermediate results from one cosmological simulation.
-    Contains the power spectra (CMB & P(k)) as well as auxillary fields including
-    the multipoles l for the Cls, wavenumbers k for P(k), background BG, perturbations PT, and 
-    a full list of parameters (input + derived) in the params dictionary.
+
+    Attributes:
+    -----------
+    ClTT : jnp.array
+        Temperature-temperature power spectrum
+    ClTE : jnp.array
+        Temperature-polarization power spectrum
+    ClEE : jnp.array
+        Polarization-polarization power spectrum
+    Pk : jnp.array
+        Matter power spectrum
+    l : jnp.array
+        Multipoles l at which ClTT/ClTE/ClEE are output
+    k : jnp.array
+        Wavenumbers k at with Pk is output
+    BG  : background.Background
+        Background object containing functions like Hubble, recombination history, etc
+    PT : perturbations.PerturbationTable
+        Perturbation table including perturbations for all fluids
+    params : dict
+        Complete parameter dictionary including derived parameters
     """
 
     # Power spectra
