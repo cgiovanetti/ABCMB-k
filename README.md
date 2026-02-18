@@ -4,6 +4,7 @@ ABCMB<!-- omit from toc -->
 <h4 align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](https://opensource.org/licenses/MIT)
+[![arXiv](https://img.shields.io/badge/arXiv-2602.15104%20-green.svg)](https://arxiv.org/abs/2602.15104)
 [![Run Tests](https://github.com/TonyZhou729/ABCMB/actions/workflows/accuracy.yml/badge.svg)](https://github.com/TonyZhou729/ABCMB/actions/workflows/accuracy.yml)
 <!--[![arXiv](https://img.shields.io/badge/arXiv-2408.14538%20-green.svg)](https://arxiv.org/abs/2408.14538) -->
 
@@ -31,6 +32,12 @@ We have included several pedagogical jupyter notebooks to walk you through how t
 
 ## Issues
 Please feel free to open an issue if something is amiss in ABCMB!
+
+## Citation
+
+If you use ABCMB to publish scientific research, we suggest you cite
+```
+```
 
 
 
