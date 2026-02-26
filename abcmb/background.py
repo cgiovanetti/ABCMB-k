@@ -102,8 +102,6 @@ class Background(eqx.Module):
     tau_reion  : float 
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
-    rs_d       : float # Sound horizon at baryon decoupling
-    z_d        : float # redshift of baryon decoupling
 
     # Transfer related
     lna_transfer_start : float # Time where transfer functions start integrating.
@@ -868,7 +866,7 @@ class Background(eqx.Module):
         float
             Sound horizon at decoupling (units: Mpc)
         """
-        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(), self.z_d())
+        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(), self.z_d(params))
 
 class ReionizationModel(eqx.Module):
     """
