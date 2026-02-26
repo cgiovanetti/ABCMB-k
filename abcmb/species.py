@@ -43,11 +43,13 @@ class Fluid(eqx.Module):
 
     delta_idx     : int = eqx.field(default=0)
     num_moments : int = eqx.field(default=0, static=True)
-    name          : str = eqx.field(default="")
+    name          : str = eqx.field(default="", static=True)
     is_matter     : bool = eqx.field(default=False) # Does the fluid contribute towards matter overdensity today.
 
     def __init__(self, delta_idx, specs):
         self.delta_idx = delta_idx
+        self.name = ""
+        self.is_matter = False
 
     def rho(self, lna, args):
         """
@@ -361,6 +363,7 @@ class DarkEnergy(BackgroundFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
+        self.name = "DarkEnergy"
 
     def rho(self, lna, args):
         """
@@ -425,6 +428,8 @@ class ColdDarkMatter(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
+        self.name = "ColdDarkMatter"
+        self.is_matter = True
 
     def rho(self, lna, args):
         """
@@ -535,6 +540,7 @@ class MasslessNeutrino(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
+        self.name = "MasslessNeutrino"
         self.num_moments = specs["l_max_massless_nu"] + 1
 
     def rho(self, lna, args):
@@ -699,6 +705,8 @@ class MassiveNeutrino(Fluid):
     def __init__(self, delta_idx, specs):
 
         super().__init__(delta_idx, specs)
+        self.name = "MassiveNeutrino"
+        self.is_matter = True
         self.num_ells_per_bin = specs["l_max_massive_nu"] + 1
         self.num_moments = 3 * self.num_ells_per_bin
 
@@ -1003,6 +1011,8 @@ class Baryon(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
+        self.name = "Baryon"
+        self.is_matter = True
 
     def rho(self, lna, args):
         """
@@ -1199,6 +1209,7 @@ class Photon(StandardFluid):
 
     def __init__(self, delta_idx, specs):
         super().__init__(delta_idx, specs)
+        self.name = "Photon"
         self.num_F_ell_modes = specs["l_max_g"] + 1
         self.num_G_ell_modes = specs["l_max_pol_g"] + 1
         self.num_moments = self.num_F_ell_modes + self.num_G_ell_modes
