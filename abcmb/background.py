@@ -848,7 +848,7 @@ class Background(eqx.Module):
         float
             Decoupling redshift (units: dimensionless)
         """
-        return self.find_z_at_kappad_equals_one(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_kappa_d())
+        return self.find_z_at_kappad_equals_one(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_kappa_d(params))
 
     def rs_d(self, params):
         """
@@ -866,7 +866,7 @@ class Background(eqx.Module):
         float
             Sound horizon at decoupling (units: Mpc)
         """
-        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(), self.z_d(params))
+        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(params), self.z_d(params))
 
 class ReionizationModel(eqx.Module):
     """
