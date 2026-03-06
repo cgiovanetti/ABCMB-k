@@ -102,8 +102,6 @@ class Background(eqx.Module):
     tau_reion  : float 
     lna_rec    : float
     rA_rec     : float # Comoving angular diameter distance at recombination.
-    rs_d       : float # Sound horizon at baryon decoupling
-    z_d        : float # redshift of baryon decoupling
 
     # Transfer related
     lna_transfer_start : float # Time where transfer functions start integrating.
@@ -771,7 +769,7 @@ class Background(eqx.Module):
         array
             Tabulated baryon optical depth values (units: dimensionless)
         """
-        integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna, params)/self.aH(lna, params)/(self.R_ratio_lna(lna)))
+        integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna, params)/self.aH(lna, params)/(self.R_ratio_lna(lna, params)))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=ForwardMode()
@@ -812,7 +810,7 @@ class Background(eqx.Module):
          # initial condition assuming cs**2 = 1/3 at early times
         rs0 = 1./jnp.sqrt(3) / (self.aH( self.lna_tau_tab[0], params ))
 
-        integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna))) / (self.aH(lna, params))
+        integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna, params))) / (self.aH(lna, params))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=ForwardMode()
@@ -850,7 +848,7 @@ class Background(eqx.Module):
         float
             Decoupling redshift (units: dimensionless)
         """
-        return self.find_z_at_kappad_equals_one(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_kappa_d())
+        return self.find_z_at_kappad_equals_one(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_kappa_d(params))
 
     def rs_d(self, params):
         """
@@ -868,7 +866,7 @@ class Background(eqx.Module):
         float
             Sound horizon at decoupling (units: Mpc)
         """
-        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(), self.z_d())
+        return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(params), self.z_d(params))
 
 class ReionizationModel(eqx.Module):
     """
