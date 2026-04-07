@@ -507,13 +507,13 @@ class Model(eqx.Module):
 
         # There is NO NEED to modify this list!!  This is to make sure any new
         # user-defined keys will not trigger recompilation by wrapping them in
-        # jnp.array, as is done manually above for all other keys.
+        # jnp.array, as is done manually above for all other keys.  LINX-
+        # related inputs are intentionally excluded from this list!
         expected_keys = {
             'h', 'H0', 'omega_cdm', 'omega_b', 'A_s', 'n_s', 'TCMB0',
             'tau_reion', 'z_reion', 'Delta_z_reion', 'z_reion_He', 'Delta_z_reion_He', 'exp_reion',
             'omega_Lambda', 'T_nu_massive', 'N_nu_massive', 'm_nu_massive',
-            'N_nu_massless', 'Neff', 'T_nu_massless',
-            'Delta_Neff_init', 'tau_n_fac', 'nuclear_rates_q', 'YHe',
+            'N_nu_massless', 'Neff', 'T_nu_massless', 'YHe',
             'omega_m', 'R_b', 'omega_r', 'R_nu', 'om'
         }
         
