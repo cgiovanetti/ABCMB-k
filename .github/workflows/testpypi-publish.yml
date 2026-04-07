@@ -25,7 +25,6 @@ jobs:
         with:
           name: release-dists
           path: dist/
-          repository-url: https://test.pypi.org/legacy/
 
   pypi-publish:
     runs-on: ubuntu-latest
@@ -46,3 +45,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          repository-url: https://test.pypi.org/legacy/
