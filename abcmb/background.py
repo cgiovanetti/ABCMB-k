@@ -747,8 +747,16 @@ class Background(eqx.Module):
         float
             Baryon drag ratio (units: dimensionless)
         """
-        rho_b = self.species_list[-3].rho(lna,params)
-        rho_g = self.species_list[-2].rho(lna,params)
+
+        rho_b = 0.
+        rho_g = 0.
+
+        for s in self.species_list:
+            if s.name == "Photon":
+                rho_g += s.rho(lna, params)
+            elif "baryon" in s.name.lower():
+                rho_b += s.rho(lna, params)
+
         return 3. * rho_b / (4 * rho_g)
 
     @jax.named_scope("tabulate kappa d")
