@@ -754,7 +754,7 @@ class Background(eqx.Module):
         for s in self.species_list:
             if s.name == "Photon":
                 rho_g += s.rho(lna, params)
-            elif "baryon" in s.name.lower():
+            elif s.name == "Baryon":
                 rho_b += s.rho(lna, params)
 
         return 3. * rho_b / (4 * rho_g)
