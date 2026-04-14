@@ -1,9 +1,7 @@
 name: Upload Python Package
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:  # lets you trigger manually from the Actions tab
+  workflow_dispatch:  # manual only (for now)
 
 permissions:
   contents: read
