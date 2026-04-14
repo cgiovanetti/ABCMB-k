@@ -299,7 +299,7 @@ def fast_interp(x, xp_min, xp_max, fp):
     # to make this operation much faster.
     eps = 1.e-6
     n = fp.shape[-1]
-    i = (x - xp_min) / (xp_max - xp_min) * n
+    i = (x - xp_min) / (xp_max - xp_min) * (n - 1) # fix bug in JAX issue
     i = jnp.clip(i, eps, n - 1.0 - eps)  # Avoid index out of range
     i_lower = jnp.floor(i).astype(jnp.int32)
     i_upper = jnp.minimum(i_lower + 1, n - 1)
