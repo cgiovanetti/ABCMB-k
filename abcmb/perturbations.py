@@ -292,7 +292,7 @@ class PerturbationEvolver(eqx.Module):
         )
 
         stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol)
-        saveat = diffrax.SaveAt(dense=True)
+        saveat = diffrax.SaveAt(ts=lna)
         adjoint=diffrax.ForwardMode()
 
         sol = diffrax.diffeqsolve(
@@ -307,7 +307,7 @@ class PerturbationEvolver(eqx.Module):
 
         ### END OF DIFFRAX INTEGRATION ###
 
-        return vmap(sol.evaluate)(lna)
+        return sol.ys
 
     def make_output_table(self, lna, modes, args):
         """
