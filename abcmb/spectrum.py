@@ -644,6 +644,9 @@ class SpectrumSolver(eqx.Module):
         expmkappa = vmap(BG.expmkappa)(lna_axis)
         aH_dot = BG.aH_prime(lna_axis, params) * aH # Derivative of aH w.r.t. conformal time tau.
 
+        # Keep a 1D alias of aH for the rolling-accumulator scan below.
+        aH_1d = aH
+
         g         = g[:, None]
         g_prime   = g_prime[:, None]
         aH        = aH[:, None]
@@ -684,57 +687,83 @@ class SpectrumSolver(eqx.Module):
 
         sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
-        # Bessel functions
-        chi = jnp.outer(tau0-tau, k_axis) # Argument of bessel function.
-        #phi0_tab = spherical_jn(l, chi)
-        phi0_tab = phi0(idx, chi)         # Evaluate and save phi0 first as it is used also for polarization. 
+        # Rolling-accumulator transfer integrals over lna. Avoids materialising
+        # the four (Nlna, Nk) integrand tensors — under the outer vmap these
+        # otherwise blow up to (Nell, Nlna, Nk), ~4.4 GiB on fiducial LCDM.
+        # The scan carry is four (Nk,) running sums; the trapezoid rule and
+        # the +delta_lna * y[-1] / 2 "triangle" correction (for the missing
+        # interval lna_axis[-1] -> 0, where all l>=2 bessels evaluate to 0)
+        # are encoded in per-lna weights: w[0] = 0.5*delta_lna, w[1:] = delta_lna.
 
-        # Here we perform the time integral to get transfer functions from source functions.
-        # We have truncated the upper bound of the lna integral at the time step before lna=0, in order to
-        # avoid a few fake divergences where we need to handle dividing by zeros. (dangerous in JAX even if you do know what you're doing.)
-        # We can do so since all bessel functions with l>=2 evaluate to 0 at lna=0, so we miss nothing by droping the last term.
-        # However, in doing so we do miss a "triangle" term that is 1/2 * f(x_(N-1)) * dx, so we add this term by hand after
-        # every jnp.trapezoid rule call in this section. 
+        # Pre-slice bessel-table columns so the scan body doesn't re-index
+        # ..._tab[:, idx] every iteration.
+        x0_min = xphi0_tab[0, idx]
+        x0_max = xphi0_tab[-1, idx]
+        x1_min = xphi1_tab[0, idx]
+        x1_max = xphi1_tab[-1, idx]
+        x2_min = xphi2_tab[0, idx]
+        x2_max = xphi2_tab[-1, idx]
+        col_phi0_l = phi0_tab[:, idx]
+        col_phi1_l = phi1_tab[:, idx]
+        col_phi2_l = phi2_tab[:, idx]
+        ell_eps_factor = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
-        # Transfer functions, separated into contributions for temperature.
-        integrandT0 = sourceT0 / aH * phi0_tab
-        transferT0 = jnp.trapezoid(
-            integrandT0,
-            lna_axis, axis=0
-        )
-        transferT0 += delta_lna * integrandT0[-1] / 2.
-        del integrandT0
+        def phi0_local(x):
+            return jnp.where(
+                x < x0_min,
+                0.,
+                jnp.where(
+                    x >= x0_max,
+                    j(l, x),
+                    tools.fast_interp(x, x0_min, x0_max, col_phi0_l)
+                )
+            )
 
-        integrandT1 = sourceT1 / aH * phi1(idx, chi)
-        #integrandT1 = sourceT1 / aH * spherical_jn(l, chi, derivative=True)
-        transferT1 = jnp.trapezoid(
-            integrandT1,
-            lna_axis, axis=0
-        )
-        transferT1 += delta_lna * integrandT1[-1] / 2.
-        del integrandT1
+        def phi1_local(x):
+            return jnp.where(
+                x < x1_min,
+                0.,
+                jnp.where(
+                    x >= x1_max,
+                    l/x*j(l, x) - j(l+1, x),
+                    tools.fast_interp(x, x1_min, x1_max, col_phi1_l)
+                )
+            )
 
-        integrandT2 = sourceT2 / aH * phi2(idx, chi)
-        #integrandT2 = sourceT2 / aH * (6*chi*spherical_jn(l+1, chi) + (3*l*(l-1)-2*chi**2)*spherical_jn(l, chi))/2/chi**2
-        transferT2 = jnp.trapezoid(
-            integrandT2,
-            lna_axis, axis=0
-        )
-        transferT2 += delta_lna * integrandT2[-1] / 2.
-        del integrandT2
+        def phi2_local(x):
+            return jnp.where(
+                x < x2_min,
+                0.,
+                jnp.where(
+                    x >= x2_max,
+                    ((3*l*(l-1)-2*x**2)*j(l, x)+6*x*j(l+1, x))/2/x**2,
+                    tools.fast_interp(x, x2_min, x2_max, col_phi2_l)
+                )
+            )
 
-        epsilon_tab = phi0_tab / chi**2
-        del chi
+        Nlna = lna_axis.shape[0]
+        weights = jnp.full((Nlna,), delta_lna, dtype=sourceT0.dtype)
+        weights = weights.at[0].set(0.5 * delta_lna)
+        zero_k = jnp.zeros(k_axis.shape, dtype=sourceT0.dtype)
 
-        epsilon_tab *= jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
+        def scan_step(carry, xs_l):
+            acc_T0, acc_T1, acc_T2, acc_E = carry
+            sT0_l, sT1_l, sT2_l, sE_l, aH_l, tau_l, w_l = xs_l
+            chi_l = (tau0 - tau_l) * k_axis
+            phi0_l = phi0_local(chi_l)
+            phi1_l = phi1_local(chi_l)
+            phi2_l = phi2_local(chi_l)
+            eps_l  = phi0_l / chi_l**2 * ell_eps_factor
+            inv_aH = 1.0 / aH_l
+            acc_T0 = acc_T0 + w_l * sT0_l * inv_aH * phi0_l
+            acc_T1 = acc_T1 + w_l * sT1_l * inv_aH * phi1_l
+            acc_T2 = acc_T2 + w_l * sT2_l * inv_aH * phi2_l
+            acc_E  = acc_E  + w_l * sE_l  * inv_aH * eps_l
+            return (acc_T0, acc_T1, acc_T2, acc_E), None
 
-        integrandE = sourceE / aH * epsilon_tab
-        transferE = jnp.trapezoid(
-            integrandE,
-            lna_axis, axis=0
-        )
-        transferE += delta_lna * integrandE[-1] / 2.
-        del integrandE
+        init = (zero_k, zero_k, zero_k, zero_k)
+        xs = (sourceT0, sourceT1, sourceT2, sourceE, aH_1d, tau, weights)
+        (transferT0, transferT1, transferT2, transferE), _ = lax.scan(scan_step, init, xs)
 
         transferT = transferT0 + transferT1 + transferT2
         ### END OF TRANSFER FUNCTION ###
