@@ -39,13 +39,16 @@ class BackgroundModel(eqx.Module):
     LO : bool
     NLO : bool
 
-    def __init__(self, decoupled=False, use_FD=True, collision_me=True, LO=True, NLO = True): 
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
+    def __init__(self, decoupled=False, use_FD=True, collision_me=True, LO=True, NLO = True, adjoint = ForwardMode):
 
         self.decoupled = decoupled
         self.use_FD = use_FD
-        self.collision_me = collision_me 
+        self.collision_me = collision_me
         self.LO = LO
         self.NLO = NLO
+        self.adjoint = adjoint
 
     @eqx.filter_jit
     def __call__(
@@ -118,9 +121,9 @@ class BackgroundModel(eqx.Module):
             saveat=SaveAt(steps=True), event=Event(T_EM_check),
             stepsize_controller = PIDController(
                 rtol=rtol, atol=atol
-            ), 
+            ),
             max_steps=max_steps,
-            adjoint = ForwardMode()
+            adjoint = self.adjoint()
         )
 
         a_vec = jnp.exp(sol.ys[0])

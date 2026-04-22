@@ -107,7 +107,9 @@ class Background(eqx.Module):
     lna_transfer_start : float # Time where transfer functions start integrating.
     lna_visibility_stop : float # Time to stop integrating T1, T2, and E sources due to small visibility functions. Only used for l<400
 
-    def __init__(self,params, species_list, RecModel, ReionModel):
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
+    def __init__(self, params, species_list, RecModel, ReionModel, adjoint=ForwardMode):
         """
         Initialize Background cosmology module.
 
@@ -123,8 +125,9 @@ class Background(eqx.Module):
         RecModel : callable
             Recombination module for computing xe and Tm histories
         ReionModel : callable
-            Reionization module for computing the xe correction. 
+            Reionization module for computing the xe correction.
         """
+        self.adjoint = adjoint
         # self.params = params
         self.species_list = species_list
 
@@ -360,7 +363,7 @@ class Background(eqx.Module):
         term = ODETerm(self._dtau_dlna)
         controller = PIDController(rtol=1e-8, atol=1e-8)
         saveat = SaveAt(dense=True)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
 
         sol = diffeqsolve(
             term,
@@ -609,7 +612,7 @@ class Background(eqx.Module):
         integrand = lambda lna, y, args: -1./self.tau_c(lna, params)/self.aH(lna, params)
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
         sol = diffeqsolve(
             term,
             solver=Kvaerno5(),           
@@ -780,7 +783,7 @@ class Background(eqx.Module):
         integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna, params)/self.aH(lna, params)/(self.R_ratio_lna(lna, params)))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
         
         solution = diffeqsolve(
             term,
@@ -821,7 +824,7 @@ class Background(eqx.Module):
         integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna, params))) / (self.aH(lna, params))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
         
         solution = diffeqsolve(
             term,
