@@ -556,7 +556,7 @@ class SpectrumSolver(eqx.Module):
 
     def get_Cl(self, PT, BG, params):
         """
-        Compute angular power spectra for multiple multipoles using lax.scan.
+        Compute angular power spectra for multiple multipoles.
 
         Parameters:
         -----------
@@ -573,20 +573,9 @@ class SpectrumSolver(eqx.Module):
             (ClTT, ClTE, ClEE) angular power spectra
         """
 
-        if jax.default_backend() == "gpu":
             
-            tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
+        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
 
-        else:
-            
-            def scan_fun(_, idx):
-                cltt, clte, clee = self.Cl_one_ell(idx, PT, BG, params)
-                return None, jnp.array([cltt, clte, clee])
-
-            _, Cls_raw = lax.scan(scan_fun, None, self.lensing_ells_indices)
-            tt_raw = Cls_raw[:, 0]
-            te_raw = Cls_raw[:, 1]
-            ee_raw = Cls_raw[:, 2]
 
         # Cubic spline for smooth Cl over user requested ells
         lensing_ells = bessel_l_tab[self.lensing_ells_indices]
@@ -763,7 +752,13 @@ class SpectrumSolver(eqx.Module):
 
         init = (zero_k, zero_k, zero_k, zero_k)
         xs = (sourceT0, sourceT1, sourceT2, sourceE, aH_1d, tau, weights)
-        (transferT0, transferT1, transferT2, transferE), _ = lax.scan(scan_step, init, xs)
+        # jax.checkpoint on the scan body: during reverse AD, body intermediates
+        # are not saved — the body is re-executed on the backward pass. Kills
+        # the ~21 GiB (Nell, Nlna, Nk) integrand rematerialisation; adds ~2× on
+        # this scan's compute, a small fraction of SS wall time.
+        (transferT0, transferT1, transferT2, transferE), _ = lax.scan(
+            jax.checkpoint(scan_step), init, xs
+        )
 
         transferT = transferT0 + transferT1 + transferT2
         ### END OF TRANSFER FUNCTION ###
