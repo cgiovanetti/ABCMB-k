@@ -57,12 +57,13 @@ def phi0(i, x):
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
+    x_safe = jnp.where(x >= xphi0_tab[-1, i], x, xphi0_tab[-1, i])
     return jnp.where(
         x < xphi0_tab[0, i],
         0.,
         jnp.where(
             x >= xphi0_tab[-1, i],
-            j(l, x),
+            j(l, x_safe),
             tools.fast_interp(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
         )
     )
@@ -75,12 +76,13 @@ def phi1(i, x):
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
+    x_safe = jnp.where(x >= xphi1_tab[-1, i], x, xphi1_tab[-1, i])
     return jnp.where(
         x < xphi1_tab[0, i],
         0.,
         jnp.where(
             x >= xphi1_tab[-1, i],
-            l/x*j(l, x) - j(l+1, x),
+            l/x_safe*j(l, x_safe) - j(l+1, x_safe),
             tools.fast_interp(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
         )
     )
@@ -93,12 +95,13 @@ def phi2(i, x):
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
+    x_safe = jnp.where(x >= xphi2_tab[-1, i], x, xphi2_tab[-1, i])
     return jnp.where(
         x < xphi2_tab[0, i],
         0.,
         jnp.where(
             x >= xphi2_tab[-1, i],
-            ((3*l*(l-1)-2*x**2)*j(l, x)+6*x*j(l+1, x))/2/x**2,
+            ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
             tools.fast_interp(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
         )
     )
@@ -698,34 +701,37 @@ class SpectrumSolver(eqx.Module):
         ell_eps_factor = jnp.sqrt(3./8.*(l+2)*(l+1)*l*(l-1))
 
         def phi0_local(x):
+            x_safe = jnp.where(x >= x0_max, x, x0_max)
             return jnp.where(
                 x < x0_min,
                 0.,
                 jnp.where(
                     x >= x0_max,
-                    j(l, x),
+                    j(l, x_safe),
                     tools.fast_interp(x, x0_min, x0_max, col_phi0_l)
                 )
             )
 
         def phi1_local(x):
+            x_safe = jnp.where(x >= x1_max, x, x1_max)
             return jnp.where(
                 x < x1_min,
                 0.,
                 jnp.where(
                     x >= x1_max,
-                    l/x*j(l, x) - j(l+1, x),
+                    l/x_safe*j(l, x_safe) - j(l+1, x_safe),
                     tools.fast_interp(x, x1_min, x1_max, col_phi1_l)
                 )
             )
 
         def phi2_local(x):
+            x_safe = jnp.where(x >= x2_max, x, x2_max)
             return jnp.where(
                 x < x2_min,
                 0.,
                 jnp.where(
                     x >= x2_max,
-                    ((3*l*(l-1)-2*x**2)*j(l, x)+6*x*j(l+1, x))/2/x**2,
+                    ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
                     tools.fast_interp(x, x2_min, x2_max, col_phi2_l)
                 )
             )
