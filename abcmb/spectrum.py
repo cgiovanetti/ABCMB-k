@@ -45,6 +45,7 @@ try:
 except: 
     pass
 
+# large-x asymptotic expansion of spherical bessel functions
 Q = lambda l, x : jnp.sqrt(x**2-l**2) - l*jnp.pi/2 + l * jnp.arcsin(l/x)
 J = lambda l, x : jnp.sqrt(2/jnp.pi/jnp.sqrt(x**2-l**2)) * jnp.cos(Q(l, x) - jnp.pi/4)
 j = lambda l, x : jnp.sqrt(jnp.pi/2/x) * J(l+1/2, x)
@@ -679,13 +680,11 @@ class SpectrumSolver(eqx.Module):
 
         sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
-        # Rolling-accumulator transfer integrals over lna. Avoids materialising
-        # the four (Nlna, Nk) integrand tensors — under the outer vmap these
-        # otherwise blow up to (Nell, Nlna, Nk), ~4.4 GiB on fiducial LCDM.
-        # The scan carry is four (Nk,) running sums; the trapezoid rule and
-        # the +delta_lna * y[-1] / 2 "triangle" correction (for the missing
-        # interval lna_axis[-1] -> 0, where all l>=2 bessels evaluate to 0)
-        # are encoded in per-lna weights: w[0] = 0.5*delta_lna, w[1:] = delta_lna.
+        # previously, this block explicitly built a 2D (Nlna, Nk) tensor for each ell and summed it down to (Nk).
+        # This newer version refactors into four accumulators of shape (Nk).  For each lna, we compute all four
+        # (Nk), multiply by a trapezoid weight, and then add to the accumulator.  The result is identical but
+        # avoids having to construct a full 2D tensor for each ell, instead just constructing the 1D (Nk) tensor
+        # and accumulating down ell.  Clever "traingle term" added by hand is now handled by the trapezoid weights.
 
         # Pre-slice bessel-table columns so the scan body doesn't re-index
         # ..._tab[:, idx] every iteration.
