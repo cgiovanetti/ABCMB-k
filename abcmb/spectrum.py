@@ -58,6 +58,7 @@ def phi0(i, x):
     If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
+    # use x_safe to avoid double-where gotcha in reverse AD
     x_safe = jnp.where(x >= xphi0_tab[-1, i], x, xphi0_tab[-1, i])
     return jnp.where(
         x < xphi0_tab[0, i],
@@ -680,6 +681,8 @@ class SpectrumSolver(eqx.Module):
 
         sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
 
+
+        # Here we perform the time integral to get transfer functions from source functions.
         # previously, this block explicitly built a 2D (Nlna, Nk) tensor for each ell and summed it down to (Nk).
         # This newer version refactors into four accumulators of shape (Nk).  For each lna, we compute all four
         # (Nk), multiply by a trapezoid weight, and then add to the accumulator.  The result is identical but
