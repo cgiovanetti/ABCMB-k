@@ -48,7 +48,9 @@ class hydrogen_model(eqx.Module):
 
     lna_end : jnp.float64
 
-    def __init__(self,xe_4He,lna_4He,lna_end,last_4He_lna,twog_redshift,integration_spacing = 5.0e-4, Nsteps=800,swift = jnp.array(np.loadtxt(file_dir+"/tabs/fit_swift.dat"))):
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
+    def __init__(self, xe_4He, lna_4He, lna_end, last_4He_lna, twog_redshift, integration_spacing = 5.0e-4, Nsteps=800, swift = jnp.array(np.loadtxt(file_dir+"/tabs/fit_swift.dat")), adjoint = ForwardMode):
         """
         Initialize hydrogen recombination model.
 
@@ -82,6 +84,7 @@ class hydrogen_model(eqx.Module):
 
         self.last_4He_lna = last_4He_lna
         self.twog_redshift = twog_redshift
+        self.adjoint = adjoint
 
     def __call__(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
@@ -253,8 +256,16 @@ class hydrogen_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met
-        final_state = lax.while_loop(stop_condition, compute_xe, initial_state)
+        # Run the while loop until the stop condition is met.
+        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
+        # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
+        # checkpointing. max_steps must be a static upper bound; the output
+        # axis size serves that role here.
+        final_state = eqx.internal.while_loop(
+            stop_condition, compute_xe, initial_state,
+            max_steps=self.concrete_axis_size.size,
+            kind='checkpointed',
+        )
 
         # Unpack the final state
         xe_output_final, lna_output_final, _, _, _ = final_state
@@ -344,8 +355,8 @@ class hydrogen_model(eqx.Module):
         # don't want to double count the boundary lna, so start saving after one step
         t_arr = jnp.linspace(t0+self.integration_spacing, t0+2*max_steps*self.integration_spacing, 2*max_steps)
 
-        save_at = SaveAt(ts=t_arr) 
-        adjoint=ForwardMode()
+        save_at = SaveAt(ts=t_arr)
+        adjoint=self.adjoint()
 
         def lna_check(t, y, args, **kwargs):
             return t > lna_axis_final
@@ -448,7 +459,7 @@ class hydrogen_model(eqx.Module):
 
         initial_state = jnp.array([xe0, Tm0])
         term = ODETerm(self.xe_tm_derivative)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
 
         def temperature_check(t, y, args, **kwargs):
             lna = t
@@ -724,7 +735,7 @@ class hydrogen_model(eqx.Module):
 
         initial_state = jnp.array([xe0, Tm0])
         term = ODETerm(self.TLA_xe_deriv)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
 
         def lna_check(t, y, args, **kwargs):
             return t > self.lna_end # stop when true

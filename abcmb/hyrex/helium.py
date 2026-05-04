@@ -35,7 +35,9 @@ class helium_model(eqx.Module):
     concrete_axis_size : jnp.array
     concrete_axis_size_postSahaHe : jnp.array
 
-    def __init__(self,lna_axis_4Heequil,integration_spacing = 5.0e-4, Nsteps=800, Nsteps_postSahaHe=4000,z0=8000., z1=20.):
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
+    def __init__(self, lna_axis_4Heequil, integration_spacing = 5.0e-4, Nsteps=800, Nsteps_postSahaHe=4000, z0=8000., z1=20., adjoint = ForwardMode):
         """
         Initialize helium recombination model.
 
@@ -60,6 +62,7 @@ class helium_model(eqx.Module):
         # Define time axes
         self.lna_axis_4Heequil = lna_axis_4Heequil
         self.concrete_axis_size = jnp.zeros(Nsteps)
+        self.adjoint = adjoint
 
     def __call__(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
@@ -209,8 +212,15 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met
-        final_state = lax.while_loop(stop_condition, compute_xe, initial_state)
+        # Run the while loop until the stop condition is met.
+        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
+        # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
+        # checkpointing. max_steps must be a static upper bound.
+        final_state = eqx.internal.while_loop(
+            stop_condition, compute_xe, initial_state,
+            max_steps=lna_axis.size,
+            kind='checkpointed',
+        )
 
         # Unpack the final state
         xe_output_final, lna_output_final, _, _, _ = final_state
@@ -343,8 +353,15 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met
-        final_state = lax.while_loop(stop_condition, compute_xe, initial_state)
+        # Run the while loop until the stop condition is met.
+        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
+        # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
+        # checkpointing. max_steps must be a static upper bound.
+        final_state = eqx.internal.while_loop(
+            stop_condition, compute_xe, initial_state,
+            max_steps=self.concrete_axis_size_postSahaHe.size,
+            kind='checkpointed',
+        )
 
         # Unpack the final state
         xe_output_final, lna_output_final, _, _, _ = final_state
@@ -503,7 +520,7 @@ class helium_model(eqx.Module):
         t_arr = jnp.linspace(t0+self.integration_spacing, t0+max_steps*self.integration_spacing, max_steps)
 
         save_at = SaveAt(ts=t_arr)
-        adjoint=ForwardMode()
+        adjoint=self.adjoint()
 
         def He_check(t, y, args, **kwargs):
             lna = t

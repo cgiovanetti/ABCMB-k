@@ -4,6 +4,7 @@ from jaxtyping import Array
 import numpy as np
 import equinox as eqx
 
+import diffrax
 import jax
 
 import sys
@@ -77,6 +78,8 @@ class Model(eqx.Module):
     thermo_model_DNeff : BackgroundModel
     abundanceModel : AbundanceModel
 
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
     ### ADDING SPECIES: add has_ parameter and add condition to append to tuple.
     # In the init, all species that are present within the model should be set to True.
     # All couplings present between species should be set to true. 
@@ -99,6 +102,11 @@ class Model(eqx.Module):
             Any unknown keys will be preserved for custom species extensibility.
         """
 
+        # Pull adjoint out of kwargs before load_specs — it must NOT end up
+        # inside self.specs (a non-JAX pytree leaf breaks lax.cond / filter_jit
+        # tracing). Default preserves prior ForwardMode behavior.
+        adjoint = kwargs.pop("adjoint", diffrax.ForwardMode)
+
         # Fill in all user defined and missing specs parameters
         specs = model_specs.load_specs(kwargs)
         self.specs = specs
@@ -112,10 +120,11 @@ class Model(eqx.Module):
         # Initialize perturbation evolver
         k_axis_perturbations, k_axis_Pk_output = model_specs.get_k_axis_perturbations(specs)
         self.PE = perturbations.PerturbationEvolver(
-            self.species_list, 
+            self.species_list,
             self.species_dict,
             k_axis_perturbations,
-            specs
+            specs,
+            adjoint=adjoint,
         )
 
         # Intialize spectrum solver
@@ -134,17 +143,19 @@ class Model(eqx.Module):
         )
 
         # Initialize recombination model
-        self.RecModel = hyrex.recomb_model() # DO NOT CHANGE z1 FROM 0
+        self.RecModel = hyrex.recomb_model(adjoint=adjoint) # DO NOT CHANGE z1 FROM 0
 
         # Initialize BBN model
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
         # initialize LINX
         if self.specs["bbn_type"].lower() == "linx":
-            self.thermo_model_DNeff = BackgroundModel()
-            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.specs["linx_reaction_net"])) 
+            self.thermo_model_DNeff = BackgroundModel(adjoint=adjoint)
+            self.abundanceModel = AbundanceModel(NuclearRates(nuclear_net=self.specs["linx_reaction_net"]), adjoint=adjoint)
         else:
             self.thermo_model_DNeff = None
             self.abundanceModel = None
+
+        self.adjoint = adjoint
 
     # need this outside of the jit context
     # since we want LINX to run on CPU
@@ -260,13 +271,17 @@ class Model(eqx.Module):
         background.Background
             Background object
         """
+        # Bind to a local so both closures capture a plain class rather than
+        # an attribute lookup on self. The class is never placed in the
+        # lax.cond operand tuple (keeping it a valid JAX pytree).
+        adjoint = self.adjoint
         def get_BG_z_reion(args):
             params, species_list, RecModel = args
-            return background.Background(params, species_list, RecModel, background.ReionizationModelFromZ)
+            return background.Background(params, species_list, RecModel, background.ReionizationModelFromZ, adjoint=adjoint)
 
         def get_BG_tau_reion(args):
             params, species_list, RecModel = args
-            return background.Background(params, species_list, RecModel, background.ReionizationModelFromTau)
+            return background.Background(params, species_list, RecModel, background.ReionizationModelFromTau, adjoint=adjoint)
 
         BG = lax.cond(
             self.specs["input_tau_reion"],

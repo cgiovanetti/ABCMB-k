@@ -53,9 +53,12 @@ class AbundanceModel(eqx.Module):
     species_binding_energy : list
     species_mass : list
 
-    def __init__(self, nuclear_net, weak_rates=wr.WeakRates()):
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
 
-        self.nuclear_net = nuclear_net  
+    def __init__(self, nuclear_net, weak_rates=wr.WeakRates(), adjoint=ForwardMode):
+
+        self.adjoint = adjoint
+        self.nuclear_net = nuclear_net
         self.weak_rates = weak_rates
 
         self.species_dict = {
@@ -267,9 +270,9 @@ class AbundanceModel(eqx.Module):
                 nTOp_bkwrd, eta_fac, tau_n_fac, nuclear_rates_q
             ), saveat=saveat, stepsize_controller = PIDController(
                 rtol=rtol, atol=atol,
-            ), 
+            ),
             max_steps=max_steps,
-            adjoint = ForwardMode()
+            adjoint = self.adjoint()
         )
 
         if save_history: 
@@ -330,13 +333,13 @@ class AbundanceModel(eqx.Module):
         rho_tot_fin  = rho_tot_vec[-1]
 
         sol_t = diffeqsolve(
-            ODETerm(dt_prime), Tsit5(), 
-            t0=rho_tot_init, t1=rho_tot_fin, 
-            y0=1. / (2 * thermo.Hubble(rho_tot_init)), 
+            ODETerm(dt_prime), Tsit5(),
+            t0=rho_tot_init, t1=rho_tot_fin,
+            y0=1. / (2 * thermo.Hubble(rho_tot_init)),
             dt0=None, max_steps=4096,
-            saveat=SaveAt(ts=rho_tot_vec), 
+            saveat=SaveAt(ts=rho_tot_vec),
             stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
-            adjoint = ForwardMode()
+            adjoint = self.adjoint()
         )
 
         return sol_t.ys
@@ -395,12 +398,12 @@ class AbundanceModel(eqx.Module):
 
         # a_0 = 1 arbitrarily, will rescale later. 
         sol_lna = diffeqsolve(
-            ODETerm(dlna_prime), Tsit5(), 
-            t0=rho_tot_init, t1=rho_tot_fin, 
+            ODETerm(dlna_prime), Tsit5(),
+            t0=rho_tot_init, t1=rho_tot_fin,
             y0=0., dt0=None, max_steps=4096,
             saveat=SaveAt(ts=rho_tot_vec),
             stepsize_controller=PIDController(rtol=1e-8, atol=1e-10),
-            adjoint = ForwardMode()
+            adjoint = self.adjoint()
         )
 
         a_fin = const.T0CMB / T_g_vec[-1] 

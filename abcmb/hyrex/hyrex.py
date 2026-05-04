@@ -2,7 +2,7 @@ import numpy as np
 import jax.numpy as jnp
 from jax import config
 import equinox as eqx
-from diffrax import Kvaerno3
+from diffrax import Kvaerno3, ForwardMode
 
 from functools import partial
 
@@ -32,7 +32,9 @@ class recomb_model(eqx.Module):
     He4equil_redshift : jnp.float64
     idx_4He_equil : jnp.array
 
-    def __init__(self,integration_spacing = 5.0e-4, z0=8000., z1=0.):
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
+
+    def __init__(self, integration_spacing = 5.0e-4, z0=8000., z1=0., adjoint = ForwardMode):
         """
         Initialize complete recombination model.
 
@@ -49,6 +51,7 @@ class recomb_model(eqx.Module):
             Final redshift (default: 0.)
         """
         self.integration_spacing = integration_spacing
+        self.adjoint = adjoint
         self.z1 = z1
 
         # Define time axes
@@ -115,7 +118,7 @@ class recomb_model(eqx.Module):
         BG, params = args
         lna_axis_4Heequil  = self.lna_axis_full[self.idx_4He_equil]
 
-        xe_4He, lna_4He = helium_model(lna_axis_4Heequil)(args)
-        xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift)(args)
+        xe_4He, lna_4He = helium_model(lna_axis_4Heequil, adjoint=self.adjoint)(args)
+        xe_full, lna_full, Tm, lna_Tm = hydrogen_model(xe_4He,lna_4He,-jnp.log(1+self.z1),lna_4He.lastval,self.twog_redshift, adjoint=self.adjoint)(args)
 
         return (xe_full, lna_full, Tm, lna_Tm)

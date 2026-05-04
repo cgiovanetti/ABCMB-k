@@ -49,22 +49,26 @@ class PerturbationEvolver(eqx.Module):
     make_output_table : Create interpolatable perturbation table
     """
 
-    species_list : tuple 
-    species_dict : dict  
+    species_list : tuple
+    species_dict : dict
     k_axis_perturbations : jnp.array
     specs : dict
+
+    adjoint : "diffrax.adjoint" = eqx.field(static=True)
 
     def __init__(
         self,
         species_list,
         species_dict,
         k_axis_perturbations=jnp.geomspace(1.e-4, 0.4, 600),
-        specs = {}
+        specs = {},
+        adjoint = diffrax.ForwardMode,
     ):
         self.species_list = species_list
         self.species_dict = species_dict
         self.k_axis_perturbations = k_axis_perturbations
         self.specs = specs
+        self.adjoint = adjoint
 
     def full_evolution(self, args):
         """
@@ -292,8 +296,8 @@ class PerturbationEvolver(eqx.Module):
         )
 
         stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol)
-        saveat = diffrax.SaveAt(dense=True)
-        adjoint=diffrax.ForwardMode()
+        saveat = diffrax.SaveAt(ts=lna)
+        adjoint=self.adjoint()
 
         sol = diffrax.diffeqsolve(
             term, solver,
@@ -307,7 +311,7 @@ class PerturbationEvolver(eqx.Module):
 
         ### END OF DIFFRAX INTEGRATION ###
 
-        return vmap(sol.evaluate)(lna)
+        return sol.ys
 
     def make_output_table(self, lna, modes, args):
         """
