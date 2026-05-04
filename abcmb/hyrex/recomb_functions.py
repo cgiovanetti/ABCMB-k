@@ -13,13 +13,15 @@ R_tab     = jnp.array(np.loadtxt(file_dir+"/tabs/R_inf.dat"))
 #Tabulated values of 2s-2p transition rates to interpolate.
 alpha_tab = jnp.array(np.loadtxt(file_dir+"/tabs/Alpha_inf.dat"))
 
+# Phase 2 of the HyRex CPU lift: the recombination model now executes
+# under ``eqx.filter_jit(backend='cpu')`` (orchestrated from
+# ``Model.__call__``), so these lookup tables should live on CPU. Pinning
+# them to CPU here avoids per-call device migration when HyRex traces.
 try:
-    gpus = devices('gpu')
-    R_tab = device_put(
-        R_tab, device=gpus[0])
-    alpha_tab = device_put(
-        alpha_tab, device=gpus[0])
-except: 
+    cpus = devices('cpu')
+    R_tab = device_put(R_tab, device=cpus[0])
+    alpha_tab = device_put(alpha_tab, device=cpus[0])
+except Exception:
     pass
 
 # File handling and interpolating related constants.
@@ -94,7 +96,7 @@ def beta_H(TCMB):
 def peebles_C(z, xHII, H, nH, args):
     """
     Peebles C factor, probability for an n=2 hydrogen atom to reach the ground state before becoming photoionized, a function of redshift and ionized proton fraction.
-    
+
     Dimensions: None
 
     Parameters
@@ -107,23 +109,24 @@ def peebles_C(z, xHII, H, nH, args):
         Value(s) of Hubble at given redshift(s).
     nH : float/jnp.array
         Value(s) of hydrogen number density at given redshift(s)
-    BG: cosmology.Background
-        Background cosmology object
+    args : tuple
+        (recomb_inputs, params) — recombination input arrays and
+        cosmological parameters.
 
     Returns
     -------
     C : float/jnp.array
         Peebles C factor.
     """
-    BG, params = args
+    recomb_inputs, params = args
     # (2p to 1s rate) x (1 - xHII), in s^{-1}
     rate_2p1s_times_x1s = 8*jnp.pi*H / (3 * (nH*(cnst.c/cnst.lya_freq)**3))
 
     # s^{-1}
     rate_exc = 3. * rate_2p1s_times_x1s/4. + (1.-xHII) * cnst.R2s1s/4.
-    
+
     # Ionization rate, in s^{-1}
-    rate_ion = (1-xHII) * beta_H( BG.TCMB( jnp.log(1/(1+z)) , params ) )
+    rate_ion = (1-xHII) * beta_H( recomb_inputs.TCMB( jnp.log(1/(1+z)) ) )
 
     return rate_exc / (rate_exc + rate_ion)
 

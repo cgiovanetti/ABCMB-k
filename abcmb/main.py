@@ -15,6 +15,7 @@ from .hyrex import hyrex
 from . import background, perturbations, spectrum, model_specs
 from . import constants as cnst
 from .ABCMBTools import bilinear_interp
+from .background import BackgroundPreRecomb, Background, ReionizationModelFromZ, ReionizationModelFromTau
 
 from .linx.background import BackgroundModel
 from .linx.abundances import AbundanceModel
@@ -72,9 +73,9 @@ class Model(eqx.Module):
     specs : dict
 
     species_list : tuple = ()
-    species_dict : dict 
-    
-    PArthENoPE_CLASS_table  : Array 
+    species_dict : dict
+
+    PArthENoPE_CLASS_table  : Array
     thermo_model_DNeff : BackgroundModel
     abundanceModel : AbundanceModel
 
@@ -142,7 +143,14 @@ class Model(eqx.Module):
             scale_pol=specs["scale_pol"]
         )
 
-        # Initialize recombination model
+        # Initialize recombination model. Phase 2 of the HyRex CPU lift
+        # invokes RecModel under ``eqx.filter_jit(backend='cpu')``; we do
+        # NOT device_put RecModel to CPU here, because doing so would mix
+        # device platforms inside Model's pytree (RecModel on CPU, PE/SS
+        # on GPU) and the GPU-pinned ``_run_post_recomb`` jit would reject
+        # ``self`` as having "incompatible devices". JAX migrates RecModel
+        # to CPU lazily on first trace of the CPU jit — same pattern as
+        # the LINX call in ``add_derived_parameters``.
         self.RecModel = hyrex.recomb_model(adjoint=adjoint) # DO NOT CHANGE z1 FROM 0
 
         # Initialize BBN model
@@ -157,14 +165,23 @@ class Model(eqx.Module):
 
         self.adjoint = adjoint
 
-    # need this outside of the jit context
-    # since we want LINX to run on CPU
+    # NOTE on jit nesting (Phase 2 of the HyRex CPU lift):
+    #   ``__call__`` is plain Python because it orchestrates a CPU-pinned
+    #   HyRex jit between two GPU-pinned jits. Wrapping ``__call__`` in an
+    #   outer ``eqx.filter_jit`` (default backend = GPU) would attempt to
+    #   inline the inner CPU jit and fails with
+    #   "Received incompatible devices for jitted computation".
+    #   Same constraint applies to ``run_cosmology_abbr``. Mirrors the LINX
+    #   pattern in ``add_derived_parameters``.
     def __call__(self, params : dict = {}):
         """
         Compute CMB angular power spectra for given parameters.
 
-        Runs the full pipeline from background evolution through
-        perturbation integration to CMB power spectrum computation.
+        Runs the full pipeline:
+            params ─► add_derived_parameters (CPU LINX, unjitted)
+                   ─► get_BG_pre_recomb       (GPU JIT)
+                   ─► RecModel ((recomb_inputs, params))   (CPU JIT)
+                   ─► run_cosmology_abbr     (GPU JIT)
 
         Parameters:
         -----------
@@ -173,23 +190,86 @@ class Model(eqx.Module):
 
         Returns:
         --------
-        tuple
-            (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
+        Output
+            ClTT/ClTE/ClEE/Pk plus the BG and PT objects.
         """
-
-        
         full_params = self.add_derived_parameters(params)
         return self.run_cosmology_abbr(full_params)
-        
-    ### JITTED OR JITTABLE FUNCTIONS ###
 
-    @eqx.filter_jit
+    ### Top-level orchestration (Phase 2): GPU → CPU → GPU. ###
     def run_cosmology_abbr(self, params : dict):
         """
-        Compute CMB angular power spectra for given parameters.
+        Orchestrate the full pipeline given derived params. NOT jit-wrapped;
+        contains a CPU-pinned HyRex call sandwiched between two GPU jits.
 
-        Runs the full pipeline from background evolution through
-        perturbation integration to CMB power spectrum computation.
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters (must already have derived keys).
+
+        Returns:
+        --------
+        Output
+            CMB power spectra and friends.
+        """
+        # Cast int/bool params to float64 BEFORE entering any
+        # ``eqx.filter_jit``. Without this, filter_jit's diff/non-diff
+        # custom_vjp partition routes int leaves to "non-diff" and
+        # asserts ``perturbed=False`` (equinox/_ad.py:859). Under outer
+        # ``jax.grad``, those leaves are tracers with perturbed=True and
+        # the assertion trips. The defaults (e.g. ``N_nu_massive=0``,
+        # ``omega_Lambda=0``) are unused as integers anywhere downstream
+        # so the cast is safe.
+        def _to_float(v):
+            arr = jnp.asarray(v)
+            if arr.dtype.kind in 'iub':
+                return arr.astype(jnp.float64)
+            return arr
+        params = jax.tree_util.tree_map(_to_float, params)
+
+        # Stage 1 (GPU JIT): tabulate conformal time + bundle recomb_inputs.
+        pre_BG = self.get_BG_pre_recomb(params)
+
+        # Stage 2 (CPU JIT): HyRex consumes recomb_inputs, returns
+        # (xe, lna_xe, Tm, lna_Tm) — see ``hyrex.recomb_model.get_history``.
+        try:
+            cpu_dev = jax.devices('cpu')[0]
+            recomb_inputs_cpu = jax.device_put(pre_BG.recomb_inputs, cpu_dev)
+            params_cpu = jax.device_put(params, cpu_dev)
+        except Exception:
+            recomb_inputs_cpu = pre_BG.recomb_inputs
+            params_cpu = params
+
+        recomb_output = eqx.filter_jit(self.RecModel, backend='cpu')((recomb_inputs_cpu, params_cpu))
+
+        try:
+            recomb_output = jax.device_put(recomb_output, jax.devices('gpu')[0])
+        except Exception:
+            # No GPU: leave recomb_output where it is.
+            pass
+
+        # ``recomb_output`` contains ``array_with_padding`` objects whose
+        # ``padding_size`` and ``lastnum`` are JAX int arrays from
+        # ``jnp.argmax``. Inside HyRex's CPU jit they are used as indices
+        # in ``lax.dynamic_update_slice`` (concat), but downstream of
+        # HyRex the only fields touched are ``arr`` and ``lastval``. The
+        # ``checkpointed_while_loop`` filter_custom_vjp inside
+        # ``_run_post_recomb``'s diffrax solves trips
+        # ``_get_value_assert_unperturbed`` on int leaves under outer
+        # AD; cast them to float at the boundary to suppress this.
+        recomb_output = jax.tree_util.tree_map(_to_float, recomb_output)
+
+        # Stage 3 (GPU JIT): apply reionization, integrate optical depth,
+        # locate decoupling, integrate perturbations, build CMB spectra.
+        return self._run_post_recomb(params, pre_BG, recomb_output)
+
+    @eqx.filter_jit
+    def get_BG_pre_recomb(self, params : dict):
+        """
+        Pre-recomb stage: tabulate conformal time and bundle ``recomb_inputs``.
+
+        This is the only piece of ``__call__`` that fires before HyRex; it
+        runs on whatever device JAX defaults to (typically GPU on Perlmutter).
 
         Parameters:
         -----------
@@ -198,10 +278,29 @@ class Model(eqx.Module):
 
         Returns:
         --------
-        tuple
-            (ℓ values, (C_ℓ^TT, C_ℓ^TE, C_ℓ^EE)) for computed multipoles
+        BackgroundPreRecomb
         """
+        return BackgroundPreRecomb(params, self.species_list, self.RecModel, adjoint=self.adjoint)
 
+    @eqx.filter_jit
+    def _run_post_recomb(self, params : dict, pre_BG : "BackgroundPreRecomb", recomb_output):
+        """
+        Post-recomb GPU stage: full Background construction (reionization,
+        optical depth, decoupling), perturbation evolution, CMB spectra.
+
+        Parameters:
+        -----------
+        params : dict
+            Cosmological parameters
+        pre_BG : BackgroundPreRecomb
+            Output of :meth:`get_BG_pre_recomb`.
+        recomb_output : tuple
+            HyRex output ``(xe, lna_xe, Tm, lna_Tm)``.
+
+        Returns:
+        --------
+        Output
+        """
         # let the user know the code is compiling
         print("")
         print('              /\\  ')
@@ -216,12 +315,12 @@ class Model(eqx.Module):
         print("")
 
         # Compute background and linear perturbations
-        PT, BG = self.get_PTBG(params)
+        PT, BG = self.get_PTBG(params, pre_BG, recomb_output)
 
         # Compute CMB power spectra
         Cls = self.SS.get_Cl(PT, BG, params)
         l = self.SS.ells
-        
+
         # Compute linear matter power spectrum
         Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
         k = self.SS.k_axis_Pk_output
@@ -235,61 +334,65 @@ class Model(eqx.Module):
         return output
 
     @eqx.filter_jit
-    def get_PTBG(self, params : dict):
+    def get_PTBG(self, params : dict, pre_BG : "BackgroundPreRecomb", recomb_output):
         """
-        Get perturbation table and background.
+        Get perturbation table and full Background.
 
-        Computes background and evolves perturbations for the given parameters.
+        Constructs the post-recomb Background from ``pre_BG`` + ``recomb_output``
+        and runs the perturbation evolver.
 
         Parameters:
         -----------
         params : dict
             Cosmological parameters
+        pre_BG : BackgroundPreRecomb
+            Pre-recomb stage object.
+        recomb_output : tuple
+            HyRex output ``(xe, lna_xe, Tm, lna_Tm)``.
 
         Returns:
         --------
         tuple
-            (PerturbationTable, Background) objects
+            (PerturbationTable, Background)
         """
-        BG = self.get_BG(params)
+        BG = self.get_BG(params, pre_BG, recomb_output)
         PT = self.PE.full_evolution((BG, params))
-
         return PT, BG
 
-    @eqx.filter_jit
-    def get_BG(self, params : dict):
+    def get_BG(self, params : dict, pre_BG : "BackgroundPreRecomb", recomb_output):
         """
-        Get background for given parameters.
+        Construct the full ``Background`` from pre-recomb + HyRex output.
+
+        Selects the reionization model (z-input vs tau-input) via ``lax.cond``.
+        NOT directly ``@eqx.filter_jit``-decorated; called from inside
+        ``_run_post_recomb`` (which is jit-wrapped).
 
         Parameters:
         -----------
         params : dict
             Cosmological parameters
+        pre_BG : BackgroundPreRecomb
+        recomb_output : tuple
 
         Returns:
         --------
         background.Background
-            Background object
         """
-        # Bind to a local so both closures capture a plain class rather than
-        # an attribute lookup on self. The class is never placed in the
-        # lax.cond operand tuple (keeping it a valid JAX pytree).
-        adjoint = self.adjoint
         def get_BG_z_reion(args):
-            params, species_list, RecModel = args
-            return background.Background(params, species_list, RecModel, background.ReionizationModelFromZ, adjoint=adjoint)
+            params, pre_BG, recomb_output = args
+            return Background(pre_BG, recomb_output, params, ReionizationModelFromZ)
 
         def get_BG_tau_reion(args):
-            params, species_list, RecModel = args
-            return background.Background(params, species_list, RecModel, background.ReionizationModelFromTau, adjoint=adjoint)
+            params, pre_BG, recomb_output = args
+            return Background(pre_BG, recomb_output, params, ReionizationModelFromTau)
 
         BG = lax.cond(
             self.specs["input_tau_reion"],
             get_BG_tau_reion,
             get_BG_z_reion,
-            (params, self.species_list, self.RecModel)
+            (params, pre_BG, recomb_output)
         )
-        
+
         return BG
 
     def add_derived_parameters(self, param_in : dict) -> dict:

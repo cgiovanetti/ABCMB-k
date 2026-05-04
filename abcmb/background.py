@@ -8,6 +8,7 @@ import optimistix as optx
 
 from .hyrex.array_with_padding import array_with_padding
 from .hyrex import recomb_functions
+from .hyrex.hyrex import RecombInputs
 from . import ABCMBTools as tools
 from . import constants as cnst
 
@@ -15,106 +16,58 @@ import os
 file_dir = os.path.dirname(__file__)
 config.update("jax_enable_x64", True)
 
-class Background(eqx.Module):
-    """
-    Background cosmology module for cosmological calculations.
 
-    Computes background quantities including Hubble parameter, conformal time,
-    recombination history, and optical depth evolution.
+class BackgroundPreRecomb(eqx.Module):
+    """
+    Pre-recombination background-cosmology object (Phase 2 of HyRex CPU lift).
+
+    Holds everything HyRex needs to run on CPU: the conformal-time tabulation,
+    the species list, and a ``RecombInputs`` struct that bundles HyRex's input
+    arrays sampled on the recombination grid. None of these depend on xe, Tm,
+    or the optical depth, so this object is the natural input to the CPU-pinned
+    HyRex solve and the natural input to the post-recombination Background
+    construction (which inherits from this class).
 
     Attributes:
     -----------
     species_list : tuple
         A list of all fluids in the cosmology
     lna_tau_tab : jnp.array
-        Log scale factor axis used to tabulate conformal time
-    tau_tab : jnp.array 
-        Tabulated conformal time. 
-    tau0 : float 
+        Log scale factor axis used to tabulate conformal time (class attribute)
+    tau_tab : jnp.array
+        Tabulated conformal time.
+    tau0 : float
         Conformal time today in Mpc.
-    xe_tab : array_with_padding
-        Tabulated free electron fraction xe during recombination
-    lna_xe_tab : array_with_padding
-        Log scale factor axis corresponding to tabulated xe values.
-    Tm_tab : array_with_padding
-        Tabulated matter temperature Tm during recombination
-    lna_Tm_tab : array_with_padding
-        Log scale factor axis corresponding to tabulated Tm values.
-    kappa_func : diffrax.solution
-        Visibility function
-    z_reion : float
-        Redshift of hydrogen reionization in the CAMB parameterization.
-    tau_reion : float 
-        Optical depth to reionization
-    lna_rec : float
-        Log scale factor of recombination
-    rA_rec : float 
-        Comoving angular diameter distance at recombination in Mpc
-    rs_d : float 
-        Sound horizon at baryon decoupling in Mpc
-    z_d : float
-        Redshift of baryon decoupling
-    lna_transfer_start : float 
-        Log scale factor at which to begin integrating transfer functions.
-    lna_visibility_stop : float 
-        Log scale factor at which to stop integrating T1, T2, and E sources due to small visibility functions. 
-        Only used for l<400.
+    recomb_inputs : RecombInputs
+        Bundle of background quantities (TCMB, nH, H) sampled on
+        ``RecModel.lna_axis_full``; consumed by HyRex.
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves (static field).
 
-    Recombination Unrelated Methods:
-    --------------------------------
-    rho_tot : Compute total energy density (units: eV cm^{-3})
-    P_tot : Compute total pressure (units: eV cm^{-3})
-    H : Compute Hubble parameter (units: s^{-1})
-    aH : Compute conformal Hubble parameter (units: Mpc^{-1})
-    aH_prime : Compute derivative of conformal Hubble (units: Mpc^{-1})
-    d2adtau2_over_a : Compute second derivative of scale factor (units: Mpc^{-2})
-    tau : Compute conformal time (units: Mpc)
-    z_d : Compute baryon decoupling redshift (units: dimensionless)
-    rs_d : Compute sound horizon at decoupling (units: Mpc)
-
-    Recombination Related Methods:
-    ------------------------------
-    xe : Compute free electron fraction (units: dimensionless)
-    Tm : Compute matter temperature (units: eV)
-    mu_bar : Compute mean molecular mass (units: eV)
-    cs2 : Compute baryon sound speed squared (units: dimensionless)
-    nH : Compute hydrogen number density (units: cm^{-3})
-    TCMB : Compute CMB temperature (units: eV)
-    tau_c : Compute Thomson scattering time (units: Mpc)
-    kappa : Compute optical depth (units: dimensionless)
-    visibility : Compute visibility function (units: Mpc^{-1})
+    Methods:
+    --------
+    rho_tot, P_tot, H, aH, aH_prime, d2adtau2_over_a
+    tau, nH, TCMB, R_ratio_lna
     """
 
-    # params : dict
     species_list : tuple
- 
-    lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000) # Axis for tabulating conformal time.
-    tau_tab : jnp.array                     # Tabulated conformal time. 
-    tau0 : float # Conformal time today
 
-    # Recombination related
-    xe_tab     : "array_with_padding"
-    lna_xe_tab : "array_with_padding"
-    Tm_tab     : "array_with_padding"
-    lna_Tm_tab : "array_with_padding"
-    kappa_func : "diffrax.solution"
-    z_reion    : float
-    tau_reion  : float 
-    lna_rec    : float
-    rA_rec     : float # Comoving angular diameter distance at recombination.
+    lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000)
+    tau_tab : jnp.array
+    tau0 : float
 
-    # Transfer related
-    lna_transfer_start : float # Time where transfer functions start integrating.
-    lna_visibility_stop : float # Time to stop integrating T1, T2, and E sources due to small visibility functions. Only used for l<400
+    recomb_inputs : "RecombInputs"
 
     adjoint : "diffrax.adjoint" = eqx.field(static=True)
 
-    def __init__(self, params, species_list, RecModel, ReionModel, adjoint=ForwardMode):
+    def __init__(self, params, species_list, RecModel, adjoint=ForwardMode):
         """
-        Initialize Background cosmology module.
+        Initialize pre-recombination background.
 
-        Computes and tabulates conformal time, recombination history,
-        optical depth, and key cosmological epochs.
+        Tabulates conformal time and builds the ``RecombInputs`` struct
+        HyRex consumes. No reionization correction or optical-depth
+        integration is done here — those depend on the recombination
+        history and live on the post-recomb ``Background`` subclass.
 
         Parameters:
         -----------
@@ -122,54 +75,29 @@ class Background(eqx.Module):
             Cosmological parameters
         species_list : tuple
             List of fluid species for energy density calculations
-        RecModel : callable
-            Recombination module for computing xe and Tm histories
-        ReionModel : callable
-            Reionization module for computing the xe correction.
+        RecModel : hyrex.recomb_model
+            Used for its ``lna_axis_full`` sampling grid (not called here).
+        adjoint : diffrax.adjoint, optional
+            Adjoint class for diffrax solves (default: ForwardMode)
         """
         self.adjoint = adjoint
-        # self.params = params
         self.species_list = species_list
 
         self.tau_tab = self._tabulate_conformal_time(params)
-        self.tau0 =self.tau(0.)
+        self.tau0 = self.tau(0.)
 
-        self.run_recombination(params, RecModel, ReionModel)
-
-        # Find approximate maximum of visibility function.
-        lna_vals = jnp.linspace(-8.0, -4.0, 1500) # Decoupling should have happened at some time in this interval.
-        vis_vals = vmap(self.visibility,in_axes=[0,None])(lna_vals, params)
-        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
-        self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
-        self.rA_rec = self.tau0 - self.tau(self.lna_rec)
-
-        # Find approximate early time when aH x tau_c = 0.008
-        lna_vals = jnp.linspace(-15.0, -6.0, 5000)
-        aH_tau_c_vals = vmap(self.aH,in_axes=[0,None])(lna_vals,params)*self.tau_c(lna_vals,params)
-        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
-
-    def run_recombination(self, params, RecModel, ReionModel):
-        """
-        Call HyRex to get the primary recombination history, then patch on tanh reionization.
-        For now assumes the user will specify tau_reio. 
-        """
-        ### RECOMBINATION ###
-
-        # Run hyrex to tabulate recombination output
-        xe, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = RecModel((self,params))
-
-        ### REIONIZATION ###
-        reion_model = ReionModel(self, params)
-        self.z_reion = reion_model.z_reion
-        self.tau_reion = reion_model.tau_reion
-
-        xe_reion_correction = reion_model.xe_reion(self.lna_xe_tab.arr, self.z_reion, params)
-        xe_full_arr = xe_reion_correction + xe.arr 
-        xe_full = array_with_padding(xe_full_arr)
-
-        self.xe_tab = xe_full
-
-        self.kappa_func = self._tabulate_optical_depth(params)
+        # Bundle the background quantities HyRex needs onto its sampling
+        # grid. Phase 2 ships these to CPU (see ``Model.__call__``); for
+        # standard cosmologies the linear interpolation against this dense
+        # grid is accurate to ~3e-8 (h^2/8 with h=5e-4) — well below
+        # accuracy_test tolerances.
+        lna_axis = RecModel.lna_axis_full
+        self.recomb_inputs = RecombInputs(
+            lna_grid = lna_axis,
+            TCMB_arr = vmap(self.TCMB, in_axes=[0, None])(lna_axis, params),
+            nH_arr   = vmap(self.nH,   in_axes=[0, None])(lna_axis, params),
+            H_arr    = vmap(self.H,    in_axes=[0, None])(lna_axis, params),
+        )
 
     def rho_tot(self, lna, params):
         """
@@ -188,16 +116,12 @@ class Background(eqx.Module):
         --------
         float
             Total energy density (units: eV cm^{-3})
-
-        Notes:
-        ------
-        User should not modify this function without careful consideration.
         """
         rho_tot = 0.
         for i in range(len(self.species_list)):
             rho_tot += self.species_list[i].rho(lna, params)
         return rho_tot
-    
+
     def P_tot(self, lna, params):
         """
         Compute total pressure.
@@ -215,10 +139,6 @@ class Background(eqx.Module):
         --------
         float
             Total pressure (units: eV cm^{-3})
-
-        Notes:
-        ------
-        User should not modify this function without careful consideration.
         """
         P_tot = 0.
         for i in range(len(self.species_list)):
@@ -266,7 +186,7 @@ class Background(eqx.Module):
             Conformal Hubble parameter (units: Mpc^{-1})
         """
         return jnp.exp(lna)*self.H(lna, params) / cnst.c_Mpc_over_s
-    
+
     def aH_prime(self, lna, params):
         """
         Compute derivative of conformal Hubble parameter.
@@ -307,9 +227,8 @@ class Background(eqx.Module):
         float
             Second derivative of scale factor (units: Mpc^{-2})
         """
-
         return self.aH(lna, params)**2 + self.aH(lna, params)*self.aH_prime(lna, params)
-    
+
     def _dtau_dlna(self, lna, y, args):
         """
         Compute derivative of conformal time with respect to ln(a).
@@ -416,18 +335,189 @@ class Background(eqx.Module):
         --------
         float
             Conformal time (units: Mpc)
-
-        Notes:
-        ------
-        IDEA: Make Background a repeatedly initiated module with both
-        species_list and params stored. Upon initiation, a full history
-        of conformal time is calculated with diffrax and stored for
-        interpolation. This can be done by approximating early time with
-        radiation approximation, and starting diffrax integration at the
-        early time with appropriate initial conditions.
         """
-
         return tools.fast_interp(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1], self.tau_tab)
+
+    def nH(self, lna, params):
+        """
+        Compute hydrogen number density.
+
+        Calculates total hydrogen number density at given redshift.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            Hydrogen number density (units: cm^{-3})
+        """
+        return (1-params['YHe']) * 3. * params['omega_b'] * cnst.H0_over_h**2 / 8 / jnp.pi / cnst.G / cnst.mH / jnp.exp(lna)**3
+
+    def TCMB(self, lna, params):
+        """
+        Compute CMB temperature.
+
+        Calculates CMB temperature at given redshift using T ∝ 1/a scaling.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            CMB temperature (units: eV)
+        """
+        return params['TCMB0'] / jnp.exp(lna)
+
+    def R_ratio_lna(self, lna, params):
+        """
+        Compute baryon drag ratio.
+
+        Calculates R = 3ρ_b/(4ρ_γ), the ratio of baryon to photon
+        energy densities that appears in baryon drag calculations.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            Baryon drag ratio (units: dimensionless)
+        """
+        rho_b = 0.
+        rho_g = 0.
+
+        for s in self.species_list:
+            if s.name == "Photon":
+                rho_g += s.rho(lna, params)
+            elif s.name == "Baryon":
+                rho_b += s.rho(lna, params)
+
+        return 3. * rho_b / (4 * rho_g)
+
+
+class Background(BackgroundPreRecomb):
+    """
+    Full background-cosmology object: pre-recombination state plus
+    the recombination + reionization history and the optical-depth
+    tabulation.
+
+    Inherits all cosmology fields and methods from ``BackgroundPreRecomb``.
+    Construction takes a ``BackgroundPreRecomb`` (output of the GPU pre-recomb
+    stage) and the recombination output produced by HyRex on CPU, then
+    applies the reionization correction and integrates the optical depth.
+
+    Attributes:
+    -----------
+    xe_tab : array_with_padding
+        Tabulated free electron fraction xe with reionization correction.
+    lna_xe_tab : array_with_padding
+        Log scale factor axis corresponding to tabulated xe values.
+    Tm_tab : array_with_padding
+        Tabulated matter temperature Tm during recombination.
+    lna_Tm_tab : array_with_padding
+        Log scale factor axis corresponding to tabulated Tm values.
+    kappa_func : diffrax.solution
+        Optical depth function (dense interpolation).
+    z_reion : float
+        Redshift of hydrogen reionization in the CAMB parameterization.
+    tau_reion : float
+        Optical depth to reionization.
+    lna_rec : float
+        Log scale factor of recombination.
+    rA_rec : float
+        Comoving angular diameter distance at recombination in Mpc.
+    lna_transfer_start : float
+        Log scale factor at which to begin integrating transfer functions.
+    lna_visibility_stop : float
+        Log scale factor at which to stop integrating T1, T2, and E sources
+        due to small visibility functions. Only used for l<400.
+
+    Recombination Related Methods:
+    ------------------------------
+    xe : Compute free electron fraction (units: dimensionless)
+    Tm : Compute matter temperature (units: eV)
+    tau_c : Compute Thomson scattering time (units: Mpc)
+    expmkappa : Compute exp(-kappa) (units: dimensionless)
+    visibility : Compute visibility function (units: Mpc^{-1})
+    z_d : Compute baryon decoupling redshift (units: dimensionless)
+    rs_d : Compute sound horizon at decoupling (units: Mpc)
+    """
+
+    xe_tab     : "array_with_padding"
+    lna_xe_tab : "array_with_padding"
+    Tm_tab     : "array_with_padding"
+    lna_Tm_tab : "array_with_padding"
+    kappa_func : "diffrax.solution"
+    z_reion    : float
+    tau_reion  : float
+    lna_rec    : float
+    rA_rec     : float
+
+    lna_transfer_start : float
+    lna_visibility_stop : float
+
+    def __init__(self, pre_BG, recomb_output, params, ReionModel):
+        """
+        Construct full Background from a pre-recomb stage and the HyRex output.
+
+        Parameters:
+        -----------
+        pre_BG : BackgroundPreRecomb
+            Output of the GPU pre-recomb stage; provides species_list,
+            tau_tab, tau0, recomb_inputs, adjoint.
+        recomb_output : tuple
+            HyRex's ``(xe, lna_xe, Tm, lna_Tm)`` quadruple — the result of
+            running ``RecModel((pre_BG.recomb_inputs, params))`` on CPU.
+        params : dict
+            Cosmological parameters.
+        ReionModel : type
+            ``ReionizationModelFromZ`` or ``ReionizationModelFromTau``.
+        """
+        # Copy pre-recomb fields onto self.
+        self.adjoint = pre_BG.adjoint
+        self.species_list = pre_BG.species_list
+        self.tau_tab = pre_BG.tau_tab
+        self.tau0 = pre_BG.tau0
+        self.recomb_inputs = pre_BG.recomb_inputs
+
+        # Unpack HyRex output and apply reionization correction.
+        xe, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = recomb_output
+
+        reion_model = ReionModel(self, params)
+        self.z_reion = reion_model.z_reion
+        self.tau_reion = reion_model.tau_reion
+
+        xe_reion_correction = reion_model.xe_reion(self.lna_xe_tab.arr, self.z_reion, params)
+        xe_full_arr = xe_reion_correction + xe.arr
+        self.xe_tab = array_with_padding(xe_full_arr)
+
+        self.kappa_func = self._tabulate_optical_depth(params)
+
+        # Find approximate maximum of visibility function.
+        lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
+        vis_vals = vmap(self.visibility, in_axes=[0, None])(lna_vals, params)
+        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
+        self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
+        self.rA_rec = self.tau0 - self.tau(self.lna_rec)
+
+        # Find approximate early time when aH x tau_c = 0.008
+        lna_vals = jnp.linspace(-15.0, -6.0, 5000)
+        aH_tau_c_vals = vmap(self.aH, in_axes=[0, None])(lna_vals, params) * self.tau_c(lna_vals, params)
+        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
 
     ### RECOMBINATION RELATED ###
 
@@ -447,16 +537,6 @@ class Background(eqx.Module):
         --------
         float
             Free electron fraction (units: dimensionless)
-
-        Notes:
-        ------
-        The logic flow is equivalent to:
-
-        if lna < self.lna_xe_tab.arr[0]: return self.xe_tab[0]
-
-        elif lna > self.lna_xe_tab.lastval: return self.xe_tab.lastval
-
-        else: return jnp.interp(lna, self.lna_xe_tab, self.xe_tab)
         """
         return jnp.where(
             lna < self.lna_xe_tab.arr[0],
@@ -524,46 +604,6 @@ class Background(eqx.Module):
             )
         )
 
-    def nH(self, lna, params):
-        """
-        Compute hydrogen number density.
-
-        Calculates total hydrogen number density at given redshift.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        params : dict
-            Cosmological parameters
-
-        Returns:
-        --------
-        float
-            Hydrogen number density (units: cm^{-3})
-        """
-        return (1-params['YHe']) * 3. * params['omega_b'] * cnst.H0_over_h**2 / 8 / jnp.pi / cnst.G / cnst.mH / jnp.exp(lna)**3
-
-    def TCMB(self,lna, params):
-        """
-        Compute CMB temperature.
-
-        Calculates CMB temperature at given redshift using T ∝ 1/a scaling.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        params : dict
-            Cosmological parameters
-
-        Returns:
-        --------
-        float
-            CMB temperature (units: eV)
-        """
-        return params['TCMB0'] / jnp.exp(lna)
-
     def tau_c(self, lna, params):
         """
         Compute Thomson scattering time.
@@ -603,11 +643,6 @@ class Background(eqx.Module):
         --------
         array
             Tabulated optical depth values (units: dimensionless)
-
-        Notes:
-        ------
-        Also computes time derivative of optical depth, which is the
-        integrand involving the free electron fraction.
         """
         integrand = lambda lna, y, args: -1./self.tau_c(lna, params)/self.aH(lna, params)
         term = ODETerm(integrand)
@@ -615,13 +650,13 @@ class Background(eqx.Module):
         adjoint=self.adjoint()
         sol = diffeqsolve(
             term,
-            solver=Kvaerno5(),           
+            solver=Kvaerno5(),
             stepsize_controller=stepsize_controller,
-            t0=0.,                
-            t1=-10.,                  
-            dt0=-1.e-3,                 
+            t0=0.,
+            t1=-10.,
+            dt0=-1.e-3,
             max_steps=2048,
-            y0=0.0,                     
+            y0=0.0,
             saveat=SaveAt(dense=True),
             adjoint=adjoint
         )
@@ -629,7 +664,7 @@ class Background(eqx.Module):
 
     def expmkappa(self, lna):
         """
-        Compute optical depth.
+        Compute exp(-optical depth).
 
         Interpolates from pre-tabulated optical depth history.
 
@@ -641,9 +676,8 @@ class Background(eqx.Module):
         Returns:
         --------
         float
-            Optical depth (units: dimensionless)
+            exp(-κ) (units: dimensionless)
         """
-
         return jnp.where(
             lna < -10.,
             0.,
@@ -669,10 +703,6 @@ class Background(eqx.Module):
         --------
         float
             Visibility function (units: Mpc^{-1})
-
-        Notes:
-        ------
-        Used in computing source functions for CMB anisotropies.
         """
         return self.expmkappa(lna)/self.tau_c(lna, params)
 
@@ -699,12 +729,10 @@ class Background(eqx.Module):
         float
             Decoupling redshift (units: dimensionless)
         """
-        # ensure sorted ascending
         idx = jnp.argsort(z)
         z_sorted = z[idx]
         kappa_d_sorted = jnp.abs(kappa_d)[idx]
 
-        # interpolate
         z_d = jnp.interp(1.0, kappa_d_sorted, z_sorted)
         return z_d
 
@@ -731,37 +759,6 @@ class Background(eqx.Module):
         rs_sorted = r_s[idx]
         return jnp.interp(z_d, z_sorted, rs_sorted)
 
-    def R_ratio_lna(self, lna, params):
-        """
-        Compute baryon drag ratio.
-
-        Calculates R = 3ρ_b/(4ρ_γ), the ratio of baryon to photon
-        energy densities that appears in baryon drag calculations.
-
-        Parameters:
-        -----------
-        lna : float
-            Logarithm of scale factor
-        params : dict
-            Cosmological parameters
-
-        Returns:
-        --------
-        float
-            Baryon drag ratio (units: dimensionless)
-        """
-
-        rho_b = 0.
-        rho_g = 0.
-
-        for s in self.species_list:
-            if s.name == "Photon":
-                rho_g += s.rho(lna, params)
-            elif s.name == "Baryon":
-                rho_b += s.rho(lna, params)
-
-        return 3. * rho_b / (4 * rho_g)
-
     @jax.named_scope("tabulate kappa d")
     def _tabulate_kappa_d(self, params):
         """
@@ -784,17 +781,17 @@ class Background(eqx.Module):
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=self.adjoint()
-        
+
         solution = diffeqsolve(
             term,
-            solver=Tsit5(),            # Kvaerno5 is just slower but gives same result
+            solver=Tsit5(),
             stepsize_controller=stepsize_controller,
-            t0=self.lna_tau_tab[-1],                 # Initial x value (~0 in this case)
-            t1=self.lna_tau_tab[0],                  # Final x value (smallest x value)
-            dt0=-1e-3,                  # Initial step size
+            t0=self.lna_tau_tab[-1],
+            t1=self.lna_tau_tab[0],
+            dt0=-1e-3,
             max_steps=2048,
-            y0=0.0,                     # Initial value tau(x=0) = 0
-            saveat=SaveAt(ts=self.lna_tau_tab[::-1]), # Save at all points in x, reverse order since integrating backwards
+            y0=0.0,
+            saveat=SaveAt(ts=self.lna_tau_tab[::-1]),
             adjoint=adjoint
         )
         result = solution.ys[::-1]
@@ -818,19 +815,18 @@ class Background(eqx.Module):
         array
             Tabulated sound horizon values (units: Mpc)
         """
-         # initial condition assuming cs**2 = 1/3 at early times
         rs0 = 1./jnp.sqrt(3) / (self.aH( self.lna_tau_tab[0], params ))
 
         integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna, params))) / (self.aH(lna, params))
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
         adjoint=self.adjoint()
-        
+
         solution = diffeqsolve(
             term,
             solver=Tsit5(),
             stepsize_controller=stepsize_controller,
-            t0=self.lna_tau_tab[0],                 # reversed direction since I know rs at early times
+            t0=self.lna_tau_tab[0],
             t1=self.lna_tau_tab[-1],
             dt0=1e-3,
             max_steps=2048,
@@ -840,7 +836,6 @@ class Background(eqx.Module):
         )
         result = solution.ys
         return result
-        
 
     def z_d(self, params):
         """
@@ -879,14 +874,15 @@ class Background(eqx.Module):
         """
         return self.interp_rs_at_z(1/jnp.exp(self.lna_tau_tab) - 1, self._tabulate_rs(params), self.z_d(params))
 
+
 class ReionizationModel(eqx.Module):
     """
     Object for computing the reionization correction to the free electron fraction.
-    Provides the base methods 
+    Provides the base methods
 
     xe_reion : calculates the tanh electron fraction correction at redshifts lna, given z_reion and params
     tau_reion_fn : calculates the optical depth to reionization.
-    
+
     At the moment we only support the CAMB tanh parameterization, but we need different approaches
     based on whether the use inputs the optical depth tau_reion or the reionization redshift z_reion.
 
@@ -898,7 +894,7 @@ class ReionizationModel(eqx.Module):
     def xe_reion(self, lna, z_reion, params):
         """
         Passing in an lna array should get you the correct tanh patching based on the
-        reionization parameter. 
+        reionization parameter.
         """
         fHe = params['YHe'] / 4 / (1-params['YHe'])
         z = 1/jnp.exp(lna) - 1
@@ -919,7 +915,7 @@ class ReionizationModel(eqx.Module):
     def tau_reion_fn(self, z_reion, BG, params):
         lna_axis = jnp.linspace(-5., 0., 2000)
         xe_reion_correction = self.xe_reion(lna_axis, z_reion, params)
-        # Free electron number density belonging only to reionized hydrogen. 
+        # Free electron number density belonging only to reionized hydrogen.
         ne = BG.nH(lna_axis, params) * xe_reion_correction
         Gamma = jnp.exp(lna_axis)*ne*cnst.thomson_xsec*cnst.c/cnst.c_Mpc_over_s
         aH = BG.aH(lna_axis, params)
