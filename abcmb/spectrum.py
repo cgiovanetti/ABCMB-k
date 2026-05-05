@@ -411,15 +411,27 @@ class SpectrumSolver(eqx.Module):
         coeff = 8.*jnp.pi**2/(ells+0.5)**3
         chi = lambda lna : BG.tau0 - BG.tau(lna)
 
-        def integrand_func(lna):
-            k = (ells+0.5)/chi(lna)
-            window = (chi(BG.lna_rec) - chi(lna))/chi(BG.lna_rec)/chi(lna)
-            res = chi(lna)/BG.aH(lna, params) * window**2 * self.lensing_power_spectrum(k, lna, PT, BG, params)
-            return res
-
+        # The previous jnp.nan_to_num(integrand, nan=0.) here masked the
+        # forward NaN but left a 0*NaN cotangent in the backward through
+        # the where-mask that nan_to_num secretly expands to, which
+        # propagated through BG.tau. Fix: substitute lna_safe everywhere,
+        # then mask the result to 0 at the boundary.
         lna_axis = jnp.linspace(BG.lna_rec, 0., 500)
+        lna_floor = lna_axis[-2]
+
+        def integrand_func(lna):
+            lna_safe = jnp.where(lna < 0., lna, lna_floor)
+            chi_safe = chi(lna_safe)
+            k = (ells+0.5)/chi_safe
+            window = (chi(BG.lna_rec) - chi_safe)/chi(BG.lna_rec)/chi_safe
+            res = (
+                chi_safe / BG.aH(lna_safe, params)
+                * window**2
+                * self.lensing_power_spectrum(k, lna_safe, PT, BG, params)
+            )
+            return jnp.where(lna < 0., res, 0.)
+
         integrand = vmap(integrand_func)(lna_axis)
-        integrand = jnp.nan_to_num(integrand, nan=0.)
         return coeff*jnp.trapezoid(integrand, lna_axis, axis=0)
 
     def lensed_Cls(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, PT, BG, params):
