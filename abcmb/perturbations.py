@@ -40,6 +40,8 @@ class PerturbationEvolver(eqx.Module):
         A list of wavenumbers k at which to compute perturbations
     specs : dict 
         A dictionary containing run options
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves.  Default is ForwardMode.
 
     Methods:
     --------
@@ -283,14 +285,12 @@ class PerturbationEvolver(eqx.Module):
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
-        # Root finder: VeryChord (Kvaerno5's default Chord-method root
-        # finder), with kappa pulled from specs["kappa_PE"] (default
-        # 0.01 = diffrax default; user-tunable). If reverse-AD produces
-        # NaN cotangents on omega_b/omega_cdm, decrease kappa_PE in specs
-        # (e.g. to 1e-3) to tighten Newton convergence. The default kappa
-        # silently accepts a Newton residual that is not tight enough
-        # for ABCMB's stiff linear PE Jacobian under reverse-AD; see
-        # CHANGELOG 2026-05-12.
+        # LCDM defaults for very high k sometimes failed with reverseAD.
+        # The reason for that was the default precision parameter in
+        # the Kvaerno5 rootfinder (via VeryChord).  Parameter now read
+        # in from specs; if reverse-AD produces NaNs (especially on omega_b/
+        # omega_cdm), decrease kappa_PE in specs (e.g. to 1e-3) to tighten 
+        # convergence.
         _rf = eqx.tree_at(
             lambda s: s.kappa,
             with_stepsize_controller_tols(VeryChord)(),
