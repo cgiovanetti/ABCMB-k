@@ -40,6 +40,9 @@ class AbundanceModel(eqx.Module):
         Binding energy of each species. 
     species_mass : list
         Mass of each species. 
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves.  Defaults
+        to ForwardMode.
     """
     
     nuclear_net : nucl.NuclearRates  
