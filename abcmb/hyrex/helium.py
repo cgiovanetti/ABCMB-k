@@ -56,7 +56,8 @@ class helium_model(eqx.Module):
         z1 : float, optional
             Final redshift (default: 20.)
         adjoint : diffrax.adjoint
-            Adjoint mode for diffrax solves (static field).
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.concrete_axis_size_postSahaHe = jnp.zeros(Nsteps_postSahaHe)

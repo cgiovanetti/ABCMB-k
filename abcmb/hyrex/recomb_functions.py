@@ -13,10 +13,7 @@ R_tab     = jnp.array(np.loadtxt(file_dir+"/tabs/R_inf.dat"))
 #Tabulated values of 2s-2p transition rates to interpolate.
 alpha_tab = jnp.array(np.loadtxt(file_dir+"/tabs/Alpha_inf.dat"))
 
-# Phase 2 of the HyRex CPU lift: the recombination model now executes
-# under ``eqx.filter_jit(backend='cpu')`` (orchestrated from
-# ``Model.__call__``), so these lookup tables should live on CPU. Pinning
-# them to CPU here avoids per-call device migration when HyRex traces.
+# pin to CPU
 try:
     cpus = devices('cpu')
     R_tab = device_put(R_tab, device=cpus[0])
