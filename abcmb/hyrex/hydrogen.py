@@ -70,6 +70,9 @@ class hydrogen_model(eqx.Module):
             Maximum number of integration steps (default: 800)
         swift : array, optional
             SWIFT correction function tabulation
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.swift = swift
@@ -259,11 +262,9 @@ class hydrogen_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
         # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
-        # checkpointing. max_steps must be a static upper bound; the output
-        # axis size serves that role here.
+        # checkpointing. max_steps must be a static upper bound
         final_state = eqx.internal.while_loop(
             stop_condition, compute_xe, initial_state,
             max_steps=self.concrete_axis_size.size,
