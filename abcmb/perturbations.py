@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import vmap, lax
 import diffrax
+from diffrax import with_stepsize_controller_tols
+from diffrax._root_finder import VeryChord
 import equinox as eqx
 
 from . import constants as cnst
@@ -281,7 +283,20 @@ class PerturbationEvolver(eqx.Module):
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
-        solver = diffrax.Kvaerno5()
+        # Root finder: VeryChord (Kvaerno5's default Chord-method root
+        # finder), with kappa pulled from specs["kappa_PE"] (default
+        # 0.01 = diffrax default; user-tunable). If reverse-AD produces
+        # NaN cotangents on omega_b/omega_cdm, decrease kappa_PE in specs
+        # (e.g. to 1e-3) to tighten Newton convergence. The default kappa
+        # silently accepts a Newton residual that is not tight enough
+        # for ABCMB's stiff linear PE Jacobian under reverse-AD; see
+        # CHANGELOG 2026-05-12.
+        _rf = eqx.tree_at(
+            lambda s: s.kappa,
+            with_stepsize_controller_tols(VeryChord)(),
+            replace=self.specs["kappa_PE"],
+        )
+        solver = diffrax.Kvaerno5(root_finder=_rf)
 
         rtol=jnp.where(
             k > self.specs["k_split_PE"],

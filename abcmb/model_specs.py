@@ -67,6 +67,17 @@ def load_specs(input_specs):
     specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)
     specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
+    # Newton convergence threshold for Kvaerno5's VeryChord root finder.
+    # diffrax default 0.01 is fine for FORWARD-only use, but the
+    # corresponding Newton iterate has a non-tight residual that can
+    # NaN reverse-mode AD on the lensing=True extension k-axis.
+    # If you encounter NaN cotangents under jax.grad / eqx.filter_grad,
+    # DECREASE this value (i.e. make it smaller, e.g. 1e-3) to tighten
+    # the convergence check. Tighter values cost a few extra Newton
+    # iterations per step in marginal cases; the forward result is also
+    # slightly more accurate but the effect on integrated outputs
+    # (Cl's, Pk) is small.
+    specs["kappa_PE"]        = input_specs.get("kappa_PE", 0.01)
 
     ### Physical contributions to CMB temperature transfer function ###
     specs["scale_sw"]  = input_specs.get("scale_sw", 1)
