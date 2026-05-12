@@ -191,8 +191,13 @@ class PerturbationEvolver(eqx.Module):
 
         metric_eta_ini = (1.-k**2*tau_ini**2/12./(15.+4.*params['R_nu'])*(5.+4.*params['R_nu'] - (16.*params['R_nu']*params['R_nu']+280.*params['R_nu']+325)/10./(2.*params['R_nu']+15.)*tau_ini*om))
 
-        all_fluid_ini = jnp.concatenate([p.y_ini(k, tau_ini, params) for p in self.species_list])
-        y_ini = jnp.concatenate((jnp.array([metric_eta_ini]), all_fluid_ini))
+        total = 1 + sum(p.num_moments for p in self.species_list)
+        y_ini = jnp.zeros(total).at[0].set(metric_eta_ini)
+        offset = 1
+        for p in self.species_list:
+            ini = p.y_ini(k, tau_ini, params)
+            y_ini = y_ini.at[offset:offset+p.num_moments].set(ini)
+            offset += p.num_moments
         
         return y_ini
 
@@ -238,10 +243,13 @@ class PerturbationEvolver(eqx.Module):
 
         # Now loop over all species and assemble their respective y_primes
         args = (BG, params, self.species_list, self.species_dict)
-        y_prime = jnp.array([metric_eta_prime])
-        for i in range(len(self.species_list)):
-            species = self.species_list[i]
-            y_prime = jnp.concatenate((y_prime, species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, args)))
+        total = 1 + sum(s.num_moments for s in self.species_list)
+        y_prime = jnp.zeros(total).at[0].set(metric_eta_prime)
+        offset = 1
+        for species in self.species_list:
+            sp = species.y_prime(k, lna, metric_h_prime, metric_eta_prime, y, args)
+            y_prime = y_prime.at[offset:offset+species.num_moments].set(sp)
+            offset += species.num_moments
 
         return y_prime
 
