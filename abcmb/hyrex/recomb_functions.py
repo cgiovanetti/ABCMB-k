@@ -14,12 +14,9 @@ R_tab     = jnp.array(np.loadtxt(file_dir+"/tabs/R_inf.dat"))
 alpha_tab = jnp.array(np.loadtxt(file_dir+"/tabs/Alpha_inf.dat"))
 
 # pin to CPU
-try:
-    cpus = devices('cpu')
-    R_tab = device_put(R_tab, device=cpus[0])
-    alpha_tab = device_put(alpha_tab, device=cpus[0])
-except Exception:
-    pass
+cpus = devices('cpu')
+R_tab = device_put(R_tab, device=cpus[0])
+alpha_tab = device_put(alpha_tab, device=cpus[0])
 
 # File handling and interpolating related constants.
 # Do not change these unless something about the tabulated files have changed.
