@@ -108,6 +108,11 @@ class Model(eqx.Module):
         # tracing). Default preserves prior ForwardMode behavior.
         adjoint = kwargs.pop("adjoint", diffrax.ForwardMode)
 
+        # If user requested RecursiveCheckpointAdjoint, auto-
+        # tighten kappa_PE to a reverse-AD-safe value (unless another value is specified)
+        if adjoint is diffrax.RecursiveCheckpointAdjoint and "kappa_PE" not in kwargs:
+            kwargs["kappa_PE"] = 1e-3
+
         # Fill in all user defined and missing specs parameters
         specs = model_specs.load_specs(kwargs)
         self.specs = specs
