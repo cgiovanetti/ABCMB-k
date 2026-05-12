@@ -613,7 +613,7 @@ class MasslessNeutrino(StandardFluid):
         
         # Return the four non-zero ell modes, and all higher ell-modes are zero to start.
         # For the neutrinos we track Fnu_2 = 2*sigma, for better structure within the hierarchy.
-        return jnp.zeros(self.num_moments).at[:3].set(jnp.array([delta, theta, sigma]))
+        return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_moments-3)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -661,11 +661,7 @@ class MasslessNeutrino(StandardFluid):
         Fl_prime    = 1./(2.*L+1.)*k/aH * (L*F[L-1]-(L+1)*F[L+1])
         Flmax_prime = k/aH*F[lmax-1] - (lmax+1)/aH/tau*F[lmax]
 
-        res = jnp.zeros(self.num_moments)
-        res = res.at[:4].set(jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]))
-        res = res.at[4:lmax].set(Fl_prime)
-        res = res.at[lmax].set(Flmax_prime)
-        return res
+        return jnp.concatenate((jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]), Fl_prime, jnp.array([Flmax_prime])))
 
 class MassiveNeutrino(Fluid):
     """
@@ -806,7 +802,6 @@ class MassiveNeutrino(Fluid):
             Initial perturbation mode values (units: 1/Mpc for kPsi1, else dimensionless)
         """
         params = args
-        res = jnp.zeros(self.num_moments)
 
         # Initial conditions for massless neutrinos first, needed here.
         R_nu = params['R_nu']
@@ -816,18 +811,14 @@ class MassiveNeutrino(Fluid):
                 * (4.*R_nu+11.+12.-3.*(8.*R_nu**2+50.*R_nu+275.)/20./(2.*R_nu+15.)*tau_ini*params["om"])
         sigma = (k*tau_ini)**2/(45.+12.*R_nu) * 2. * (1.+(4.*R_nu-5.)/4./(2.*R_nu+15.)*tau_ini*params["om"])
 
-        idx_q1 = 0 # Psi0 index of first q
-        idx_q2 = idx_q1 + self.num_ells_per_bin # Psi0 index of second q
-        idx_q3 = idx_q2 + self.num_ells_per_bin # Psi0 index of third q
-
+        bins = []
         for i in range(3):
-            q  = self.q_3p[i] # This momentum bin.
-            iq = i*self.num_ells_per_bin # Index in diffrax array of this momentum bin.
+            q = self.q_3p[i]
             # ZZ : Techniclly Psi1 requires epsilon/q = 1/v, but at early times this should be 1. Should check this accuracy!
             first_three = jnp.array([delta/4., theta/3., sigma/2.]) * q / (1.+jnp.exp(-q))
-            res = res.at[iq:iq+3].set(first_three)
+            bins.append(jnp.concatenate((first_three, jnp.zeros(self.num_ells_per_bin - 3))))
 
-        return res
+        return jnp.concatenate(bins)
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -854,7 +845,6 @@ class MassiveNeutrino(Fluid):
             Time derivatives of perturbation modes (units: 1/Mpc for kPsi1, else dimensionless)
         """
         BG, params, _, _ = args
-        res = jnp.zeros(self.num_moments)
 
         a = jnp.exp(lna)
         T = params['T_nu_massive'] * params['TCMB0'] / a
@@ -863,6 +853,7 @@ class MassiveNeutrino(Fluid):
         tau = BG.tau(lna)
 
         # Iterate through momentum bins
+        bins = []
         for i in range(3):
             q = self.q_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
@@ -875,7 +866,7 @@ class MassiveNeutrino(Fluid):
             Psi0_prime = -q/epsilon/aH*Psi[1] + metric_h_prime/6. * dlnf0_dlnq
             kPsi1_prime = q*k**2/3./epsilon/aH * (Psi[0] - 2.*Psi[2])
             Psi2_prime = q*k/5./epsilon/aH * (2.*Psi[1]/k - 3.*Psi[3]) - (metric_h_prime/15. + 2.*metric_eta_prime/5.) * dlnf0_dlnq
-            
+
             # Intermediate hierarchy, 3<=L<lmax
             lmax = self.num_ells_per_bin - 1
             L_inter = jnp.arange(3, lmax) # Doesn't include lmax.
@@ -885,12 +876,9 @@ class MassiveNeutrino(Fluid):
             Psi_lmax_prime = q*k/aH/epsilon*Psi[lmax-1] - (lmax+1)/aH/tau*Psi[lmax]
 
             # Putting it all together
-            iq = i * self.num_ells_per_bin
-            res = res.at[iq:iq+3].set(jnp.array([Psi0_prime, kPsi1_prime, Psi2_prime]))
-            res = res.at[iq+3:iq+lmax].set(Psi_inter_prime)
-            res = res.at[iq+lmax].set(Psi_lmax_prime)
+            bins.append(jnp.concatenate((jnp.array([Psi0_prime, kPsi1_prime, Psi2_prime]), Psi_inter_prime, jnp.array([Psi_lmax_prime]))))
 
-        return res
+        return jnp.concatenate(bins)
 
     def rho_delta(self, lna, y, args):
         """
@@ -1280,7 +1268,7 @@ class Photon(StandardFluid):
         params = args
         delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
         theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*params["om"]*tau_ini)
-        return jnp.zeros(self.num_moments).at[:2].set(jnp.array([delta, theta]))
+        return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_moments - 2)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -1337,13 +1325,7 @@ class Photon(StandardFluid):
         # Polarization Boltzmann Hierarchy
         L = jnp.arange(0, Glmax) # Excludes the lmax mode
         Gl_prime    = 1./(2.*L+1.)*k/aH * (L*G[L-1]-(L+1)*G[L+1]) - G[L]/aH/tau_c \
-                    + (2.*sigma+G[0]+G[2])/2./aH/tau_c * jnp.zeros(Glmax).at[:3].set(jnp.array([1., 0., 0.2]))
+                    + (2.*sigma+G[0]+G[2])/2./aH/tau_c * jnp.concatenate((jnp.array([1., 0., 0.2]), jnp.zeros(Glmax-3)))
 
         Glmax_prime = k/aH*G[Glmax-1] - (Glmax+1)/aH/tau*G[Glmax] - G[Glmax]/aH/tau_c
-        res = jnp.zeros(self.num_moments)
-        res = res.at[:4].set(jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]))
-        res = res.at[4:Flmax].set(Fl_prime)
-        res = res.at[Flmax].set(Flmax_prime)
-        res = res.at[Flmax+1:Flmax+1+Glmax].set(Gl_prime)
-        res = res.at[Flmax+1+Glmax].set(Glmax_prime)
-        return res
+        return jnp.concatenate((jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]), Fl_prime, jnp.array([Flmax_prime]), Gl_prime, jnp.array([Glmax_prime])))
