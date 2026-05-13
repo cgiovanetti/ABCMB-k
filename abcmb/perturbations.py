@@ -403,6 +403,11 @@ class PerturbationEvolver(eqx.Module):
                            - 12.*jnp.pi*cnst.G*a**2/aH * sum_rho_plus_P_sigma / cnst.c_Mpc_over_s**2 / karr**2
 
 
+        species_perturbations = {
+            s.name: s.output_perturbations(lna, modes, args)
+            for s in self.species_list
+        }
+
         return PerturbationTable(
             k,
             lna,
@@ -421,6 +426,7 @@ class PerturbationEvolver(eqx.Module):
             metric_eta_prime,
             metric_alpha,
             metric_alpha_prime,
+            species_perturbations,
         )
 
 class PerturbationTable(eqx.Module):
@@ -466,6 +472,9 @@ class PerturbationTable(eqx.Module):
         Derived metric perturbation α
     metric_alpha_prime : array
         Time derivative of metric α
+    species_perturbations : dict
+        Raw perturbation modes for every species, keyed by species name.
+        Each value has shape (num_moments, Nlna, Nk).
     """
     k         : jnp.array
     lna       : jnp.array
@@ -485,3 +494,5 @@ class PerturbationTable(eqx.Module):
     metric_eta_prime : jnp.array
     metric_alpha   : jnp.array
     metric_alpha_prime : jnp.array
+
+    species_perturbations : dict

@@ -1,5 +1,5 @@
 #import abc
-from jax import config, lax
+from jax import config, lax, vmap
 import jax.numpy as jnp
 import equinox as eqx
 from . import constants as cnst
@@ -223,6 +223,30 @@ class Fluid(eqx.Module):
             Shear perturbation (units: eV cm^{-3})
         """
         raise NotImplementedError("Fluid species must implement a perturbation derivative function.")
+
+    def output_perturbations(self, lna, modes, args):
+        """
+        Return named perturbation arrays for storage in PerturbationTable.
+
+        Each concrete species overrides this to select the physically
+        meaningful subset of its modes. Species with no perturbations
+        (e.g. dark energy) return an empty dict via this base implementation.
+
+        Parameters:
+        -----------
+        lna : array, shape (Nlna,)
+            Logarithm of scale factor grid
+        modes : array, shape (Ny, Nlna, Nk)
+            Full perturbation state, already transposed
+        args : tuple
+            (BG, params) — background cosmology and cosmological parameters
+
+        Returns:
+        --------
+        dict
+            {quantity_name: array(Nlna, Nk)}. Empty for background-only species.
+        """
+        return {}
 
 class StandardFluid(Fluid):
     """
@@ -520,6 +544,9 @@ class ColdDarkMatter(StandardFluid):
         """
         return jnp.array([-0.5*metric_h_prime])
 
+    def output_perturbations(self, lna, modes, args):
+        return {"delta": modes[self.delta_idx]}
+
 class MasslessNeutrino(StandardFluid):
     """
     Massless neutrinos fluid species implementation.
@@ -662,6 +689,13 @@ class MasslessNeutrino(StandardFluid):
         Flmax_prime = k/aH*F[lmax-1] - (lmax+1)/aH/tau*F[lmax]
 
         return jnp.concatenate((jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]), Fl_prime, jnp.array([Flmax_prime])))
+
+    def output_perturbations(self, lna, modes, args):
+        return {
+            "delta": modes[self.delta_idx],
+            "theta": modes[self.delta_idx + 1],
+            "sigma": modes[self.delta_idx + 2],
+        }
 
 class MassiveNeutrino(Fluid):
     """
@@ -978,6 +1012,21 @@ class MassiveNeutrino(Fluid):
             res += w*(1.+jnp.exp(-q))/epsilon * Psi2
         return params['N_nu_massive'] * res * 8./3./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
 
+    def output_perturbations(self, lna, modes, args):
+        BG, params = args
+        rho  = vmap(self.rho, in_axes=(0, None))(lna, params)   # (Nlna,)
+        rhoP = rho + vmap(self.P, in_axes=(0, None))(lna, params)
+
+        rho_delta    = vmap(self.rho_delta,        in_axes=(0, 1, None))(lna, modes, params)  # (Nlna, Nk)
+        rho_P_theta  = vmap(self.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)
+        rho_P_sigma  = vmap(self.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, params)
+
+        return {
+            "delta": rho_delta   / rho[:, None],
+            "theta": rho_P_theta / rhoP[:, None],
+            "sigma": rho_P_sigma / rhoP[:, None],
+        }
+
 
 class Baryon(StandardFluid):
     """
@@ -1170,8 +1219,14 @@ class Baryon(StandardFluid):
         theta_g = y[photon.delta_idx+1]
         delta_prime = -theta/aH-metric_h_prime/2.
         theta_prime = -theta + cs2*k**2*delta/aH + R/tau_c/aH*(theta_g-theta)
-        
+
         return jnp.array([delta_prime, theta_prime])
+
+    def output_perturbations(self, lna, modes, args):
+        return {
+            "delta": modes[self.delta_idx],
+            "theta": modes[self.delta_idx + 1],
+        }
 
 class Photon(StandardFluid):
     """
@@ -1329,3 +1384,12 @@ class Photon(StandardFluid):
 
         Glmax_prime = k/aH*G[Glmax-1] - (Glmax+1)/aH/tau*G[Glmax] - G[Glmax]/aH/tau_c
         return jnp.concatenate((jnp.array([delta_prime, theta_prime, sigma_prime, F3_prime]), Fl_prime, jnp.array([Flmax_prime]), Gl_prime, jnp.array([Glmax_prime])))
+
+    def output_perturbations(self, lna, modes, args):
+        return {
+            "delta": modes[self.delta_idx],
+            "theta": modes[self.delta_idx + 1],
+            "sigma": modes[self.delta_idx + 2],
+            "G0":    modes[self.delta_idx + self.num_F_ell_modes],
+            "G2":    modes[self.delta_idx + self.num_F_ell_modes + 2],
+        }
