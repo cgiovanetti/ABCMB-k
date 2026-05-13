@@ -337,47 +337,35 @@ class PerturbationEvolver(eqx.Module):
         k = self.k_axis_perturbations
         BG, params = args
 
-        DarkMatter = self.species_list[0]
-        Baryon = self.species_list[0]
-
-        # Loop through species, pick out this model's dark matter and baryon.
-        for s in self.species_list:
-            if "baryon" in s.name.lower():
-                Baryon = s
-            if "darkmatter" in s.name.lower():
-                DarkMatter = s
-
-        Photon = self.species_list[self.species_dict["Photon"]]
-
-        # Shapes are (Nlna, Nk)
         metric_eta = modes[0]
-        delta_dm   = modes[DarkMatter.delta_idx]
-        delta_b    = modes[Baryon.delta_idx]
-        theta_b    = modes[Baryon.delta_idx+1]
-        delta_g    = modes[Photon.delta_idx]
-        theta_g    = modes[Photon.delta_idx+1]
-        sigma_g    = modes[Photon.delta_idx+2]
-        Gg0        = modes[Photon.delta_idx+Photon.num_F_ell_modes]
-        Gg2        = modes[Photon.delta_idx+Photon.num_F_ell_modes+2]
 
-        # Now the items that need to be backwards calculated.
-        karr = k[None, :]
-        a  = jnp.exp(lna)[:, None]
-        aH = BG.aH(lna, params)[:, None]
-        cs2 = Baryon.cs2(lna, (BG, params, self.species_list, self.species_dict))[:, None]
-        R = 4.*Photon.rho(lna, params)[:, None]/3./Baryon.rho(lna, params)[:, None]
+        # Build per-species perturbation dicts first; theta_b_prime draws from them.
+        species_perturbations = {
+            s.name: s.output_perturbations(lna, modes, (BG, params))
+            for s in self.species_list
+        }
+
+        # Baryon velocity derivative — backward-calculated from the Boltzmann equations.
+        # Requires Baryon and Photon objects for cs2 and the photon-baryon coupling R.
+        Baryon = self.species_list[self.species_dict["Baryon"]]
+        Photon = self.species_list[self.species_dict["Photon"]]
+        delta_b = species_perturbations["Baryon"]["delta"]
+        theta_b = species_perturbations["Baryon"]["theta"]
+        theta_g = species_perturbations["Photon"]["theta"]
+
+        karr  = k[None, :]
+        a     = jnp.exp(lna)[:, None]
+        aH    = BG.aH(lna, params)[:, None]
+        cs2   = Baryon.cs2(lna, (BG, params, self.species_list, self.species_dict))[:, None]
+        R     = 4.*Photon.rho(lna, params)[:, None]/3./Baryon.rho(lna, params)[:, None]
         tau_c = BG.tau_c(lna, params)[:, None]
 
-        # Baryon velocity derivative is needed for CMB
         theta_b_prime = -theta_b + cs2/aH*(karr**2*delta_b) + R/aH/tau_c*(theta_g-theta_b)
 
-        # Sum of density and velocity perturbations over all species.
-        # These are required again for the metric perturbation derivatives.
+        # Sum density/velocity/shear over all species for metric derivatives and delta_m.
         sum_rho_delta        = jnp.zeros_like(modes[0])
         sum_rho_plus_P_theta = jnp.zeros_like(modes[0])
         sum_rho_plus_P_sigma = jnp.zeros_like(modes[0])
-
-        # Also collect total matter rho_delta for delta_m down the line
         sum_rho_delta_m      = jnp.zeros_like(modes[0])
         sum_rho_m            = 0.
 
@@ -387,40 +375,24 @@ class PerturbationEvolver(eqx.Module):
                 sum_rho_delta        += rho_delta
                 sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)
                 sum_rho_plus_P_sigma += vmap(s.rho_plus_P_sigma, in_axes=(0, 1, None))(lna, modes, params)
-                
+
                 if s.is_matter:
                     sum_rho_delta_m += rho_delta
                     sum_rho_m       += s.rho(lna, params)
 
-        # Compute total matter perturbation
         delta_m = sum_rho_delta_m / sum_rho_m[:, None]
 
-        # Metric perturbation derivatives
-        metric_h_prime = 2./aH**2 * (karr**2*metric_eta + 4.*jnp.pi*cnst.G*a**2/cnst.c_Mpc_over_s**2 * sum_rho_delta)
-        metric_eta_prime = 4.*jnp.pi*cnst.G*a**2/aH * sum_rho_plus_P_theta / cnst.c_Mpc_over_s**2 / karr**2
-        metric_alpha = aH*(metric_h_prime + 6.*metric_eta_prime)/2./ karr**2
+        metric_h_prime     = 2./aH**2 * (karr**2*metric_eta + 4.*jnp.pi*cnst.G*a**2/cnst.c_Mpc_over_s**2 * sum_rho_delta)
+        metric_eta_prime   = 4.*jnp.pi*cnst.G*a**2/aH * sum_rho_plus_P_theta / cnst.c_Mpc_over_s**2 / karr**2
+        metric_alpha       = aH*(metric_h_prime + 6.*metric_eta_prime)/2./karr**2
         metric_alpha_prime = metric_eta/aH - 2.*metric_alpha \
                            - 12.*jnp.pi*cnst.G*a**2/aH * sum_rho_plus_P_sigma / cnst.c_Mpc_over_s**2 / karr**2
-
-
-        species_perturbations = {
-            s.name: s.output_perturbations(lna, modes, args)
-            for s in self.species_list
-        }
 
         return PerturbationTable(
             k,
             lna,
             delta_m,
-            delta_dm,
-            delta_b,
-            theta_b,
             theta_b_prime,
-            delta_g,
-            theta_g,
-            sigma_g,
-            Gg0,
-            Gg2,
             metric_eta,
             metric_h_prime,
             metric_eta_prime,
@@ -434,7 +406,8 @@ class PerturbationTable(eqx.Module):
     Interpolatable table of perturbation evolution.
 
     Stores perturbation modes as 2D arrays over wavenumber and time
-    for efficient interpolation.
+    for efficient interpolation. Per-species perturbations in physically
+    meaningful form are accessible via species_perturbations.
 
     Attributes:
     -----------
@@ -443,25 +416,9 @@ class PerturbationTable(eqx.Module):
     lna : array
         Logarithm of scale factor grid
     delta_m : array
-        Total matter density perturbations
-    delta_dm : array
-        Dark matter density perturbations
-    delta_b : array
-        Baryon density perturbations
-    theta_b : array
-        Baryon velocity perturbations
+        Total matter density perturbation, weighted sum over all matter species
     theta_b_prime : array
-        Baryon velocity derivatives
-    delta_g : array
-        Photon density perturbations
-    theta_g : array
-        Photon velocity perturbations  
-    sigma_g : array
-        Photon quadrupole temperature moments
-    Gg0 : array
-        Photon monopole polarization moments
-    Gg2 : array
-        Photon quadrupole polarization moments
+        Baryon velocity derivative (backward-calculated from Boltzmann equations)
     metric_eta : array
         Metric perturbation η
     metric_h_prime : array
@@ -473,26 +430,19 @@ class PerturbationTable(eqx.Module):
     metric_alpha_prime : array
         Time derivative of metric α
     species_perturbations : dict
-        Raw perturbation modes for every species, keyed by species name.
-        Each value has shape (num_moments, Nlna, Nk).
+        Named perturbation arrays for each species, keyed by species name.
+        Each value is a dict {quantity: array(Nlna, Nk)}.
+        Species with no perturbations (e.g. dark energy) map to {}.
     """
-    k         : jnp.array
-    lna       : jnp.array
-    delta_m   : jnp.array
-    delta_dm  : jnp.array
-    delta_b   : jnp.array
-    theta_b   : jnp.array
+    k             : jnp.array
+    lna           : jnp.array
+    delta_m       : jnp.array
     theta_b_prime : jnp.array
-    delta_g   : jnp.array
-    theta_g   : jnp.array
-    sigma_g   : jnp.array
-    Gg0       : jnp.array
-    Gg2       : jnp.array
 
-    metric_eta     : jnp.array
-    metric_h_prime : jnp.array
-    metric_eta_prime : jnp.array
-    metric_alpha   : jnp.array
+    metric_eta         : jnp.array
+    metric_h_prime     : jnp.array
+    metric_eta_prime   : jnp.array
+    metric_alpha       : jnp.array
     metric_alpha_prime : jnp.array
 
     species_perturbations : dict
