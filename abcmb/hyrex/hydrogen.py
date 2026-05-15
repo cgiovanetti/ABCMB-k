@@ -70,6 +70,9 @@ class hydrogen_model(eqx.Module):
             Maximum number of integration steps (default: 800)
         swift : array, optional
             SWIFT correction function tabulation
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.swift = swift
@@ -93,7 +96,8 @@ class hydrogen_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -122,7 +126,8 @@ class hydrogen_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -195,7 +200,8 @@ class hydrogen_model(eqx.Module):
         starting_lna : float
             Initial log scale factor
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         threshold : float, optional
             Threshold for deviation from Saha (default: 1e-5)
 
@@ -204,10 +210,10 @@ class hydrogen_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-        BG, params = args
+        recomb_inputs, params = args
         # Initial conditions
-        TCMB = BG.TCMB(starting_lna, params)
-        nH = BG.nH(starting_lna, params)
+        TCMB = recomb_inputs.TCMB(starting_lna)
+        nH = recomb_inputs.nH(starting_lna)
         xe0, _ = recomb_functions.xe_Saha(TCMB, nH)  # Saha equilibrium is our intial condition
 
         # Pre-allocate xe_output 
@@ -223,9 +229,9 @@ class hydrogen_model(eqx.Module):
             lna = starting_lna + iz*self.integration_spacing
 
             # Cosmological parameters
-            TCMB = BG.TCMB(lna, params)
-            nH = BG.nH(lna, params)
-            H = BG.H(lna, params)
+            TCMB = recomb_inputs.TCMB(lna)
+            nH = recomb_inputs.nH(lna)
+            H = recomb_inputs.H(lna)
 
             # Saha equilibrium for xe
             xe_Saha, s = recomb_functions.xe_Saha(TCMB, nH)
@@ -256,11 +262,9 @@ class hydrogen_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
         # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
-        # checkpointing. max_steps must be a static upper bound; the output
-        # axis size serves that role here.
+        # checkpointing. max_steps must be a static upper bound
         final_state = eqx.internal.while_loop(
             stop_condition, compute_xe, initial_state,
             max_steps=self.concrete_axis_size.size,
@@ -287,19 +291,20 @@ class hydrogen_model(eqx.Module):
         xe : float
             Current ionization fraction
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
         float
             Time derivative dxe/dlna (units: dimensionless)
         """
-        BG, params = args
+        recomb_inputs, params = args
     
         x1s = 1. - xe                # fraction of neutral hydrogen
-        TCMB = BG.TCMB(lna, params)          # eV
-        nH = BG.nH(lna, params)              # hydrogen number density, 1/cm^3
-        H = BG.H(lna, params)                # Hubble parameter, 1/s
+        TCMB = recomb_inputs.TCMB(lna)          # eV
+        nH = recomb_inputs.nH(lna)              # hydrogen number density, 1/cm^3
+        H = recomb_inputs.H(lna)                # Hubble parameter, 1/s
         GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         Tm = TCMB * (1.-H/GammaC)
@@ -325,7 +330,8 @@ class hydrogen_model(eqx.Module):
         xe0 : float
             Initial ionization fraction
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance (default: 1e-6)
         atol : float, optional
@@ -340,10 +346,10 @@ class hydrogen_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-        BG, params = args
+        recomb_inputs, params = args
 
         # Initial conditions
-        TCMB_init = BG.TCMB(lna_axis_init, params)  # Initial CMB temperature
+        TCMB_init = recomb_inputs.TCMB(lna_axis_init)  # Initial CMB temperature
         initial_state = xe0
         term = ODETerm(self.xe_derivative_twophoton)
 
@@ -392,7 +398,8 @@ class hydrogen_model(eqx.Module):
         state : array
             Current state [xe, Tm]
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
@@ -400,11 +407,11 @@ class hydrogen_model(eqx.Module):
             Time derivatives [dxe/dlna, dTm/dlna] (units: dimensionless, eV)
         """
         xe, Tm = state
-        BG, params = args
+        recomb_inputs, params = args
         
-        TCMB = BG.TCMB(lna, params)          # eV
-        nH = BG.nH(lna, params)              # hydrogen number density, 1/cm^3
-        H = BG.H(lna, params)                # Hubble parameter, 1/s
+        TCMB = recomb_inputs.TCMB(lna)          # eV
+        nH = recomb_inputs.nH(lna)              # hydrogen number density, 1/cm^3
+        H = recomb_inputs.H(lna)                # Hubble parameter, 1/s
         GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         Delta = 0.0
@@ -427,7 +434,8 @@ class hydrogen_model(eqx.Module):
         xe0 : float
             Initial ionization fraction
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance (default: 1e-7)
         atol : float, optional
@@ -447,15 +455,15 @@ class hydrogen_model(eqx.Module):
         t0 = lna0
         t1 = jnp.inf 
 
-        BG,params = args
+        recomb_inputs, params = args
 
         # need to go at least twice max_steps to make sure we catch the t1 we actually want
         t_arr = jnp.linspace(t0+self.integration_spacing, t0+2*max_steps*self.integration_spacing, 2*max_steps)
 
         save_at = SaveAt(ts=t_arr) 
         
-        TCMB_init = BG.TCMB(t0, params)  # Initial CMB temperature
-        Tm0 = TCMB_init * (1.-BG.H(t0, params)/recomb_functions.Gamma_compton(xe0, TCMB_init, params['YHe']))
+        TCMB_init = recomb_inputs.TCMB(t0)  # Initial CMB temperature
+        Tm0 = TCMB_init * (1.-recomb_inputs.H(t0)/recomb_functions.Gamma_compton(xe0, TCMB_init, params['YHe']))
 
         initial_state = jnp.array([xe0, Tm0])
         term = ODETerm(self.xe_tm_derivative)
@@ -464,7 +472,7 @@ class hydrogen_model(eqx.Module):
         def temperature_check(t, y, args, **kwargs):
             lna = t
             _, Tm = y
-            TCMB = BG.TCMB(lna, params) 
+            TCMB = recomb_inputs.TCMB(lna) 
             TR_MIN = recomb_functions.TR_MIN    # Minimum Tcmb in eV 
             T_RATIO_MIN = recomb_functions.T_RATIO_MIN  # Minimum Tratio 
             ratio = jnp.minimum(Tm / TCMB, TCMB / Tm)
@@ -541,7 +549,8 @@ class hydrogen_model(eqx.Module):
         TCMB : float
             CMB temperature (units: eV)
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
@@ -553,7 +562,7 @@ class hydrogen_model(eqx.Module):
         omega_cb_fid = 0.14175
         Neff_fid     = 3.046
 
-        BG, params = args
+        recomb_inputs, params = args
 
 
         # For the user inputed cosmology currently scanned over.
@@ -666,7 +675,8 @@ class hydrogen_model(eqx.Module):
         state : array
             Current state [xe, Tm]
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
@@ -674,12 +684,12 @@ class hydrogen_model(eqx.Module):
             Time derivatives [dxe/dlna, dTm/dlna] (units: dimensionless, eV)
         """
         xe, Tm  = state
-        BG, params = args
+        recomb_inputs, params = args
 
         xHII = xe # since everything else is fully recombined
-        nH = BG.nH(lna, params)
-        TCMB = BG.TCMB(lna, params)          # eV
-        H = BG.H(lna, params)  
+        nH = recomb_inputs.nH(lna)
+        TCMB = recomb_inputs.TCMB(lna)          # eV
+        H = recomb_inputs.H(lna)  
 
         C = recomb_functions.peebles_C(jnp.exp(-lna) - 1.0, xHII, H, nH, args)
         alpha = recomb_functions.alpha_H(Tm)                     
@@ -709,7 +719,8 @@ class hydrogen_model(eqx.Module):
         Tm0: float
             Starting matter temperature
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance (default: 1e-7)
         atol : float, optional

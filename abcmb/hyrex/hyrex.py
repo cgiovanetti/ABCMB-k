@@ -9,7 +9,85 @@ from functools import partial
 from .hydrogen import hydrogen_model
 from .helium import helium_model
 from .array_with_padding import array_with_padding
+from ..ABCMBTools import fast_interp
 config.update("jax_enable_x64", True)
+
+
+class RecombInputs(eqx.Module):
+    """
+    Bundle of pre-recombination background quantities sampled on a 
+    fixed lna grid for computing recombination.
+
+    Attributes
+    ----------
+    lna_grid : jnp.array
+        Uniform log scale-factor sampling axis. (units: dimensionless)
+    TCMB_arr : jnp.array
+        Photon-bath temperature TCMB(lna) (units: eV)
+    nH_arr : jnp.array
+        Hydrogen number density nH(lna) (units: cm^-3)
+    H_arr : jnp.array
+        Hubble parameter H(lna) (units: s^-1)
+
+    Methods
+    -------
+    TCMB : Linear interpolation of CMB temperature over lna (units: eV)
+    nH : Linear interpolation of hydrogen number density over lna (units: cm^-3)
+    H : Linear interpolation of Hubble over lna (units: s^-1)
+    """
+
+    lna_grid : jnp.array
+    TCMB_arr : jnp.array
+    nH_arr   : jnp.array
+    H_arr    : jnp.array
+
+    def TCMB(self, lna):
+        """
+        Linearly interpolate CMB temperature at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            CMB temperature TCMB(lna) (units: eV).
+        """
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.TCMB_arr)
+
+    def nH(self, lna):
+        """
+        Linearly interpolate hydrogen number density at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            Hydrogen number density nH(lna) (units: cm^-3).
+        """
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.nH_arr)
+
+    def H(self, lna):
+        """
+        Linearly interpolate Hubble parameter at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            Hubble parameter H(lna) (units: s^-1).
+        """
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.H_arr)
 
 class recomb_model(eqx.Module):
     """
@@ -49,6 +127,9 @@ class recomb_model(eqx.Module):
             Initial redshift (default: 8000.)
         z1 : float, optional
             Final redshift (default: 0.)
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.adjoint = adjoint
@@ -69,7 +150,8 @@ class recomb_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -86,7 +168,7 @@ class recomb_model(eqx.Module):
             with reionization, log scale factor, matter temperature, and temperature grid
         """
         return self.get_history(args, rtol, atol, solver, max_steps)
-    
+
     def get_history(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
@@ -97,7 +179,8 @@ class recomb_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -115,7 +198,7 @@ class recomb_model(eqx.Module):
             matter temperature, and temperature grid
         """
 
-        BG, params = args
+        recomb_inputs, params = args
         lna_axis_4Heequil  = self.lna_axis_full[self.idx_4He_equil]
 
         xe_4He, lna_4He = helium_model(lna_axis_4Heequil, adjoint=self.adjoint)(args)

@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import vmap, lax
 import diffrax
+from diffrax import with_stepsize_controller_tols
+from diffrax._root_finder import VeryChord
 import equinox as eqx
 
 from . import constants as cnst
@@ -38,6 +40,8 @@ class PerturbationEvolver(eqx.Module):
         A list of wavenumbers k at which to compute perturbations
     specs : dict 
         A dictionary containing run options
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves.  Default is ForwardMode.
 
     Methods:
     --------
@@ -281,7 +285,18 @@ class PerturbationEvolver(eqx.Module):
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
-        solver = diffrax.Kvaerno5()
+        # LCDM defaults for very high k sometimes failed with reverseAD.
+        # The reason for that was the default precision parameter in
+        # the Kvaerno5 rootfinder (via VeryChord).  Parameter now read
+        # in from specs; if reverse-AD produces NaNs (especially on omega_b/
+        # omega_cdm), decrease kappa_PE in specs (e.g. to 1e-3) to tighten 
+        # convergence.
+        _rf = eqx.tree_at(
+            lambda s: s.kappa,
+            with_stepsize_controller_tols(VeryChord)(),
+            replace=self.specs["kappa_PE"],
+        )
+        solver = diffrax.Kvaerno5(root_finder=_rf)
 
         rtol=jnp.where(
             k > self.specs["k_split_PE"],

@@ -55,6 +55,9 @@ class helium_model(eqx.Module):
             Initial redshift (default: 8000.)
         z1 : float, optional
             Final redshift (default: 20.)
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.concrete_axis_size_postSahaHe = jnp.zeros(Nsteps_postSahaHe)
@@ -71,7 +74,8 @@ class helium_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -98,7 +102,8 @@ class helium_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -160,7 +165,8 @@ class helium_model(eqx.Module):
         lna_axis : array
             Log scale factor grid
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         threshold : float, optional
             Threshold for HeIII fraction to stop calculation (default: 1e-9)
 
@@ -169,7 +175,7 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-        BG, params = args
+        recomb_inputs, params = args
         # Pre-allocate xe_output
         xe_output = jnp.ones_like(lna_axis)*jnp.inf
         lna_output = jnp.ones_like(lna_axis)*jnp.inf
@@ -183,8 +189,8 @@ class helium_model(eqx.Module):
             lna = lna_axis[iz]
 
             # Cosmological parameters
-            TCMB = BG.TCMB(lna, params)
-            nH = BG.nH(lna, params)
+            TCMB = recomb_inputs.TCMB(lna)
+            nH = recomb_inputs.nH(lna)
  
             # compute xHeIII
             fHe = params['YHe']/(1.-params['YHe'])/3.97153 # abundance of helium by number
@@ -212,8 +218,7 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
-        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
+        # eqx.internal.while_loop with kind='checkpointed' uses a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
         # checkpointing. max_steps must be a static upper bound.
         final_state = eqx.internal.while_loop(
@@ -240,18 +245,19 @@ class helium_model(eqx.Module):
         lna : float
             Log scale factor
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
         float
             HeII fraction (units: dimensionless)
         """
-        BG, params = args
+        recomb_inputs, params = args
         fHe = params['YHe']/(1.-params['YHe'])/3.97153
 
-        TCMB = BG.TCMB(lna, params)
-        nH = BG.nH(lna, params)
+        TCMB = recomb_inputs.TCMB(lna)
+        nH = recomb_inputs.nH(lna)
 
         # Saha ratio xe * xHeII / xHeI
         s = 4 * 2.414194e15 * TCMB/cnst.kB * jnp.sqrt(TCMB/cnst.kB) * jnp.exp(-285325. / (TCMB/cnst.kB)) / nH
@@ -271,16 +277,17 @@ class helium_model(eqx.Module):
         lna : float
             Log scale factor
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
         float
             Neutral hydrogen fraction (units: dimensionless)
         """
-        BG, params = args
-        TCMB = BG.TCMB(lna, params)
-        nH = BG.nH(lna, params)    
+        recomb_inputs, params = args
+        TCMB = recomb_inputs.TCMB(lna)
+        nH = recomb_inputs.nH(lna)    
         xHeII = self.xHeII_post_Saha(lna, args)
         s = 2.4127161187130e15* TCMB/cnst.kB * jnp.sqrt(TCMB/cnst.kB)*jnp.exp(-157801.37882/(TCMB/cnst.kB))/nH
         xH1 = jnp.where(s>1e5,(1.+xHeII)/s - (xHeII**2 + 3.*xHeII + 2.)/s**2,\
@@ -301,7 +308,8 @@ class helium_model(eqx.Module):
         starting_lna : float
             Initial log scale factor
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         threshold : float, optional
             Threshold for deviation from Saha (default: 1e-5)
 
@@ -310,7 +318,7 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-        BG, params = args
+        recomb_inputs, params = args
         # Pre-allocate xe_output
         xe_output = jnp.ones_like(self.concrete_axis_size_postSahaHe)*jnp.inf
         lna_output = jnp.ones_like(self.concrete_axis_size_postSahaHe)*jnp.inf
@@ -353,7 +361,6 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
         # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
         # checkpointing. max_steps must be a static upper bound.
@@ -383,22 +390,23 @@ class helium_model(eqx.Module):
         lna : float
             Log scale factor
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
         float
             HeII recombination rate dxHeII/dlna (units: dimensionless)
         """
-        BG, params = args
+        recomb_inputs, params = args
 
         fHe = params['YHe']/(1.-params['YHe'])/3.97153 # abundance of helium by number
 
         # cosmology
         #lna = -jnp.log(1+z)
-        TCMB = BG.TCMB(lna, params)      # eV
-        nH = BG.nH(lna, params)  # hydrogen number density, 1/cm^3
-        H = BG.H(lna, params)  # Hubble parameter, 1/s
+        TCMB = recomb_inputs.TCMB(lna)      # eV
+        nH = recomb_inputs.nH(lna)  # hydrogen number density, 1/cm^3
+        H = recomb_inputs.H(lna)  # Hubble parameter, 1/s
         GammaC = recomb_functions.Gamma_compton(xe, TCMB, params['YHe'])  # Compton scattering rate, 1/s
 
         # compute xH1 in Saha equilibrium, xHeII in post-saha
@@ -462,7 +470,8 @@ class helium_model(eqx.Module):
         state : float
             Current HeII ionization state
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
 
         Returns:
         --------
@@ -470,7 +479,7 @@ class helium_model(eqx.Module):
             Time derivative of HeII fraction (units: dimensionless)
         """
         
-        BG, params = args
+        recomb_inputs, params = args
         #z = 1. / jnp.exp(lna) - 1.
         # use xe  = xHeII + (1.-xH1)
         xe = state + self.xH1_Saha(lna, args)
@@ -491,7 +500,8 @@ class helium_model(eqx.Module):
         xe0 : float
             Initial ionization fraction
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance (default: 1e-6)
         atol : float, optional
@@ -506,10 +516,10 @@ class helium_model(eqx.Module):
         tuple
             (xe_output, lna_output) - ionization fraction and log scale factor arrays
         """
-        BG, params = args
+        recomb_inputs, params = args
 
         # Initial conditions
-        TCMB_init = BG.TCMB(starting_lna, params)  # Initial matter temperature
+        TCMB_init = recomb_inputs.TCMB(starting_lna)  # Initial matter temperature
         initial_state = jnp.array([xe0])
         term = ODETerm(self.xe_derivative_HeII)
 
