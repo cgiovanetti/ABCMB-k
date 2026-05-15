@@ -41,10 +41,10 @@ class Fluid(eqx.Module):
         rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
-    delta_idx     : int = eqx.field(default=0)
+    delta_idx     : int = eqx.field(default=0, static=True)
     num_moments : int = eqx.field(default=0, static=True)
     name          : str = eqx.field(default="", static=True)
-    is_matter     : bool = eqx.field(default=False) # Does the fluid contribute towards matter overdensity today.
+    is_matter     : bool = eqx.field(default=False, static=True) # Does the fluid contribute towards matter overdensity today.
 
     def __init__(self, delta_idx, specs):
         self.delta_idx = delta_idx

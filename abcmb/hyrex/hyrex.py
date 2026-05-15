@@ -9,7 +9,50 @@ from functools import partial
 from .hydrogen import hydrogen_model
 from .helium import helium_model
 from .array_with_padding import array_with_padding
+from ..ABCMBTools import fast_interp
 config.update("jax_enable_x64", True)
+
+
+class RecombInputs(eqx.Module):
+    """
+    Bundle of background quantities sampled on a fixed lna grid, consumed by
+    the recombination model in place of a full ``Background`` instance.
+
+    Phase 1 of the HyRex CPU lift refactors HyRex to depend only on these
+    arrays, so the recombination kernel becomes physics-agnostic and the
+    GPU/CPU device boundary has a clean interface.
+
+    Attributes
+    ----------
+    lna_grid : jnp.array
+        Uniform log scale-factor sampling axis.
+    TCMB_arr : jnp.array
+        Photon-bath temperature TCMB(lna), eV.
+    nH_arr : jnp.array
+        Hydrogen number density nH(lna), cm^-3.
+    H_arr : jnp.array
+        Hubble parameter H(lna), s^-1.
+
+    Methods
+    -------
+    TCMB(lna), nH(lna), H(lna)
+        Linear interpolation of the corresponding stored array at lna,
+        using ``ABCMBTools.fast_interp`` (uniform-grid path).
+    """
+
+    lna_grid : jnp.array
+    TCMB_arr : jnp.array
+    nH_arr   : jnp.array
+    H_arr    : jnp.array
+
+    def TCMB(self, lna):
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.TCMB_arr)
+
+    def nH(self, lna):
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.nH_arr)
+
+    def H(self, lna):
+        return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.H_arr)
 
 class recomb_model(eqx.Module):
     """
@@ -69,7 +112,8 @@ class recomb_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -86,7 +130,7 @@ class recomb_model(eqx.Module):
             with reionization, log scale factor, matter temperature, and temperature grid
         """
         return self.get_history(args, rtol, atol, solver, max_steps)
-    
+
     def get_history(self, args, rtol=1e-6, atol=1e-9,solver=Kvaerno3(),max_steps=1024):
         """
         Compute complete recombination and reionization history.
@@ -97,7 +141,8 @@ class recomb_model(eqx.Module):
         Parameters:
         -----------
         args : tuple
-            Background cosmology and cosmological parameters (BG, params)
+            Recombination input arrays and cosmological parameters
+            (recomb_inputs, params).
         rtol : float, optional
             Relative tolerance for ODE solver (default: 1e-6)
         atol : float, optional
@@ -115,7 +160,7 @@ class recomb_model(eqx.Module):
             matter temperature, and temperature grid
         """
 
-        BG, params = args
+        recomb_inputs, params = args
         lna_axis_4Heequil  = self.lna_axis_full[self.idx_4He_equil]
 
         xe_4He, lna_4He = helium_model(lna_axis_4Heequil, adjoint=self.adjoint)(args)
