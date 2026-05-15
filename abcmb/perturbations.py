@@ -370,7 +370,7 @@ class PerturbationEvolver(eqx.Module):
         sum_rho_m            = 0.
 
         for s in self.species_list:
-            if s.num_moments > 0:
+            if s.num_equations > 0:
                 rho_delta = vmap(s.rho_delta, in_axes=(0, 1, None))(lna, modes, params)
                 sum_rho_delta        += rho_delta
                 sum_rho_plus_P_theta += vmap(s.rho_plus_P_theta, in_axes=(0, 1, None))(lna, modes, params)

@@ -16,10 +16,10 @@ class Fluid(eqx.Module):
 
     Fields:
     -------
-    delta_idx : int
+    first_idx : int
         Default = 0
         Position of the first perturbation equation in the Diffrax vector. For most fluids this is the density perturbation mode "delta".
-    num_moments : int 
+    num_equations : int 
         Default = 0
         Number of equations that need to be simultaneously evolved in the perturbations module. 
     name : str
@@ -41,13 +41,13 @@ class Fluid(eqx.Module):
         rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
-    delta_idx     : int = eqx.field(default=0, static=True)
-    num_moments : int = eqx.field(default=0, static=True)
+    first_idx     : int = eqx.field(default=0, static=True)
+    num_equations : int = eqx.field(default=0, static=True)
     name          : str = eqx.field(default="", static=True)
     is_matter     : bool = eqx.field(default=False, static=True) # Does the fluid contribute towards matter overdensity today.
 
-    def __init__(self, delta_idx, specs):
-        self.delta_idx = delta_idx
+    def __init__(self, first_idx, specs):
+        self.first_idx = first_idx
         self.name = ""
         self.is_matter = False
 
@@ -262,8 +262,8 @@ class StandardFluid(Fluid):
     rho_plus_P_sigma : Compute standard shear perturbation (units: eV cm^{-3})
     """
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
 
     # Called by diffrax, child classes should never override. Okay to implement here.
     def rho_delta(self, lna, y, args):
@@ -285,7 +285,7 @@ class StandardFluid(Fluid):
             Density perturbation (units: eV cm^{-3})
         """
         params = args
-        return self.rho(lna, params) * y[self.delta_idx]
+        return self.rho(lna, params) * y[self.first_idx]
 
     def rho_plus_P_theta(self, lna, y, args):
         """
@@ -307,8 +307,8 @@ class StandardFluid(Fluid):
         """
         params = args
         return jnp.where(
-            self.num_moments > 1,
-            (self.rho(lna, params)+self.P(lna, params)) * y[self.delta_idx+1],
+            self.num_equations > 1,
+            (self.rho(lna, params)+self.P(lna, params)) * y[self.first_idx+1],
             0.
         )
 
@@ -332,17 +332,17 @@ class StandardFluid(Fluid):
         """
         params = args
         return jnp.where(
-            self.num_moments > 2,
-            (self.rho(lna, params)+self.P(lna, params)) * y[self.delta_idx+2],
+            self.num_equations > 2,
+            (self.rho(lna, params)+self.P(lna, params)) * y[self.first_idx+2],
             0.
         )
 
 class BackgroundFluid(Fluid):
     
-    num_moments = 0
+    num_equations = 0
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
 
     def y_ini(self, k, tau_ini, args):
         """
@@ -385,8 +385,8 @@ class DarkEnergy(BackgroundFluid):
 
     name = "DarkEnergy"
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
         self.name = "DarkEnergy"
 
     def rho(self, lna, args):
@@ -447,11 +447,11 @@ class ColdDarkMatter(StandardFluid):
     """
 
     name = "ColdDarkMatter"
-    num_moments = 1  # CDM only receives density perturbation in synchronous gauge.
+    num_equations = 1  # CDM only receives density perturbation in synchronous gauge.
     is_matter = True
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
         self.name = "ColdDarkMatter"
         self.is_matter = True
 
@@ -545,7 +545,7 @@ class ColdDarkMatter(StandardFluid):
         return jnp.array([-0.5*metric_h_prime])
 
     def output_perturbations(self, lna, modes, args):
-        return {"delta": modes[self.delta_idx]}
+        return {"delta": modes[self.first_idx]}
 
 class MasslessNeutrino(StandardFluid):
     """
@@ -565,10 +565,10 @@ class MasslessNeutrino(StandardFluid):
 
     name = "MasslessNeutrino"
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
         self.name = "MasslessNeutrino"
-        self.num_moments = specs["l_max_massless_nu"] + 1
+        self.num_equations = specs["l_max_massless_nu"] + 1
 
     def rho(self, lna, args):
         """
@@ -640,7 +640,7 @@ class MasslessNeutrino(StandardFluid):
         
         # Return the four non-zero ell modes, and all higher ell-modes are zero to start.
         # For the neutrinos we track Fnu_2 = 2*sigma, for better structure within the hierarchy.
-        return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_moments-3)))
+        return jnp.concatenate((jnp.array([delta, theta, sigma]), jnp.zeros(self.num_equations-3)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -670,7 +670,7 @@ class MasslessNeutrino(StandardFluid):
         aH    = BG.aH(lna, params)
         tau   = BG.tau(lna)
 
-        L = jnp.arange(self.num_moments) + self.delta_idx
+        L = jnp.arange(self.num_equations) + self.first_idx
         F = y[L]
         delta = F[0]
         theta = F[1]
@@ -683,7 +683,7 @@ class MasslessNeutrino(StandardFluid):
         F3_prime = 1./7. * k/aH * (6.*sigma - 4.*F[4])
 
         # Rest of the Boltzmann Hierarchy
-        lmax = self.num_moments-1
+        lmax = self.num_equations-1
         L = jnp.arange(4, lmax)
         Fl_prime    = 1./(2.*L+1.)*k/aH * (L*F[L-1]-(L+1)*F[L+1])
         Flmax_prime = k/aH*F[lmax-1] - (lmax+1)/aH/tau*F[lmax]
@@ -692,9 +692,9 @@ class MasslessNeutrino(StandardFluid):
 
     def output_perturbations(self, lna, modes, args):
         return {
-            "delta": modes[self.delta_idx],
-            "theta": modes[self.delta_idx + 1],
-            "sigma": modes[self.delta_idx + 2],
+            "delta": modes[self.first_idx],
+            "theta": modes[self.first_idx + 1],
+            "sigma": modes[self.first_idx + 2],
         }
 
 class MassiveNeutrino(Fluid):
@@ -736,13 +736,13 @@ class MassiveNeutrino(Fluid):
     name = "MassiveNeutrino"
     is_matter = True
 
-    def __init__(self, delta_idx, specs):
+    def __init__(self, first_idx, specs):
 
-        super().__init__(delta_idx, specs)
+        super().__init__(first_idx, specs)
         self.name = "MassiveNeutrino"
         self.is_matter = True
         self.num_ells_per_bin = specs["l_max_massive_nu"] + 1
-        self.num_moments = 3 * self.num_ells_per_bin
+        self.num_equations = 3 * self.num_ells_per_bin
 
     def rho(self, lna, args):
         """
@@ -894,7 +894,7 @@ class MassiveNeutrino(Fluid):
             dlnf0_dlnq = -q / (1+jnp.exp(-q))
 
             # NOTE: The entries are [Psi0, k * Psi1, Psi2, ...]. If accessing Psi1 make sure to divide out k
-            L = jnp.arange(self.num_ells_per_bin) + self.delta_idx + i*self.num_ells_per_bin
+            L = jnp.arange(self.num_ells_per_bin) + self.first_idx + i*self.num_ells_per_bin
             Psi = y[L]
 
             Psi0_prime = -q/epsilon/aH*Psi[1] + metric_h_prime/6. * dlnf0_dlnq
@@ -942,7 +942,7 @@ class MassiveNeutrino(Fluid):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
-            Psi0 = y[self.delta_idx + i*self.num_ells_per_bin]
+            Psi0 = y[self.first_idx + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))*epsilon/q**2 * Psi0
         return params['N_nu_massive'] * res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
@@ -974,7 +974,7 @@ class MassiveNeutrino(Fluid):
         for i in range(3):
             q = self.q_3p[i]
             w = self.w_3p[i]
-            kPsi1 = y[self.delta_idx+1 + i*self.num_ells_per_bin]
+            kPsi1 = y[self.first_idx+1 + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))/q * kPsi1
         return params['N_nu_massive'] * res * 4./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
@@ -1007,7 +1007,7 @@ class MassiveNeutrino(Fluid):
             q = self.q_3p[i]
             w = self.w_3p[i]
             epsilon = jnp.sqrt(q**2 + x**2)
-            Psi2 = y[self.delta_idx+2 + i*self.num_ells_per_bin]
+            Psi2 = y[self.first_idx+2 + i*self.num_ells_per_bin]
 
             res += w*(1.+jnp.exp(-q))/epsilon * Psi2
         return params['N_nu_massive'] * res * 8./3./jnp.pi**2 * T**4 / cnst.hbar**3 / cnst.c**3
@@ -1049,11 +1049,11 @@ class Baryon(StandardFluid):
     """
     
     name = "Baryon"
-    num_moments = 2
+    num_equations = 2
     is_matter = True
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
         self.name = "Baryon"
         self.is_matter = True
 
@@ -1214,9 +1214,9 @@ class Baryon(StandardFluid):
         R = 4.*photon.rho(lna, params)/3./self.rho(lna, params)
         tau_c = BG.tau_c(lna, params)
 
-        delta = y[self.delta_idx]
-        theta = y[self.delta_idx+1]
-        theta_g = y[photon.delta_idx+1]
+        delta = y[self.first_idx]
+        theta = y[self.first_idx+1]
+        theta_g = y[photon.first_idx+1]
         delta_prime = -theta/aH-metric_h_prime/2.
         theta_prime = -theta + cs2*k**2*delta/aH + R/tau_c/aH*(theta_g-theta)
 
@@ -1224,8 +1224,8 @@ class Baryon(StandardFluid):
 
     def output_perturbations(self, lna, modes, args):
         return {
-            "delta": modes[self.delta_idx],
-            "theta": modes[self.delta_idx + 1],
+            "delta": modes[self.first_idx],
+            "theta": modes[self.first_idx + 1],
         }
 
 class Photon(StandardFluid):
@@ -1256,12 +1256,12 @@ class Photon(StandardFluid):
     num_G_ell_modes : int = eqx.field(static=True)
     name = "Photon"
 
-    def __init__(self, delta_idx, specs):
-        super().__init__(delta_idx, specs)
+    def __init__(self, first_idx, specs):
+        super().__init__(first_idx, specs)
         self.name = "Photon"
         self.num_F_ell_modes = specs["l_max_g"] + 1
         self.num_G_ell_modes = specs["l_max_pol_g"] + 1
-        self.num_moments = self.num_F_ell_modes + self.num_G_ell_modes
+        self.num_equations = self.num_F_ell_modes + self.num_G_ell_modes
 
     def rho(self, lna, args):
         """
@@ -1323,7 +1323,7 @@ class Photon(StandardFluid):
         params = args
         delta = - (k*tau_ini)**2/3. * (1.-params["om"]*tau_ini/5.)
         theta = - k**4 * tau_ini**3/36. * (1.-3.*(1.+5.*params['R_b']-params['R_nu'])/20./(1.-params['R_nu'])*params["om"]*tau_ini)
-        return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_moments - 2)))
+        return jnp.concatenate((jnp.array([delta, theta]), jnp.zeros(self.num_equations - 2)))
 
     def y_prime(self, k, lna, metric_h_prime, metric_eta_prime, y, args):
         """
@@ -1360,12 +1360,12 @@ class Photon(StandardFluid):
 
         Flmax = self.num_F_ell_modes-1
         Glmax = self.num_G_ell_modes-1
-        F = lax.dynamic_slice(y, (self.delta_idx,), (self.num_F_ell_modes,))
-        G = lax.dynamic_slice(y, (self.delta_idx+self.num_F_ell_modes,), (self.num_G_ell_modes,))
+        F = lax.dynamic_slice(y, (self.first_idx,), (self.num_F_ell_modes,))
+        G = lax.dynamic_slice(y, (self.first_idx+self.num_F_ell_modes,), (self.num_G_ell_modes,))
         delta = F[0]
         theta = F[1]
         sigma = F[2]
-        theta_b = y[baryon.delta_idx+1]
+        theta_b = y[baryon.first_idx+1]
 
         delta_prime = -4./3./aH*theta - 2./3.*metric_h_prime
         theta_prime = k**2/aH*(delta/4.-sigma) + (theta_b-theta)/aH/tau_c
@@ -1387,9 +1387,9 @@ class Photon(StandardFluid):
 
     def output_perturbations(self, lna, modes, args):
         return {
-            "delta": modes[self.delta_idx],
-            "theta": modes[self.delta_idx + 1],
-            "sigma": modes[self.delta_idx + 2],
-            "G0":    modes[self.delta_idx + self.num_F_ell_modes],
-            "G2":    modes[self.delta_idx + self.num_F_ell_modes + 2],
+            "delta": modes[self.first_idx],
+            "theta": modes[self.first_idx + 1],
+            "sigma": modes[self.first_idx + 2],
+            "G0":    modes[self.first_idx + self.num_F_ell_modes],
+            "G2":    modes[self.first_idx + self.num_F_ell_modes + 2],
         }
