@@ -31,6 +31,8 @@ class BackgroundModel(eqx.Module):
         Whether to use leading order QED correction. Default is `True`.
     NLO : bool, optional
         Whether to use next-to-leading order QED correction. Default is True.
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves.  Default is ForwardMode.
     """
 
     decoupled : bool

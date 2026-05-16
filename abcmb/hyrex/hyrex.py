@@ -15,29 +15,25 @@ config.update("jax_enable_x64", True)
 
 class RecombInputs(eqx.Module):
     """
-    Bundle of background quantities sampled on a fixed lna grid, consumed by
-    the recombination model in place of a full ``Background`` instance.
-
-    Phase 1 of the HyRex CPU lift refactors HyRex to depend only on these
-    arrays, so the recombination kernel becomes physics-agnostic and the
-    GPU/CPU device boundary has a clean interface.
+    Bundle of pre-recombination background quantities sampled on a 
+    fixed lna grid for computing recombination.
 
     Attributes
     ----------
     lna_grid : jnp.array
-        Uniform log scale-factor sampling axis.
+        Uniform log scale-factor sampling axis. (units: dimensionless)
     TCMB_arr : jnp.array
-        Photon-bath temperature TCMB(lna), eV.
+        Photon-bath temperature TCMB(lna) (units: eV)
     nH_arr : jnp.array
-        Hydrogen number density nH(lna), cm^-3.
+        Hydrogen number density nH(lna) (units: cm^-3)
     H_arr : jnp.array
-        Hubble parameter H(lna), s^-1.
+        Hubble parameter H(lna) (units: s^-1)
 
     Methods
     -------
-    TCMB(lna), nH(lna), H(lna)
-        Linear interpolation of the corresponding stored array at lna,
-        using ``ABCMBTools.fast_interp`` (uniform-grid path).
+    TCMB : Linear interpolation of CMB temperature over lna (units: eV)
+    nH : Linear interpolation of hydrogen number density over lna (units: cm^-3)
+    H : Linear interpolation of Hubble over lna (units: s^-1)
     """
 
     lna_grid : jnp.array
@@ -46,12 +42,51 @@ class RecombInputs(eqx.Module):
     H_arr    : jnp.array
 
     def TCMB(self, lna):
+        """
+        Linearly interpolate CMB temperature at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            CMB temperature TCMB(lna) (units: eV).
+        """
         return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.TCMB_arr)
 
     def nH(self, lna):
+        """
+        Linearly interpolate hydrogen number density at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            Hydrogen number density nH(lna) (units: cm^-3).
+        """
         return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.nH_arr)
 
     def H(self, lna):
+        """
+        Linearly interpolate Hubble parameter at lna.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor.
+
+        Returns:
+        --------
+        float
+            Hubble parameter H(lna) (units: s^-1).
+        """
         return fast_interp(lna, self.lna_grid[0], self.lna_grid[-1], self.H_arr)
 
 class recomb_model(eqx.Module):
@@ -92,6 +127,9 @@ class recomb_model(eqx.Module):
             Initial redshift (default: 8000.)
         z1 : float, optional
             Final redshift (default: 0.)
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.adjoint = adjoint

@@ -19,21 +19,17 @@ config.update("jax_enable_x64", True)
 
 class BackgroundPreRecomb(eqx.Module):
     """
-    Pre-recombination background-cosmology object (Phase 2 of HyRex CPU lift).
+    Pre-recombination background-cosmology object.
 
-    Holds everything HyRex needs to run on CPU: the conformal-time tabulation,
-    the species list, and a ``RecombInputs`` struct that bundles HyRex's input
-    arrays sampled on the recombination grid. None of these depend on xe, Tm,
-    or the optical depth, so this object is the natural input to the CPU-pinned
-    HyRex solve and the natural input to the post-recombination Background
-    construction (which inherits from this class).
+    Holds everything HyRex needs to run on CPU: (conformal-time tabulation,
+    species list, and HyRex input arrays via ``RecombInputs`` object).
 
     Attributes:
     -----------
     species_list : tuple
         A list of all fluids in the cosmology
     lna_tau_tab : jnp.array
-        Log scale factor axis used to tabulate conformal time (class attribute)
+        Log scale factor axis used to tabulate conformal time 
     tau_tab : jnp.array
         Tabulated conformal time.
     tau0 : float
@@ -46,15 +42,23 @@ class BackgroundPreRecomb(eqx.Module):
 
     Methods:
     --------
-    rho_tot, P_tot, H, aH, aH_prime, d2adtau2_over_a
-    tau, nH, TCMB, R_ratio_lna
+    rho_tot : Compute total energy density (units: eV cm^{-3})
+    P_tot : Compute total pressure (units: eV cm^{-3})
+    H : Compute Hubble parameter (units: s^{-1})
+    aH : Compute conformal Hubble parameter (units: Mpc^{-1})
+    aH_prime : Compute derivative of conformal Hubble (units: Mpc^{-1})
+    d2adtau2_over_a : Compute second derivative of scale factor (units: Mpc^{-2})
+    tau : Compute conformal time (units: Mpc)
+    nH : Compute hydrogen number density (units: cm^{-3})
+    TCMB : Compute CMB temperature (units: eV)
+    R_ratio_lna : Compute baryon drag ratio (units: dimensionless)
     """
 
     species_list : tuple
 
-    lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000)
-    tau_tab : jnp.array
-    tau0 : float
+    lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000) # Axis for tabulating conformal time.
+    tau_tab : jnp.array # Tabulated conformal time. 
+    tau0 : float # Conformal time today
 
     recomb_inputs : "RecombInputs"
 
@@ -64,10 +68,8 @@ class BackgroundPreRecomb(eqx.Module):
         """
         Initialize pre-recombination background.
 
-        Tabulates conformal time and builds the ``RecombInputs`` struct
-        HyRex consumes. No reionization correction or optical-depth
-        integration is done here — those depend on the recombination
-        history and live on the post-recomb ``Background`` subclass.
+        Tabulates conformal time and builds the RecombInputs object for
+        HyRex. 
 
         Parameters:
         -----------
@@ -76,7 +78,7 @@ class BackgroundPreRecomb(eqx.Module):
         species_list : tuple
             List of fluid species for energy density calculations
         RecModel : hyrex.recomb_model
-            Used for its ``lna_axis_full`` sampling grid (not called here).
+            Recombination module for computing xe and Tm histories
         adjoint : diffrax.adjoint, optional
             Adjoint class for diffrax solves (default: ForwardMode)
         """
@@ -87,10 +89,7 @@ class BackgroundPreRecomb(eqx.Module):
         self.tau0 = self.tau(0.)
 
         # Bundle the background quantities HyRex needs onto its sampling
-        # grid. Phase 2 ships these to CPU (see ``Model.__call__``); for
-        # standard cosmologies the linear interpolation against this dense
-        # grid is accurate to ~3e-8 (h^2/8 with h=5e-4) — well below
-        # accuracy_test tolerances.
+        # grid (acccording to the input RecModel)
         lna_axis = RecModel.lna_axis_full
         self.recomb_inputs = RecombInputs(
             lna_grid = lna_axis,
@@ -335,6 +334,15 @@ class BackgroundPreRecomb(eqx.Module):
         --------
         float
             Conformal time (units: Mpc)
+
+        Notes:
+        ------
+        IDEA: Make Background a repeatedly initiated module with both
+        species_list and params stored. Upon initiation, a full history
+        of conformal time is calculated with diffrax and stored for
+        interpolation. This can be done by approximating early time with
+        radiation approximation, and starting diffrax integration at the
+        early time with appropriate initial conditions.
         """
         return tools.fast_interp(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1], self.tau_tab)
 
@@ -411,17 +419,29 @@ class BackgroundPreRecomb(eqx.Module):
 
 class Background(BackgroundPreRecomb):
     """
-    Full background-cosmology object: pre-recombination state plus
-    the recombination + reionization history and the optical-depth
-    tabulation.
+    Full Background cosmology module for cosmological calculations.
 
     Inherits all cosmology fields and methods from ``BackgroundPreRecomb``.
-    Construction takes a ``BackgroundPreRecomb`` (output of the GPU pre-recomb
-    stage) and the recombination output produced by HyRex on CPU, then
-    applies the reionization correction and integrates the optical depth.
+    Construction takes a ``BackgroundPreRecomb`` and the recombination output 
+    from HyRex, then applies reionization and integrates the optical depth.
+
+    This factorization allows HyRex to always run on CPU (its faster backend).  
 
     Attributes:
     -----------
+    species_list : tuple
+        A list of all fluids in the cosmology
+    lna_tau_tab : jnp.array
+        Log scale factor axis used to tabulate conformal time 
+    tau_tab : jnp.array
+        Tabulated conformal time.
+    tau0 : float
+        Conformal time today in Mpc.
+    recomb_inputs : RecombInputs
+        Bundle of background quantities (TCMB, nH, H) sampled on
+        ``RecModel.lna_axis_full``; consumed by HyRex.
+    adjoint : diffrax.adjoint
+        Adjoint mode for diffrax solves (static field).
     xe_tab : array_with_padding
         Tabulated free electron fraction xe with reionization correction.
     lna_xe_tab : array_with_padding
@@ -446,8 +466,15 @@ class Background(BackgroundPreRecomb):
         Log scale factor at which to stop integrating T1, T2, and E sources
         due to small visibility functions. Only used for l<400.
 
-    Recombination Related Methods:
-    ------------------------------
+    Methods:
+    --------
+    rho_tot : Compute total energy density (units: eV cm^{-3})
+    P_tot : Compute total pressure (units: eV cm^{-3})
+    H : Compute Hubble parameter (units: s^{-1})
+    aH : Compute conformal Hubble parameter (units: Mpc^{-1})
+    aH_prime : Compute derivative of conformal Hubble (units: Mpc^{-1})
+    d2adtau2_over_a : Compute second derivative of scale factor (units: Mpc^{-2})
+    tau : Compute conformal time (units: Mpc)
     xe : Compute free electron fraction (units: dimensionless)
     Tm : Compute matter temperature (units: eV)
     tau_c : Compute Thomson scattering time (units: Mpc)
@@ -465,27 +492,29 @@ class Background(BackgroundPreRecomb):
     z_reion    : float
     tau_reion  : float
     lna_rec    : float
-    rA_rec     : float
+    rA_rec     : float # Comoving angular diameter distance at recombination.
 
-    lna_transfer_start : float
-    lna_visibility_stop : float
+    # Transfer related
+    lna_transfer_start : float # Time where transfer functions start integrating.
+    lna_visibility_stop : float # Time to stop integrating T1, T2, and E sources due to small visibility functions. Only used for l<400
 
     def __init__(self, pre_BG, recomb_output, params, ReionModel):
         """
-        Construct full Background from a pre-recomb stage and the HyRex output.
+        Initialize Background cosmology module.
+ 
+        Consolidates pre-recombination and recombination elements of background cosmology.
 
         Parameters:
         -----------
         pre_BG : BackgroundPreRecomb
-            Output of the GPU pre-recomb stage; provides species_list,
+            Output of the pre-recomb stage; provides species_list,
             tau_tab, tau0, recomb_inputs, adjoint.
         recomb_output : tuple
-            HyRex's ``(xe, lna_xe, Tm, lna_Tm)`` quadruple — the result of
-            running ``RecModel((pre_BG.recomb_inputs, params))`` on CPU.
+            HyRex output ``(xe, lna_xe, Tm, lna_Tm)`` quadruple
         params : dict
             Cosmological parameters.
-        ReionModel : type
-            ``ReionizationModelFromZ`` or ``ReionizationModelFromTau``.
+        ReionModel : callable
+            Reionization module for computing the xe correction.
         """
         # Copy pre-recomb fields onto self.
         self.adjoint = pre_BG.adjoint
@@ -494,7 +523,7 @@ class Background(BackgroundPreRecomb):
         self.tau0 = pre_BG.tau0
         self.recomb_inputs = pre_BG.recomb_inputs
 
-        # Unpack HyRex output and apply reionization correction.
+        # Unpack HyRex output and apply reionization.
         xe, self.lna_xe_tab, self.Tm_tab, self.lna_Tm_tab = recomb_output
 
         reion_model = ReionModel(self, params)
@@ -537,6 +566,14 @@ class Background(BackgroundPreRecomb):
         --------
         float
             Free electron fraction (units: dimensionless)
+        
+        Notes:
+        ------
+        The logic flow is equivalent to:
+
+        if lna < self.lna_xe_tab.arr[0]: return self.xe_tab[0]
+        elif lna > self.lna_xe_tab.lastval: return self.xe_tab.lastval
+        else: return jnp.interp(lna, self.lna_xe_tab, self.xe_tab)
         """
         return jnp.where(
             lna < self.lna_xe_tab.arr[0],
@@ -643,6 +680,11 @@ class Background(BackgroundPreRecomb):
         --------
         array
             Tabulated optical depth values (units: dimensionless)
+        
+        Notes:
+        ------
+        Also computes time derivative of optical depth, which is the
+        integrand involving the free electron fraction.
         """
         integrand = lambda lna, y, args: -1./self.tau_c(lna, params)/self.aH(lna, params)
         term = ODETerm(integrand)
@@ -676,7 +718,7 @@ class Background(BackgroundPreRecomb):
         Returns:
         --------
         float
-            exp(-κ) (units: dimensionless)
+            exp(-(optical depth)) (units: dimensionless)
         """
         return jnp.where(
             lna < -10.,
@@ -703,6 +745,10 @@ class Background(BackgroundPreRecomb):
         --------
         float
             Visibility function (units: Mpc^{-1})
+
+        Notes:
+        ------
+        Used in computing source functions for CMB anisotropies.
         """
         return self.expmkappa(lna)/self.tau_c(lna, params)
 
@@ -729,6 +775,7 @@ class Background(BackgroundPreRecomb):
         float
             Decoupling redshift (units: dimensionless)
         """
+        # ensure sorted ascending
         idx = jnp.argsort(z)
         z_sorted = z[idx]
         kappa_d_sorted = jnp.abs(kappa_d)[idx]
@@ -759,7 +806,6 @@ class Background(BackgroundPreRecomb):
         rs_sorted = r_s[idx]
         return jnp.interp(z_d, z_sorted, rs_sorted)
 
-    @jax.named_scope("tabulate kappa d")
     def _tabulate_kappa_d(self, params):
         """
         Tabulate baryon optical depth.
@@ -784,20 +830,19 @@ class Background(BackgroundPreRecomb):
 
         solution = diffeqsolve(
             term,
-            solver=Tsit5(),
+            solver=Tsit5(), # Kvaerno5 is just slower but gives same result
             stepsize_controller=stepsize_controller,
-            t0=self.lna_tau_tab[-1],
-            t1=self.lna_tau_tab[0],
+            t0=self.lna_tau_tab[-1], # Initial x value (~0 in this case)
+            t1=self.lna_tau_tab[0], # Final x value (smallest x value)
             dt0=-1e-3,
             max_steps=2048,
-            y0=0.0,
-            saveat=SaveAt(ts=self.lna_tau_tab[::-1]),
+            y0=0.0, # Initial value tau(x=0) = 0
+            saveat=SaveAt(ts=self.lna_tau_tab[::-1]), # Save at all points in x, reverse order since integrating backwards
             adjoint=adjoint
         )
         result = solution.ys[::-1]
         return result
 
-    @jax.named_scope("tabulate rs")
     def _tabulate_rs(self, params):
         """
         Tabulate sound horizon evolution.
@@ -815,6 +860,7 @@ class Background(BackgroundPreRecomb):
         array
             Tabulated sound horizon values (units: Mpc)
         """
+        # initial condition assuming cs**2 = 1/3 at early times
         rs0 = 1./jnp.sqrt(3) / (self.aH( self.lna_tau_tab[0], params ))
 
         integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna, params))) / (self.aH(lna, params))
@@ -826,7 +872,7 @@ class Background(BackgroundPreRecomb):
             term,
             solver=Tsit5(),
             stepsize_controller=stepsize_controller,
-            t0=self.lna_tau_tab[0],
+            t0=self.lna_tau_tab[0], # reversed direction since I know rs at early times
             t1=self.lna_tau_tab[-1],
             dt0=1e-3,
             max_steps=2048,

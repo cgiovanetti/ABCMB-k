@@ -55,6 +55,9 @@ class helium_model(eqx.Module):
             Initial redshift (default: 8000.)
         z1 : float, optional
             Final redshift (default: 20.)
+        adjoint : diffrax.adjoint
+            Adjoint mode for diffrax solves (static field).  Defaults
+            to ForwardMode.
         """
         self.integration_spacing = integration_spacing
         self.concrete_axis_size_postSahaHe = jnp.zeros(Nsteps_postSahaHe)
@@ -215,8 +218,7 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
-        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
+        # eqx.internal.while_loop with kind='checkpointed' uses a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
         # checkpointing. max_steps must be a static upper bound.
         final_state = eqx.internal.while_loop(
@@ -359,7 +361,6 @@ class helium_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # Run the while loop until the stop condition is met.
         # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
         # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
         # checkpointing. max_steps must be a static upper bound.
