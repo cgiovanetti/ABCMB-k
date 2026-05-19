@@ -109,7 +109,7 @@ def populate_species(user_species, specs):
             species_dict[instance.name] = i
 
             i += 1
-            diffrax_vector_idx += instance.num_moments
+            diffrax_vector_idx += instance.num_equations
 
     if user_species is not None:
         for s in user_species:
@@ -118,7 +118,7 @@ def populate_species(user_species, specs):
             species_dict[instance.name] = i
 
             i += 1
-            diffrax_vector_idx += instance.num_moments
+            diffrax_vector_idx += instance.num_equations
 
     return species_list, species_dict
 
