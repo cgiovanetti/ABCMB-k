@@ -262,13 +262,10 @@ class hydrogen_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
-        # eqx.internal.while_loop with kind='checkpointed' installs a custom_vjp
-        # so reverse-mode AD can traverse this dynamic-stop loop via treeverse
-        # checkpointing. max_steps must be a static upper bound
         final_state = eqx.internal.while_loop(
             stop_condition, compute_xe, initial_state,
             max_steps=self.concrete_axis_size.size,
-            kind='checkpointed',
+            kind='lax' if self.adjoint is ForwardMode else 'checkpointed',
         )
 
         # Unpack the final state
