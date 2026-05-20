@@ -262,6 +262,7 @@ class hydrogen_model(eqx.Module):
         # Initial state: (xe_output, xe, iz, stop flag)
         initial_state = (xe_output, lna_output, xe, iz, stop)
 
+        # kind argument is selected based on adjoint to enable the corresponding autodifferentiation. 
         final_state = eqx.internal.while_loop(
             stop_condition, compute_xe, initial_state,
             max_steps=self.concrete_axis_size.size,
