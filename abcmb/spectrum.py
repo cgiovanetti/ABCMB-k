@@ -331,12 +331,12 @@ class SpectrumSolver(eqx.Module):
             in_axes=1  # loop over columns
         )
 
-        delta_dm_lna = interp_over_lna(PT.delta_dm)  # shape (Nk,)
-        delta_b_lna   = interp_over_lna(PT.delta_b)    # shape (Nk,)
+        delta_dm_lna = interp_over_lna(PT.species_perturbations["ColdDarkMatter"]["delta"])
+        delta_b_lna  = interp_over_lna(PT.species_perturbations["Baryon"]["delta"])
 
         # now interpolate over k
         delta_dm = jnp.interp(k, PT.k, delta_dm_lna)
-        delta_b   = jnp.interp(k, PT.k, delta_b_lna)
+        delta_b  = jnp.interp(k, PT.k, delta_b_lna)
 
         # total matter overdensity
         delta_m = (
@@ -664,12 +664,14 @@ class SpectrumSolver(eqx.Module):
         interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_axis))
 
         # Found that this is much much faster than RegularGridInterpolator
-        delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.delta_g[:-1, :])
-        theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b[:-1, :])
+        photon_sp = PT.species_perturbations["Photon"]
+        baryon_sp = PT.species_perturbations["Baryon"]
+        delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["delta"][:-1, :])
+        theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(baryon_sp["theta"][:-1, :])
         theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
-        sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(PT.sigma_g[:-1, :])
-        Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg0[:-1, :])
-        Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(PT.Gg2[:-1, :])
+        sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["sigma"][:-1, :])
+        Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G0"][:-1, :])
+        Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G2"][:-1, :])
         eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
         eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
         alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
