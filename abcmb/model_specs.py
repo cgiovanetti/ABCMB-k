@@ -67,11 +67,6 @@ def load_specs(input_specs):
     specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)
     specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
-    # Newton convergence threshold for Kvaerno5 VeryChord root finder.
-    # If you encounter NaNs in gradients, decrease this value (e.g. 1e-3). 
-    # Small (<1%) performance hit for doing so, so default stays at 1e-2 
-    # unless reverseAD is requested (see main).
-    specs["kappa_PE"]        = input_specs.get("kappa_PE", 0.01)
 
     ### Physical contributions to CMB temperature transfer function ###
     specs["scale_sw"]  = input_specs.get("scale_sw", 1)
