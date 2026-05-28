@@ -1,0 +1,36 @@
+W0528 14:45:44.776066  982433 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0528 14:45:44.779982  982320 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+jax.devices(): [CudaDevice(id=0)]
+abcmb from: /pscratch/sd/c/carag/ABCMB-k/abcmb/__init__.py
+
+[warm] model(params_0) (compile + run)...
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+  compile + run: 100.9s
+[warm] second call (post-compile)...
+  post-compile: 9.507s
+
+[bench] Model.call_batched...
+  B=  1  warm/compile= 74.72s  post-compile= 22.64s  per_params=22.635s
+  B=  4  warm/compile= 84.91s  post-compile= 57.84s  per_params=14.460s
+  B=  8  warm/compile=129.29s  post-compile=103.62s  per_params=12.953s
+  B= 16  warm/compile=224.12s  post-compile=193.29s  per_params=12.081s
+
+======================================================================
+   B    single×B     batched   batched/B     speedup
+----------------------------------------------------------------------
+   1        9.51       22.64      22.635       0.42x
+   4       38.03       57.84      14.460       0.66x
+   8       76.05      103.62      12.953       0.73x
+  16      152.11      193.29      12.081       0.79x
+
+baseline single per-params: 9.507s

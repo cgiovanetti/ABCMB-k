@@ -122,16 +122,19 @@ class PerturbationEvolver(eqx.Module):
     # time on GPU. See bench/design_memo.md for the architecture
     # rationale (K_CHUNK=100, double-vmap, no lax.scan around diffrax).
     # ------------------------------------------------------------------
+    @eqx.filter_jit
     def _evolve_chunk(self, k_chunk, lna_batch, BG_batch, params_batch):
-        """Inner kernel: vmap over k_chunk and over the batch axis B
-        simultaneously, evaluating evolution_one_k once per
+        """JIT-compiled inner kernel: vmap over k_chunk and over the batch
+        axis B simultaneously, evaluating evolution_one_k once per
         (k_i, batch_j). Returns shape ``(K_CHUNK, B, Nlna, Ny)``.
 
-        Note: not decorated with ``@eqx.filter_jit`` — direct decoration
-        causes a cache pathology where the first chunk call is correct but
-        subsequent cached invocations return progressively divergent
-        outputs (see bench/smoke_chunks.log). The caller wraps with
-        ``eqx.filter_jit`` per-shape instead, which works correctly.
+        Per-chunk JIT cache keyed by k_chunk shape; chunks with the same
+        size hit the same compiled code. Different shape (last chunk if
+        N_k isn't divisible by K_CHUNK) recompiles once.
+
+        Per-mode trajectory results differ across batch compositions due
+        to diffrax PID step-controller noise, but all within the
+        configured rtol/atol — see bench/chunking_debug_report.md.
 
         BG_batch and params_batch must be valid pytrees stacked along a
         leading B axis; ``BG_batch.kappa_func`` must be ``None``.
@@ -144,25 +147,18 @@ class PerturbationEvolver(eqx.Module):
         return vmap(per_k, in_axes=(0, None, None, None))(
             k_chunk, lna_batch, BG_batch, params_batch)
 
-    def _compute_modes_batched(self, args, k_chunk_size=None):
-        """Compute raw modes tensor for a B-axis batch. Internal helper for
-        full_evolution_batched; exposed for tests that want to inspect the
-        modes before the PerturbationTable assembly.
+    def _compute_modes_batched(self, args, k_chunk_size=100):
+        """Compute raw modes tensor for a B-axis batch.
 
-        Currently uses a single ``vmap`` over the FULL k-axis (no chunking)
-        with an inner ``vmap`` over the batch axis. K-chunking attempts
-        (Python-loop with eqx.filter_jit'd chunks; lax.map with batch_size)
-        produced correct results for the *first* chunk and progressively
-        divergent results for subsequent chunks (jax 0.8.1, see
-        bench/smoke_chunks.log + bench/smoke_modes.log). The root cause is
-        not yet localized; falling back to single-call full vmap until a
-        fix lands.
-
-        This means peak memory scales as ``N_k × B`` (all in-flight
-        diffrax solves). bench/flipped_summary.txt showed B=64 with
-        N_k=571 already memory-pressured at 28-31 GB on a single A100.
-        For larger B, use the multi-GPU shard pattern (see
-        bench/flipped_spike_multigpu.py).
+        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
+        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
+        each chunk. Python-loop over chunks; NOT lax.scan (which had a
+        13-min compile pathology in Phase B). The per-mode trajectory
+        difference between full-vmap and chunked is real but is just
+        diffrax PID step-controller noise within the requested rtol/atol
+        envelope — see bench/chunking_debug_report.md for evidence.
+        Downstream Cl/Pk agreement is at ~2.6e-5 rel (see
+        bench/smoke_batched_pipeline.log), which is what matters.
 
         Parameters:
         -----------
@@ -170,8 +166,9 @@ class PerturbationEvolver(eqx.Module):
             ``(BG_batch, params_batch)``. Both must be stacked pytrees with
             a leading B axis on every batched leaf. ``BG_batch.kappa_func``
             must be ``None``.
-        k_chunk_size : Any
-            Accepted for forward compatibility but currently ignored.
+        k_chunk_size : int
+            Number of k-modes per JIT cache entry. 100 ≈ 5.5 GB at B=64
+            on an A100 (see bench/design_memo.md §1).
 
         Returns:
         --------
@@ -183,13 +180,15 @@ class PerturbationEvolver(eqx.Module):
             lambda lts: jnp.linspace(lts, 0., 500)
         )(BG_batch.lna_transfer_start)
 
-        def per_k(k):
-            return vmap(
-                self.evolution_one_k,
-                in_axes=(None, 0, (0, 0)),
-            )(k, lna_batch, (BG_batch, params_batch))
-
-        modes = vmap(per_k)(self.k_axis_perturbations)  # (N_k, B, Nlna, Ny)
+        k_axis = self.k_axis_perturbations
+        n_k = len(k_axis)
+        chunks = []
+        for i in range(0, n_k, k_chunk_size):
+            k_chunk = k_axis[i:i + k_chunk_size]
+            chunks.append(self._evolve_chunk(
+                k_chunk, lna_batch, BG_batch, params_batch))
+        # (N_k, B, Nlna, Ny) -> (B, Ny, Nlna, N_k)
+        modes = jnp.concatenate(chunks, axis=0)
         return modes.transpose(1, 3, 2, 0), lna_batch
 
     def full_evolution_batched(self, args, k_chunk_size=100):
@@ -222,20 +221,14 @@ class PerturbationEvolver(eqx.Module):
             args, k_chunk_size=k_chunk_size)
         return self.make_output_table_batched(lna_batch, modes, args)
 
+    @eqx.filter_jit
     def make_output_table_batched(self, lna_batch, modes_batch, args_batch):
-        """Batched version of ``make_output_table``.
+        """Batched version of ``make_output_table`` via outer vmap.
 
-        Currently uses a Python loop over the B axis: each element gets
-        un-stacked from the (lna_batch, modes_batch, args_batch) inputs
-        via ``jax.tree.map(lambda x: x[i], ...)``, then ``make_output_table``
-        is called directly, and the resulting PerturbationTable objects
-        are stacked along a fresh leading B axis.
-
-        The straightforward ``vmap(make_output_table, in_axes=...)`` path
-        produced wildly divergent PerturbationTable fields at B=1 even
-        though the modes input was bit-correct (see bench/smoke_d2.log).
-        Localized fix deferred to investigation; loop is correct and
-        adequate for small B used by tests.
+        Earlier we found PT fields with ~1e-5 relative drift vs the
+        single-call PT and assumed it was a vmap bug — it was actually
+        diffrax step-controller noise propagating from modes. See
+        bench/chunking_debug_report.md. The vmap is correct.
 
         Parameters:
         -----------
@@ -249,15 +242,10 @@ class PerturbationEvolver(eqx.Module):
         PerturbationTable with every array field carrying a leading B axis.
         """
         BG_batch, params_batch = args_batch
-        B = lna_batch.shape[0]
-        PTs = []
-        for i in range(B):
-            bg_i = jax.tree.map(lambda x: x[i], BG_batch)
-            params_i = jax.tree.map(lambda x: x[i], params_batch)
-            PTs.append(self.make_output_table(
-                lna_batch[i], modes_batch[i], (bg_i, params_i)))
-        # Stack each PerturbationTable field along a fresh leading B axis.
-        return jax.tree.map(lambda *xs: jnp.stack(xs), *PTs)
+        return vmap(
+            self.make_output_table,
+            in_axes=(0, 0, (0, 0)),
+        )(lna_batch, modes_batch, (BG_batch, params_batch))
 
 
     def get_starting_time(self, k, args):

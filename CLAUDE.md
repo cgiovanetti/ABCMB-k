@@ -41,12 +41,12 @@ HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: th
 
 ### Module map (under `abcmb/`)
 
-- **`main.py`** — `Model`, `Output`. Pipeline glue + parameter derivation.
+- **`main.py`** — `Model`, `Output`. Pipeline glue + parameter derivation. The `perk-refactor` branch also adds `Model.call_batched(params_list)` and `BatchedOutput` for params-axis batched evaluation; the latter omits BG/PT because `kappa_func` doesn't stack across cosmologies.
 - **`model_specs.py`** — `load_specs` (run options with defaults), `populate_species` (assembles the species tuple from ΛCDM defaults + `user_species`), `get_k_axis_perturbations` / `get_k_axis_transfer`.
 - **`species.py`** — base `Fluid` (`eqx.Module`) interface (`rho`, `P`, `w`, `y_ini`, `y_prime`, `rho_delta`, `rho_plus_P_theta`, `rho_plus_P_sigma`) plus all built-in species: `Photon`, `Baryon`, `ColdDarkMatter`, `MasslessNeutrino`, `MassiveNeutrino`, `DarkEnergy`. **This is the extension point** — new physics = new `Fluid` subclass. The `ABCMB_Fluids.ipynb` notebook walks through this.
 - **`background.py`** — `BackgroundPreRecomb` (pre-recomb stage) and `Background` (full, with reionization), plus `ReionizationModelFromZ` / `ReionizationModelFromTau` (branched via `lax.cond` on `specs["input_tau_reion"]`).
-- **`perturbations.py`** — `PerturbationEvolver` and `PerturbationTable`. Drives diffrax through the Einstein–Boltzmann hierarchy in synchronous gauge with the tight-coupling approximation.
-- **`spectrum.py`** — `SpectrumSolver`. Line-of-sight integral with tabulated spherical Bessel functions (`bessel_tab/`); produces Cls and the linear matter Pk.
+- **`perturbations.py`** — `PerturbationEvolver` and `PerturbationTable`. Drives diffrax through the Einstein–Boltzmann hierarchy in synchronous gauge with the tight-coupling approximation. Branch `perk-refactor` adds `_evolve_chunk`, `_compute_modes_batched`, `full_evolution_batched`, `make_output_table_batched`, and the module-level `strip_bg_kappa` helper.
+- **`spectrum.py`** — `SpectrumSolver`. Line-of-sight integral with tabulated spherical Bessel functions (`bessel_tab/`); produces Cls and the linear matter Pk. Branch `perk-refactor` adds `get_Cl_batched` and `Pk_lin_batched` (currently Python-loop over the batch axis — see "Batched pipeline" below).
 - **`hyrex/`** — bundled HyRex recombination (`xe`, `Tm` evolution) using `array_with_padding` for variable-length arrays through JIT.
 - **`linx/`** — **bundled** LINX (BBN). This is a vendored copy frozen with this ABCMB version; it is *not* the same code path as the standalone `../LINX/` checkout or the `../BBN_Hubble/OLE`-aware copies. Edit this only when ABCMB's BBN coupling specifically needs it.
 - **`ABCMBTools.py`** — interpolation helpers (`bilinear_interp`, etc.) used across modules.
@@ -60,11 +60,26 @@ HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: th
 - `jax_enable_x64` is set at module import in several files. New modules that do any numerics should do the same.
 - The HyRex/LINX → GPU re-transfer is wrapped in `try/except Exception: pass` for CPU-only runs. Preserve that pattern when adding cross-device stages.
 
+### Batched (per-k) pipeline (branch `perk-refactor`)
+
+`Model.call_batched(params_list)` is the user-facing entrypoint for params-axis-batched evaluation. It:
+
+1. Builds `B` `Background` objects sequentially via `_build_one_bg` (HyRex still on CPU, no batching there).
+2. Stacks params + strip-and-stacks BGs via `strip_bg_kappa` for the modes computation. Stripping is needed because `Background.kappa_func` is a `diffrax.Solution` and doesn't survive `jax.tree.map(jnp.stack, ...)`.
+3. Calls `PE.full_evolution_batched((BG_batch, params_batch))` → batched `PerturbationTable`. Internally chunks the k-axis (`k_chunk_size=100` by default; 5.5 GB at B=64 on A100 per `bench/design_memo.md`) and runs `vmap(k_chunk) × vmap(B)` around `evolution_one_k` inside `_evolve_chunk`. Concatenates chunks, vmap'd `make_output_table_batched` builds the batched PT.
+4. `SpectrumSolver.get_Cl_batched` / `Pk_lin_batched` over a *Python list* of un-stripped BGs (kappa_func intact), iterating element-by-element. This is the perf bottleneck — `bench/perf_batched.py` shows batched is currently slower than sequential single calls because the spectrum loop pays JIT-dispatch overhead per element. Unblocking it requires making `BG.visibility` / `BG.expmkappa` vmap-compatible, which means rethinking how `kappa_func` is stored.
+
+Returns a `BatchedOutput` (Cls/Pk/l/k/params; BG and PT are *not* stored).
+
+The chunked path inside `_compute_modes_batched` produces per-mode trajectories that don't bit-match the single-call vmap reference. This is *not* a bug; it's diffrax PID step-controller noise within the configured `rtol_large_k_PE` (1e-4 default). The contract that matters is downstream Cl/Pk agreement, which `bench/smoke_batched_pipeline.py` shows is ~1e-5 relative vs single-call. See `bench/chunking_debug_report.md` for the full diagnosis.
+
 ## When making changes
 
 - The accuracy test against CLASS is the contract. If you change anything in the background, perturbations, recombination, or spectrum modules, run `pytest -s -vv` and report the max relative error on TT/EE/Pk — the threshold is 1%.
 - New `Fluid` species should follow `species.MasslessNeutrino` or `species.DarkEnergy` as templates and be passed in via the `user_species` tuple, not added to the ΛCDM default list.
 - For HPC / NERSC / GPU job setup, see the parent workspace CLAUDE.md (`/pscratch/sd/c/carag/CLAUDE.md`). Don't duplicate that here.
+- Log substantive sessions in `CHANGELOG.txt` (reverse-chronological, BBN_Hubble format).
+- The branch-specific plan is in `plan.md` (canonical /ultraplan output, kept for history). The Phase A/B baseline numbers, design memo, and chunking-bug closeout report all live in `bench/` and are referenced from `CHANGELOG.txt`.
 
 ## GPU access (do not wait for the user)
 

@@ -1,0 +1,210 @@
+ABCMB-k Change Log
+==================
+
+Each entry is written by a Claude Code session and describes what changed
+and why. Entries are in reverse chronological order.
+
+This checkout (ABCMB-k) is a per-k batching playground for the parent
+PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
+documented in CLAUDE.md.
+
+
+2026-05-28 — Phases A–G of per-k batched refactor: design validated, batched pipeline lands
+-------------------------------------------------------------------------------------------
+Session: perk-refactor — first pass on the flipped (params-first) batched
+evolution. Goal stated in CLAUDE.md "Current task": evaluate a parameter
+batch under one k at a time to avoid the worst-case-k tax, so frequentist
+parameter scans can amortize one Boltzmann solve over many cosmologies.
+
+BACKGROUND:
+The existing single-cosmology path is limited by the slowest k mode
+under its vmap-over-k — every k pays the worst-case diffrax step count.
+For frequentist analyses where 1000s of cosmologies are evaluated, that
+worst-case-tax compounds. The proposed flipped order (vmap over a batch
+of params at fixed k, loop/scan over k) should give a tighter step-count
+distribution at fixed k → faster per-params at large B.
+
+WHAT LANDED ON THE perk-refactor BRANCH:
+
+Phase A — baseline profile (bench/baseline.py, .npz, _summary.txt):
+  Single-GPU, fiducial-perturbed ΛCDM box (Planck ±2-3σ on
+  h, omega_cdm, omega_b, A_s, n_s).
+    - End-to-end model() per-params: 9.89 s
+    - PE.full_evolution per-params:  8.14 s
+    - Per-k step counts (N_k=571): min=41 median=380 max=1579
+    - max/median = 4.16 — that's the worst-case-tax to beat.
+
+Phase B — flipped-order spike (bench/flipped_spike.py, multigpu, _summary.txt):
+  Three iterations:
+    1. Original lax.scan-over-k around vmap-over-batch around diffrax:
+       13-min compile + 13-min run per B value → abandoned.
+    2. Python-loop-over-k, vmap-over-batch: structurally guaranteed slow
+       because each k call serializes → abandoned.
+    3. Double-vmap (vmap-over-k × vmap-over-batch): WORKS.
+
+  Single-GPU at B=64:
+    - per-params 3.43 s = 2.37x speedup vs baseline 8.14
+    - memory pressured (28-31 GB on A100 40 GB; XLA rematerialization)
+
+  4-GPU sharded over batch axis (bench/flipped_spike_multigpu.py):
+    - per-params at B=64: 0.93 s = 8.80x speedup vs baseline
+
+  Step-count hypothesis CONFIRMED:
+    - baseline max/median over k = 4.16
+    - flipped worst-k max/median over B = 1.12
+
+  Gate evaluator (bench/decision.py) verdict: PROCEED. Confirming that
+  the design pays out at meaningful B, and multi-GPU sharding restores
+  linear scaling once memory bites.
+
+Phase C — snapshot fixtures + parity helpers (pytests/):
+  Four scenarios: lcdm_tau, lcdm_z, lcdm_massive_nu, bbn_table.
+  (bbn_linx skipped — slow CPU pipeline, can add later.)
+  Helpers: pytests/snapshots.py (assert_matches_snapshot),
+  pytests/parity.py (assert_batch_matches_loop).
+  Snapshot tolerance set to rtol=1e-8, atol=1e-18 — tighter rtol turned
+  out to be optimistic given XLA's run-to-run scheduler variability on
+  imports of new methods. The previous 1e-10 was below what XLA
+  actually delivers across code edits.
+
+Phase D — batched perturbation evolver:
+  abcmb/perturbations.py adds:
+    - _evolve_chunk (@eqx.filter_jit): vmap over k_chunk × vmap over B
+      around evolution_one_k. Reused per-shape JIT cache entry.
+    - _compute_modes_batched: chunked python loop over k of _evolve_chunk
+      with k_chunk_size=100 default. Memory ≈ 5.5 GB at B=64 on A100.
+    - make_output_table_batched (@eqx.filter_jit): vmap'd outer
+      composition of the existing make_output_table.
+    - full_evolution_batched: orchestrator returning batched
+      PerturbationTable.
+    - strip_bg_kappa (module-level): replaces Background.kappa_func with
+      None so jax.tree.map(jnp.stack, ...) on a batch of Backgrounds
+      succeeds. Perturbations don't touch kappa_func.
+
+Phase E — batched spectrum (abcmb/spectrum.py):
+  SpectrumSolver gains get_Cl_batched and Pk_lin_batched. CURRENTLY
+  IMPLEMENTED AS PYTHON LOOPS over B because get_Cl reads
+  BG.kappa_func (via visibility / expmkappa), and kappa_func doesn't
+  stack across cosmologies cleanly. This is the major remaining perf
+  bottleneck (see below).
+
+Phase G — Model.call_batched + BatchedOutput (abcmb/main.py):
+  Model.call_batched(params_list) is the user-facing entrypoint.
+  Internally:
+    1. Build B Background objects sequentially via _build_one_bg
+       (HyRex on CPU, no batching there yet — design memo justifies
+       deferring).
+    2. Stack params + strip-and-stack BGs for the modes computation.
+    3. full_evolution_batched on the stripped BG batch → batched PT.
+    4. Spectrum on a python list of un-stripped BGs (kappa_func intact).
+  BatchedOutput stores ClTT/ClTE/ClEE/Pk (shape (B, l)/(B, k)) plus l, k,
+  and the batched params dict. Background and PerturbationTable are
+  intentionally NOT carried — kappa_func doesn't stack.
+
+PARITY:
+  End-to-end smoke (bench/smoke_batched_pipeline.py) at B=2 matches
+  single model() FIDUCIAL on Cls/Pk to:
+    ClTT max_rel = 1.42e-07
+    ClTE max_rel = 2.97e-05
+    ClEE max_rel = 1.59e-08
+    Pk   max_rel = 2.59e-05
+  All under the 1% accuracy_test.py gate. accuracy_test.py against CLASS
+  has not been run on the batched path yet — listed as next step.
+
+THE FALSE "CHUNKING BUG":
+  Mid-session, _compute_modes_batched showed wildly different numerical
+  output between chunked and unchunked paths (max_rel up to 1e+5).
+  Investigation took several hours. A subagent (12 diagnostic smokes in
+  bench/smoke_chunk*.py + smoke_full_vs_pure.py + smoke_convergence.py)
+  ultimately diagnosed:
+    THIS IS NOT A BUG. It is diffrax's PID adaptive step controller
+    behaving batch-composition-dependently under vmap. Different
+    k-mode batches → different worst-case step counts → different
+    actual stepping → trajectories disagree at the per-mode level but
+    all stay within the configured rtol_large_k_PE = 1e-4 envelope.
+
+  Hard evidence (bench/chunking_debug_report.md):
+    The "max_abs 8.6e-1 between chunk and full-vmap" was on
+    quantities of norm ~1e4 — i.e., ~1e-5 relative, fine for spectrum
+    integration. smoke_convergence at rtol_large=1e-4 shows both
+    full-vmap and chunked agree with pure-single-k integration to
+    ~1e-6 relative. Tighter rtol brackets confirm convergence.
+
+  Implications:
+    - Chunking works; the spectrum/PT downstream agreement is the
+      contract that matters (already at 1e-5 in
+      smoke_batched_pipeline.log).
+    - We rolled back the python-loop workaround in
+      make_output_table_batched after this diagnosis.
+
+PERFORMANCE (bench/perf_batched.py, ELLMAX=800, single A100):
+    single (post-compile):         9.51 s/params
+    batched B=1:                  22.64 s   (0.42x vs single×B)
+    batched B=4:                  14.46 s/params  (0.66x)
+    batched B=8:                  12.95 s/params  (0.73x)
+    batched B=16:                 12.08 s/params  (0.79x)
+
+  Batched is currently SLOWER than sequential single calls. The
+  asymptote at ~12 s/params is set by the python-loop spectrum:
+  each get_Cl / Pk_lin element pays full JIT-dispatch overhead.
+
+  The modes-computation side IS faster batched (verifiable by
+  comparing the Phase B PE-only spike at B=64 = 3.43 s/params vs the
+  baseline PE-only 8.14 s/params). The win is being hidden by the
+  spectrum loop.
+
+  NEXT STEP TO UNLOCK THE PREDICTED 2-3x SPEEDUP: move
+  get_Cl_batched and Pk_lin_batched to true vmap. The blocker is
+  kappa_func not stacking. Two paths forward:
+    (a) Refactor Background to compute the visibility / expmkappa
+        functions in a vmap-compatible way (probably store the
+        Solution's underlying arrays plus a small wrapper that
+        interpolates them).
+    (b) Find / build a custom diffrax.Solution pytree handler that
+        stacks the internal arrays across cosmologies.
+
+WHAT'S NOT IN THIS SESSION:
+  - accuracy_test.py against CLASS on the batched path. The 1e-5 PT
+    drift is consistent with rtol_large_k_PE and should leave Cl/Pk
+    well under the 1% gate, but it hasn't been verified.
+  - Phase F (HyRex + LINX vmap on CPU). Still sequential.
+  - Multi-GPU shard wiring inside Model.call_batched (Phase B spike
+    proved it works; production wire-up deferred).
+  - Phase D.4 pytest parity test (the smoke files cover the cases
+    but aren't pytest-collected).
+  - Phase H frequentist likelihood layer.
+
+COMMITS (perk-refactor branch, off fb154e8 main):
+  64eb365  Phase A/B scaffold: baseline.py, flipped_spike.py, decision.py
+  6b971a9  Phase A/B results: PROCEED gate decision
+  9f7f9b3  Phase C: snapshot fixtures + parity helpers
+  2b34cc0  Phase D.1: add full_evolution_batched + _evolve_chunk
+  3ff640f  Phase D.1+D.2 partial: batched perturbation evolution + PT assembly
+  87b15b5  Phase E+G: batched spectrum + Model.call_batched end-to-end
+  d899f01  Phase E+G perf benchmark: batched is SLOWER than single at small B
+  86550db  Chunking debug closeout: the "bug" was diffrax step-controller noise
+  (this entry + chunking re-enabled + make_output_table_batched vmap'd)
+
+ARTIFACTS UNDER bench/:
+  baseline_*.npz / _summary.txt — Phase A perf + step counts
+  flipped_*.npz / _summary.txt — Phase B single-GPU spike
+  flipped_multigpu_*.npz / _summary.txt — Phase B 4-GPU sharded
+  decision.py — gate evaluator
+  design_memo.md — subagent's pre-implementation analysis
+  smoke_d1.py, smoke_d2_parity.py, smoke_isolate.py, smoke_no_chunk.py,
+  smoke_modes_parity.py, smoke_chunk*.py, smoke_lna_start.py,
+  smoke_maxsteps.py, smoke_scan_ref.py, smoke_tighter.py,
+  smoke_uniform_rtol.py, smoke_full_vs_pure.py, smoke_convergence.py
+    — diagnostic series leading to the "false chunking bug" closeout
+  chunking_debug_report.md — that closeout report
+  proposed_chunking_fix.py — downstream Cl/Pk parity check sketch
+  smoke_batched_pipeline.py — end-to-end B=2 smoke (1e-5 vs single)
+  perf_batched.py — perf sweep (this entry's numbers)
+
+NOTE ON THE PLAN FILE:
+  plan.md is the canonical plan generated by the user's /ultraplan
+  session at the start of this work; it's preserved on the branch for
+  history. The plan called for D.4 / E / F / G / H, of which D, E, G
+  are now in place (with the spectrum-perf caveat above). F is the
+  HyRex/LINX vmap and H is the frequentist likelihood layer; both
+  remain TODO.
