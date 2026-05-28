@@ -105,3 +105,50 @@ Other follow-ups:
 - If the user wants strict bit-parity, the only path is a fixed-step integrator
   (e.g. ConstantStepSize) — but that costs both wall-clock and stiffness
   robustness, and is not recommended.
+
+## 5. Confirmation from the follow-up debug session (2026-05-28, second pass)
+
+A second debug pass on the same date independently re-derived the conclusion
+above. Adds the following bench scripts (kept as a separate evidence trail in
+case the analysis ever needs re-validating):
+
+- `smoke_chunk_repeat.py` — calls `_evolve_chunk(chunk[0])`, then
+  `_evolve_chunk(chunk[1])`, then `_evolve_chunk(chunk[0])` again. The two
+  chunk[0] outputs are **bit-identical** (`max_abs = 0.00e+00`). Definitively
+  rules out cross-call buffer aliasing, donate-arg corruption, JIT cache
+  poisoning, and any form of state leakage between sequential
+  `_evolve_chunk` invocations.
+- `smoke_chunk1_first.py` — calls chunk[1] **first** (no prior chunk[0]
+  warm-up). Result is wrong by the same `max_abs = 1.72e-2` as when chunk[1]
+  is called after chunk[0]. Confirms the wrongness is intrinsic to the
+  chunk's k-values, not to call ordering.
+- `smoke_chunk1_perk.py` — per-k breakdown inside chunk[1]: errors start
+  exactly at index 52 (k = 1.0082e-02), i.e. exactly at the `k_split_PE =
+  0.01` boundary. Localizes to the high-k branch of the rtol/atol where.
+- `smoke_chunk_no_batch.py` — single vmap (no double-vmap, no B-axis) over
+  the chunk[1] k subset gives the same `max_abs = 1.72e-2`. Rules out the
+  inner B-axis vmap as the source.
+- `smoke_chunk_combined.py` — vmap on `k_axis[0:200]` is bit-exact; vmap on
+  `k_axis[100:200]` is wrong by 1.7e-2; vmap on the first 50 k's of chunk[1]
+  is correct (1.2e-9). The presence of the smallest-k modes in the batch is
+  what makes the high-k integration "match" the full vmap.
+- `smoke_uniform_rtol.py` — 100 k's all above split: wrong. 100 k's all
+  below split: bit-exact. Rules out "mixed rtol under vmap" as a structural
+  bug.
+- `smoke_full_vs_pure.py` — the punchline. The single-call full vmap itself
+  deviates from pure-per-k integration by up to **1.5** at k = 0.30 mode
+  (k_axis[450]) with norm 2.9e+5 (rel ≈ 5e-6, exactly the rtol promise).
+  So neither vmap'd result is bit-exact ground truth. Both live within
+  tolerance.
+- `smoke_pt_parity.py` — applied a chunked vs single-call comparison on the
+  full `PerturbationTable` fields (with the current "no-chunking workaround"
+  in `_compute_modes_batched` swapped back to a chunked Python loop calling
+  `_evolve_chunk`). All field-level relative errors ≤ 3.5e-4, in line with
+  `rtol_large_k_PE = 1e-4`. No structural mismatch.
+
+The second pass arrived at the same recommendation: **the chunked path is
+correct in the meaningful sense**. The single-call full-vmap workaround in
+the current `_compute_modes_batched` is functionally equivalent in
+numerical accuracy; it just trades GPU memory for a different
+within-tolerance noise realization. Reverting to Python-loop-chunking is
+safe whenever memory pressure makes the single-call path infeasible.
