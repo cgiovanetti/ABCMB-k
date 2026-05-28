@@ -613,6 +613,51 @@ class SpectrumSolver(eqx.Module):
             get_unlensed_Cls
         )
 
+    def get_Cl_batched(self, PT_batched, BG_list, params_batched):
+        """Batched ``get_Cl`` for a list of background objects with stacked
+        PerturbationTable and parameter dict.
+
+        Implementation is a Python loop over the batch axis: each call to
+        ``get_Cl`` runs the full single-cosmology spectrum pipeline. Slow
+        but correct. See abcmb/perturbations.py::make_output_table_batched
+        for the same rationale.
+
+        Parameters
+        ----------
+        PT_batched : PerturbationTable
+            Each array field has a leading B axis.
+        BG_list : list of Background
+            Length-B list of un-stacked Background objects with
+            ``kappa_func`` intact (the spectrum code reads ``BG.visibility``
+            and ``BG.expmkappa`` which need it).
+        params_batched : dict
+            Each value has a leading B axis of length B.
+
+        Returns
+        -------
+        (ClTT, ClTE, ClEE) tuple of jnp.arrays each shape (B, len(self.ells))
+        """
+        B = len(BG_list)
+        triples = []
+        for i in range(B):
+            PT_i = jax.tree.map(lambda x: x[i], PT_batched)
+            p_i = jax.tree.map(lambda x: x[i], params_batched)
+            triples.append(self.get_Cl(PT_i, BG_list[i], p_i))
+        ClTT = jnp.stack([t[0] for t in triples])
+        ClTE = jnp.stack([t[1] for t in triples])
+        ClEE = jnp.stack([t[2] for t in triples])
+        return ClTT, ClTE, ClEE
+
+    def Pk_lin_batched(self, k, z, PT_batched, params_batched):
+        """Batched ``Pk_lin``. Python loop over B. Returns shape (B, len(k))."""
+        B = jax.tree_util.tree_leaves(params_batched)[0].shape[0]
+        pks = []
+        for i in range(B):
+            PT_i = jax.tree.map(lambda x: x[i], PT_batched)
+            p_i = jax.tree.map(lambda x: x[i], params_batched)
+            pks.append(self.Pk_lin(k, z, PT_i, p_i))
+        return jnp.stack(pks)
+
     def Cl_one_ell(self, idx, PT, BG, params):
         """
         Computes angular power spectrum for single multipole.

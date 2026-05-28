@@ -184,6 +184,86 @@ class Model(eqx.Module):
         return self.run_cosmology_abbr(full_params)
 
 
+    def call_batched(self, params_list):
+        """Frequentist-style batched evaluation.
+
+        Builds one ``Background`` per element of ``params_list`` sequentially
+        (HyRex on CPU, no batching there for now), then runs the batched
+        perturbation evolver, batched ``make_output_table``, and per-element
+        spectrum on the stacked PerturbationTable.
+
+        Parameters
+        ----------
+        params_list : list[dict]
+            B param dicts (user-input, not derived).
+
+        Returns
+        -------
+        BatchedOutput
+            Cls and Pk batched along a leading B axis.
+        """
+        from .perturbations import strip_bg_kappa
+
+        B = len(params_list)
+
+        # --- per-element setup: BGs and full params dicts ---
+        full_ps = []
+        bgs = []
+        for params in params_list:
+            full_params = self.add_derived_parameters(params)
+            full_p, bg = self._build_one_bg(full_params)
+            full_ps.append(full_p)
+            bgs.append(bg)
+
+        # --- stack params + strip-and-stack BGs for the modes computation ---
+        params_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps)
+        BG_batch_stripped = jax.tree.map(
+            lambda *xs: jnp.stack(xs), *[strip_bg_kappa(bg) for bg in bgs])
+
+        # --- batched perturbations (modes + PT) ---
+        PT_batched = self.PE.full_evolution_batched(
+            (BG_batch_stripped, params_batch))
+
+        # --- batched spectrum: python loop over B with un-stripped BG list ---
+        ClTT, ClTE, ClEE = self.SS.get_Cl_batched(
+            PT_batched, bgs, params_batch)
+        l = self.SS.ells
+        Pk = self.SS.Pk_lin_batched(
+            self.SS.k_axis_Pk_output, 0., PT_batched, params_batch)
+        k = self.SS.k_axis_Pk_output
+
+        return BatchedOutput(
+            ClTT=ClTT, ClTE=ClTE, ClEE=ClEE,
+            Pk=Pk, l=l, k=k, params=params_batch,
+        )
+
+    def _build_one_bg(self, full_params):
+        """Sequential helper: run the full single-cosmology path through to
+        ``Background``. Mirrors ``run_cosmology_abbr`` but stops at the BG
+        instead of the spectrum. Used by ``call_batched``.
+        """
+        def _to_float(v):
+            arr = jnp.asarray(v)
+            if arr.dtype.kind in 'iub':
+                return arr.astype(jnp.float64)
+            return arr
+        full_params = jax.tree_util.tree_map(_to_float, full_params)
+
+        pre_BG = self.get_BG_pre_recomb(full_params)
+        cpu_dev = jax.devices('cpu')[0]
+        recomb_inputs_cpu = jax.device_put(pre_BG.recomb_inputs, cpu_dev)
+        params_cpu = jax.device_put(full_params, cpu_dev)
+        recomb_output = eqx.filter_jit(self.RecModel, backend='cpu')(
+            (recomb_inputs_cpu, params_cpu))
+        try:
+            recomb_output = jax.device_put(
+                recomb_output, jax.devices('gpu')[0])
+        except Exception:
+            pass
+        recomb_output = jax.tree_util.tree_map(_to_float, recomb_output)
+        bg = self.get_BG(full_params, pre_BG, recomb_output)
+        return full_params, bg
+
     def run_cosmology_abbr(self, params : dict):
         """
         Compute CMB angular power spectra for given parameters.
@@ -647,4 +727,31 @@ class Output(eqx.Module):
     k  : jnp.array
     BG : background.Background
     PT : perturbations.PerturbationTable
+    params : dict
+
+
+class BatchedOutput(eqx.Module):
+    """Batched output of ``Model.call_batched(params_list)``.
+
+    Each array carries a leading B axis. Background and PerturbationTable
+    are not stored on this object because Background.kappa_func (a
+    diffrax.Solution) doesn't stack cleanly across cosmologies — see
+    ``perturbations.strip_bg_kappa``. If a downstream user needs the per-
+    element BG or PT, slice ``params`` and rebuild via Model.
+
+    Attributes
+    ----------
+    ClTT, ClTE, ClEE : jnp.array, shape (B, len(l))
+    Pk : jnp.array, shape (B, len(k))
+    l : jnp.array, shape (len(l),)
+    k : jnp.array, shape (len(k),)
+    params : dict
+        Each leaf has leading B axis. Includes derived keys.
+    """
+    ClTT : jnp.array
+    ClTE : jnp.array
+    ClEE : jnp.array
+    Pk   : jnp.array
+    l : jnp.array
+    k : jnp.array
     params : dict
