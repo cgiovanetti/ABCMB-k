@@ -57,6 +57,16 @@ Phase B — flipped-order spike (bench/flipped_spike.py, multigpu, _summary.txt)
   the design pays out at meaningful B, and multi-GPU sharding restores
   linear scaling once memory bites.
 
+  CAVEAT (noticed only post-hoc, during the chunking-debug closeout):
+  The Phase B spike measured wall-clock only, not per-mode trajectory
+  parity. The 8.80x at B=64 multi-GPU is a correct wall-clock number
+  but the trajectories the spike produced were subject to the same
+  diffrax step-controller noise documented later in
+  bench/chunking_debug_report.md — i.e., they don't bit-match single-
+  call full_evolution. The right contract is downstream Cl/Pk parity,
+  which smoke_batched_pipeline.log confirms at ~1e-5 rel. Anyone re-
+  running the spike and expecting per-mode bit-parity will be confused.
+
 Phase C — snapshot fixtures + parity helpers (pytests/):
   Four scenarios: lcdm_tau, lcdm_z, lcdm_massive_nu, bbn_table.
   (bbn_linx skipped — slow CPU pipeline, can add later.)
@@ -155,13 +165,25 @@ PERFORMANCE (bench/perf_batched.py, ELLMAX=800, single A100):
 
   NEXT STEP TO UNLOCK THE PREDICTED 2-3x SPEEDUP: move
   get_Cl_batched and Pk_lin_batched to true vmap. The blocker is
-  kappa_func not stacking. Two paths forward:
-    (a) Refactor Background to compute the visibility / expmkappa
-        functions in a vmap-compatible way (probably store the
-        Solution's underlying arrays plus a small wrapper that
-        interpolates them).
-    (b) Find / build a custom diffrax.Solution pytree handler that
-        stacks the internal arrays across cosmologies.
+  kappa_func not stacking. Recommended concrete fix (path (a),
+  cleanest):
+    Background.kappa_func is currently a diffrax.Solution set by
+    self._tabulate_optical_depth(params) (background.py:552) and
+    consumed via self.kappa_func.evaluate(lna) inside expmkappa(lna)
+    (around background.py:741). Replace this with a pre-tabulated
+    (lna_grid, expmkappa_grid) pair stored on Background (mirroring
+    how tau_tab + tau(lna) already work via tools.fast_interp), and
+    rewrite expmkappa to interpolate the grid instead of evaluating
+    the Solution. After that:
+      - Background stacks cleanly across cosmologies via
+        jax.tree.map(jnp.stack, ...)
+      - strip_bg_kappa / the BG_list spectrum hack can be removed
+      - get_Cl_batched / Pk_lin_batched move to outer vmap
+    Localized change in background.py; downstream callers
+    (perturbations.py, spectrum.py) keep their existing method
+    signatures.
+  Path (b) — building a custom diffrax.Solution pytree handler —
+  is more invasive and not recommended.
 
 WHAT'S NOT IN THIS SESSION:
   - accuracy_test.py against CLASS on the batched path. The 1e-5 PT

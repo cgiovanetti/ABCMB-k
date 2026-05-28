@@ -20,7 +20,11 @@ pip install -r pytest_requirements.txt            # test deps (adds classy)
 cd pytests && pytest -s -vv                       # accuracy test vs. CLASS
 ```
 
-The single test (`pytests/accuracy_test.py`) builds an ABCMB `Model`, builds an equivalent CLASS run with `classy`, and asserts ΛCDM agreement to **< 1%** on lensed TT, EE, and Pk. It requires a working `classy` install — locally that means a built CLASS variant on `PYTHONPATH`. CI forces CPU (`JAX_PLATFORM_NAME=cpu`); `pytests/conftest.py` enables x64 and `jax_debug_nans`.
+Test hierarchy on this checkout:
+- **`pytests/accuracy_test.py`** — the 1%-vs-CLASS gate. Requires a working `classy` install (locally: a built CLASS variant on `PYTHONPATH`). This is the contract for theory-affecting changes.
+- **`pytests/test_snapshots.py`** — the lighter parity oracle at `rtol=1e-8`, `atol=1e-18` against frozen ABCMB output (`pytests/fixtures/snapshots.npz`). No `classy` dependency. Appropriate for refactor work where you don't want to rebuild CLASS. Regenerate snapshots with `python pytests/fixtures/generate_snapshots.py` if a deliberate code change shifts XLA scheduling.
+
+CI forces CPU (`JAX_PLATFORM_NAME=cpu`); `pytests/conftest.py` enables x64 and `jax_debug_nans`. The snapshot tests need to run on the same backend the snapshots were generated against (currently GPU — set `JAX_PLATFORM_NAME=gpu` explicitly inside srun).
 
 `time_tests.py` (top-level) is a hand-run JIT warm-up / wall-clock benchmark, not part of pytest.
 
@@ -72,6 +76,8 @@ HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: th
 Returns a `BatchedOutput` (Cls/Pk/l/k/params; BG and PT are *not* stored).
 
 The chunked path inside `_compute_modes_batched` produces per-mode trajectories that don't bit-match the single-call vmap reference. This is *not* a bug; it's diffrax PID step-controller noise within the configured `rtol_large_k_PE` (1e-4 default). The contract that matters is downstream Cl/Pk agreement, which `bench/smoke_batched_pipeline.py` shows is ~1e-5 relative vs single-call. See `bench/chunking_debug_report.md` for the full diagnosis.
+
+**Path forward to fix the spectrum-loop bottleneck:** `Background.kappa_func` is currently a `diffrax.Solution` set by `_tabulate_optical_depth(params)` and consumed via `kappa_func.evaluate(lna)` inside `expmkappa(lna)`. Replace with a pre-tabulated `(lna_grid, expmkappa_grid)` pair on `Background` and rewrite `expmkappa` to use `jnp.interp` or `tools.fast_interp` — the same pattern `tau_tab` already uses. After that, `Background` stacks cleanly across cosmologies and `get_Cl_batched` / `Pk_lin_batched` can move from python loops to true vmap. Localized change in `background.py` (and removing the strip_bg_kappa workarounds becomes possible).
 
 ## When making changes
 
