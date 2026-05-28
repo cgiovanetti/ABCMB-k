@@ -534,6 +534,21 @@ class Background(BackgroundPreRecomb):
         xe_full_arr = xe_reion_correction + xe.arr
         self.xe_tab = array_with_padding(xe_full_arr)
 
+        # Replace inf padding in the recomb tabs with `lastval`. Forward
+        # selects the same branch either way (the `where` in BG.xe/BG.Tm
+        # gates the fast_interp dead branch out for lna in range). The inf
+        # otherwise poisons the lensing=True reverse-AD cotangent: under
+        # Kvaerno5+VeryChord, the IFT replay materializes the stage Jacobian
+        # via vmap(jvp(RHS)) and chains a cotangent through the where's dead
+        # branch into fast_interp past `lastnum`, giving 0×inf = NaN.
+        def _finite_pad(awp):
+            finite_arr = jnp.where(jnp.isinf(awp.arr), awp.lastval, awp.arr)
+            return eqx.tree_at(lambda t: t.arr, awp, finite_arr)
+        self.xe_tab     = _finite_pad(self.xe_tab)
+        self.lna_xe_tab = _finite_pad(self.lna_xe_tab)
+        self.Tm_tab     = _finite_pad(self.Tm_tab)
+        self.lna_Tm_tab = _finite_pad(self.lna_Tm_tab)
+
         self.kappa_func = self._tabulate_optical_depth(params)
 
         # Find approximate maximum of visibility function.
