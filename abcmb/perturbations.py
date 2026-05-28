@@ -103,18 +103,94 @@ class PerturbationEvolver(eqx.Module):
         # For GPUs we vmap over the wavenumbers instead
         def scan_fun(_, ki):
             # evolution_one_k returns shape (Nlna, Ny)
-            y = self.evolution_one_k(ki, lna, args) 
+            y = self.evolution_one_k(ki, lna, args)
             return None, y
 
         if jax.default_backend() =='gpu':
             res = vmap(self.evolution_one_k,in_axes=[0,None,None])(self.k_axis_perturbations, lna, args)
-        else: 
+        else:
             _, res = lax.scan(scan_fun, None, self.k_axis_perturbations)      # res has shape (Nk, Nlna, Ny)
 
         res = res.transpose(2, 1, 0) # Transpose so the shape is (Ny, Nlna, Nk), easier for vmapping over in PT
 
         PT = self.make_output_table(lna, res, args)
         return PT
+
+    # ------------------------------------------------------------------
+    # Batched (params-axis) path. Phase D refactor: enables frequentist
+    # scans by computing one k chunk over a batch of B param-points at a
+    # time on GPU. See bench/design_memo.md for the architecture
+    # rationale (K_CHUNK=100, double-vmap, no lax.scan around diffrax).
+    # ------------------------------------------------------------------
+    @eqx.filter_jit
+    def _evolve_chunk(self, k_chunk, lna_batch, BG_batch, params_batch):
+        """JIT-compiled inner kernel: vmap over k_chunk and over the batch
+        axis B simultaneously, evaluating evolution_one_k once per
+        (k_i, batch_j). Returns shape ``(K_CHUNK, B, Nlna, Ny)``.
+
+        BG_batch and params_batch must be valid pytrees stacked along a
+        leading B axis; in particular, BG_batch.kappa_func must be ``None``
+        (perturbations don't read it, but a non-stackable diffrax.Solution
+        would break the vmap).
+        """
+        return vmap(
+            lambda k: vmap(
+                self.evolution_one_k,
+                in_axes=(None, 0, (0, 0)),
+            )(k, lna_batch, (BG_batch, params_batch)),
+            in_axes=(0,),
+        )(k_chunk)
+
+    def full_evolution_batched(self, args, k_chunk_size=100):
+        """Evolve perturbations for a B-axis batch of (BG, params).
+
+        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
+        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
+        each. Python-level loop — *not* ``lax.scan`` — because scan-around-
+        diffrax has a known compile pathology (~13 min per shape, see
+        bench/baseline_summary.txt vs bench/flipped_summary.txt).
+
+        Parameters:
+        -----------
+        args : tuple
+            ``(BG_batch, params_batch)``. Both must be stacked pytrees with
+            a leading B axis on every batched leaf. ``BG_batch.kappa_func``
+            must be ``None``.
+        k_chunk_size : int
+            Number of k-modes per JIT cache entry. 100 ≈ 5.5 GB at B=64 on
+            an A100 (see design memo §1). Smaller = less peak memory, more
+            compile overhead. Larger = faster runtime, risks OOM. The last
+            chunk may be smaller (gives one extra JIT cache entry).
+
+        Returns:
+        --------
+        modes : jnp.array, shape (B, Ny, Nlna, N_k)
+            Same orientation as ``full_evolution``'s intermediate ``res``
+            tensor pre-``make_output_table``. Phase D.2 will wrap this in a
+            batched ``PerturbationTable``.
+        lna_batch : jnp.array, shape (B, Nlna)
+            Per-element lna grids (each starts at its own
+            ``BG.lna_transfer_start``).
+        """
+        BG_batch, params_batch = args
+        # Per-element lna grids: each batch element gets its own
+        # lna_transfer_start. Shape (B, Nlna).
+        lna_batch = vmap(
+            lambda lts: jnp.linspace(lts, 0., 500)
+        )(BG_batch.lna_transfer_start)
+
+        k_axis = self.k_axis_perturbations
+        n_k = len(k_axis)
+        chunks = []
+        for i in range(0, n_k, k_chunk_size):
+            k_chunk = k_axis[i:i + k_chunk_size]
+            chunks.append(self._evolve_chunk(
+                k_chunk, lna_batch, BG_batch, params_batch))
+        # (N_k, B, Nlna, Ny) -> (B, Ny, Nlna, N_k) to match make_output_table's
+        # consumption pattern.
+        modes = jnp.concatenate(chunks, axis=0)
+        return modes.transpose(1, 3, 2, 0), lna_batch
+
 
     def get_starting_time(self, k, args):
         """
@@ -402,6 +478,25 @@ class PerturbationEvolver(eqx.Module):
             metric_alpha_prime,
             species_perturbations,
         )
+
+def strip_bg_kappa(bg):
+    """Return a copy of ``bg`` with ``kappa_func`` replaced by None.
+
+    ``Background.kappa_func`` is a ``diffrax.Solution`` whose non-array
+    internals don't survive ``jax.tree.map(jnp.stack, ...)``;
+    ``evolution_one_k`` never reads it, so stripping is safe for the
+    batched perturbation path. The caller must arrange any code that does
+    read ``kappa_func`` (visibility/expmkappa in spectrum) to use an
+    un-stripped copy.
+
+    Lives at module scope rather than as a ``@staticmethod`` because
+    ``eqx.Module.__getattribute__`` doesn't expose plain staticmethods.
+    """
+    return eqx.tree_at(
+        lambda b: b.kappa_func, bg, replace=None,
+        is_leaf=lambda x: x is None,
+    )
+
 
 class PerturbationTable(eqx.Module):
     """

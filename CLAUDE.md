@@ -70,6 +70,10 @@ HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: th
 
 Request your own NERSC GPU allocations when ABCMB code needs to run.
 
+**NEVER run Python (or pytest, or anything that touches JAX/CUDA) on the login node.** Every Python invocation — even a one-line import smoke test — must go through `srun --jobid=…` against an active allocation. Login-node compute is shared and the user has explicitly forbidden it.
+
+**Always export `PYTHONPATH=$(pwd):$PYTHONPATH` (assuming CWD is `/pscratch/sd/c/carag/ABCMB-k`) inside the srun shell.** The shared `actdr6` env has the sibling `/pscratch/sd/c/carag/ABCMB/` checkout editable-installed; without the override, `import abcmb` resolves to that checkout, not this one — your edits to `abcmb/*.py` in this directory will appear to do nothing.
+
 **Use both allowed allocations when you can.** NERSC permits **up to two concurrent interactive allocations** for this account; if you have two independent jobs to run (e.g., baseline + spike benchmarks), allocate two nodes and run them in parallel instead of serializing. Don't leave the second slot idle to be polite — wall-clock is the cost. Always `scancel` allocations when done so they don't sit idle.
 
 Non-interactive pattern that works inside Claude Code's per-call fresh shells:
