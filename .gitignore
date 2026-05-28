@@ -10,3 +10,4 @@
 # refactor bench runtime artifacts
 bench/.jobid
 bench/*_run.log
+bench/snapshots_*.log
