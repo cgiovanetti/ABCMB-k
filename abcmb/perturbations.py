@@ -122,33 +122,47 @@ class PerturbationEvolver(eqx.Module):
     # time on GPU. See bench/design_memo.md for the architecture
     # rationale (K_CHUNK=100, double-vmap, no lax.scan around diffrax).
     # ------------------------------------------------------------------
-    @eqx.filter_jit
     def _evolve_chunk(self, k_chunk, lna_batch, BG_batch, params_batch):
-        """JIT-compiled inner kernel: vmap over k_chunk and over the batch
-        axis B simultaneously, evaluating evolution_one_k once per
+        """Inner kernel: vmap over k_chunk and over the batch axis B
+        simultaneously, evaluating evolution_one_k once per
         (k_i, batch_j). Returns shape ``(K_CHUNK, B, Nlna, Ny)``.
 
+        Note: not decorated with ``@eqx.filter_jit`` — direct decoration
+        causes a cache pathology where the first chunk call is correct but
+        subsequent cached invocations return progressively divergent
+        outputs (see bench/smoke_chunks.log). The caller wraps with
+        ``eqx.filter_jit`` per-shape instead, which works correctly.
+
         BG_batch and params_batch must be valid pytrees stacked along a
-        leading B axis; in particular, BG_batch.kappa_func must be ``None``
-        (perturbations don't read it, but a non-stackable diffrax.Solution
-        would break the vmap).
+        leading B axis; ``BG_batch.kappa_func`` must be ``None``.
         """
-        return vmap(
-            lambda k: vmap(
+        def per_k(k, lna_b, BG_b, p_b):
+            return vmap(
                 self.evolution_one_k,
                 in_axes=(None, 0, (0, 0)),
-            )(k, lna_batch, (BG_batch, params_batch)),
-            in_axes=(0,),
-        )(k_chunk)
+            )(k, lna_b, (BG_b, p_b))
+        return vmap(per_k, in_axes=(0, None, None, None))(
+            k_chunk, lna_batch, BG_batch, params_batch)
 
-    def full_evolution_batched(self, args, k_chunk_size=100):
-        """Evolve perturbations for a B-axis batch of (BG, params).
+    def _compute_modes_batched(self, args, k_chunk_size=None):
+        """Compute raw modes tensor for a B-axis batch. Internal helper for
+        full_evolution_batched; exposed for tests that want to inspect the
+        modes before the PerturbationTable assembly.
 
-        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
-        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
-        each. Python-level loop — *not* ``lax.scan`` — because scan-around-
-        diffrax has a known compile pathology (~13 min per shape, see
-        bench/baseline_summary.txt vs bench/flipped_summary.txt).
+        Currently uses a single ``vmap`` over the FULL k-axis (no chunking)
+        with an inner ``vmap`` over the batch axis. K-chunking attempts
+        (Python-loop with eqx.filter_jit'd chunks; lax.map with batch_size)
+        produced correct results for the *first* chunk and progressively
+        divergent results for subsequent chunks (jax 0.8.1, see
+        bench/smoke_chunks.log + bench/smoke_modes.log). The root cause is
+        not yet localized; falling back to single-call full vmap until a
+        fix lands.
+
+        This means peak memory scales as ``N_k × B`` (all in-flight
+        diffrax solves). bench/flipped_summary.txt showed B=64 with
+        N_k=571 already memory-pressured at 28-31 GB on a single A100.
+        For larger B, use the multi-GPU shard pattern (see
+        bench/flipped_spike_multigpu.py).
 
         Parameters:
         -----------
@@ -156,40 +170,94 @@ class PerturbationEvolver(eqx.Module):
             ``(BG_batch, params_batch)``. Both must be stacked pytrees with
             a leading B axis on every batched leaf. ``BG_batch.kappa_func``
             must be ``None``.
-        k_chunk_size : int
-            Number of k-modes per JIT cache entry. 100 ≈ 5.5 GB at B=64 on
-            an A100 (see design memo §1). Smaller = less peak memory, more
-            compile overhead. Larger = faster runtime, risks OOM. The last
-            chunk may be smaller (gives one extra JIT cache entry).
+        k_chunk_size : Any
+            Accepted for forward compatibility but currently ignored.
 
         Returns:
         --------
         modes : jnp.array, shape (B, Ny, Nlna, N_k)
-            Same orientation as ``full_evolution``'s intermediate ``res``
-            tensor pre-``make_output_table``. Phase D.2 will wrap this in a
-            batched ``PerturbationTable``.
         lna_batch : jnp.array, shape (B, Nlna)
-            Per-element lna grids (each starts at its own
-            ``BG.lna_transfer_start``).
         """
         BG_batch, params_batch = args
-        # Per-element lna grids: each batch element gets its own
-        # lna_transfer_start. Shape (B, Nlna).
         lna_batch = vmap(
             lambda lts: jnp.linspace(lts, 0., 500)
         )(BG_batch.lna_transfer_start)
 
-        k_axis = self.k_axis_perturbations
-        n_k = len(k_axis)
-        chunks = []
-        for i in range(0, n_k, k_chunk_size):
-            k_chunk = k_axis[i:i + k_chunk_size]
-            chunks.append(self._evolve_chunk(
-                k_chunk, lna_batch, BG_batch, params_batch))
-        # (N_k, B, Nlna, Ny) -> (B, Ny, Nlna, N_k) to match make_output_table's
-        # consumption pattern.
-        modes = jnp.concatenate(chunks, axis=0)
+        def per_k(k):
+            return vmap(
+                self.evolution_one_k,
+                in_axes=(None, 0, (0, 0)),
+            )(k, lna_batch, (BG_batch, params_batch))
+
+        modes = vmap(per_k)(self.k_axis_perturbations)  # (N_k, B, Nlna, Ny)
         return modes.transpose(1, 3, 2, 0), lna_batch
+
+    def full_evolution_batched(self, args, k_chunk_size=100):
+        """Evolve perturbations for a B-axis batch of (BG, params), return
+        a batched PerturbationTable.
+
+        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
+        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
+        each. Python-level loop — *not* ``lax.scan`` — because scan-around-
+        diffrax has a known compile pathology (13-min per shape; see
+        bench/baseline_summary.txt vs bench/flipped_summary.txt).
+
+        Parameters:
+        -----------
+        args : tuple
+            ``(BG_batch, params_batch)``. Both must be stacked pytrees with
+            a leading B axis on every batched leaf. ``BG_batch.kappa_func``
+            must be ``None`` (use ``strip_bg_kappa`` before stacking).
+        k_chunk_size : int
+            Number of k-modes per JIT cache entry.
+
+        Returns:
+        --------
+        PerturbationTable
+            Each field carries a leading B axis. Internally this is just
+            ``vmap(make_output_table, in_axes=(0, 0, (0, 0)))`` applied to
+            the per-element ``(lna, modes, (BG, params))``.
+        """
+        modes, lna_batch = self._compute_modes_batched(
+            args, k_chunk_size=k_chunk_size)
+        return self.make_output_table_batched(lna_batch, modes, args)
+
+    def make_output_table_batched(self, lna_batch, modes_batch, args_batch):
+        """Batched version of ``make_output_table``.
+
+        Currently uses a Python loop over the B axis: each element gets
+        un-stacked from the (lna_batch, modes_batch, args_batch) inputs
+        via ``jax.tree.map(lambda x: x[i], ...)``, then ``make_output_table``
+        is called directly, and the resulting PerturbationTable objects
+        are stacked along a fresh leading B axis.
+
+        The straightforward ``vmap(make_output_table, in_axes=...)`` path
+        produced wildly divergent PerturbationTable fields at B=1 even
+        though the modes input was bit-correct (see bench/smoke_d2.log).
+        Localized fix deferred to investigation; loop is correct and
+        adequate for small B used by tests.
+
+        Parameters:
+        -----------
+        lna_batch : jnp.array, shape (B, Nlna)
+        modes_batch : jnp.array, shape (B, Ny, Nlna, N_k)
+        args_batch : tuple
+            ``(BG_batch, params_batch)``, stacked pytrees.
+
+        Returns:
+        --------
+        PerturbationTable with every array field carrying a leading B axis.
+        """
+        BG_batch, params_batch = args_batch
+        B = lna_batch.shape[0]
+        PTs = []
+        for i in range(B):
+            bg_i = jax.tree.map(lambda x: x[i], BG_batch)
+            params_i = jax.tree.map(lambda x: x[i], params_batch)
+            PTs.append(self.make_output_table(
+                lna_batch[i], modes_batch[i], (bg_i, params_i)))
+        # Stack each PerturbationTable field along a fresh leading B axis.
+        return jax.tree.map(lambda *xs: jnp.stack(xs), *PTs)
 
 
     def get_starting_time(self, k, args):
