@@ -111,16 +111,66 @@ def main():
     print(f"    target: flipped <= {STEP_RATIO_IMPROVEMENT_TARGET} * baseline = "
           f"{STEP_RATIO_IMPROVEMENT_TARGET * b_ratio:.2f}")
 
+    # -------------------- Multi-GPU (if present) --------------------
+    mpath = os.path.join(BENCH_DIR, 'flipped_multigpu_stepcounts.npz')
+    if os.path.exists(mpath):
+        m = np.load(mpath)
+        m_B = np.asarray(m['B_values'])
+        m_pe = np.asarray(m['pe_per_params'])
+        n_dev = int(m['n_devices']) if 'n_devices' in m.files else 4
+        print("\n" + "=" * 70)
+        print(f"MULTI-GPU EXTENSION (N_DEVICES = {n_dev})")
+        print("=" * 70)
+        print(f"\n[multi-GPU wall-clock] per params, PE-only:")
+        print(f"  {'B':>4}  {'multi-GPU':>12}  {'speedup vs baseline_B1':>24}")
+        for i, B in enumerate(m_B):
+            sp = pe_baseline_b1 / m_pe[i] if m_pe[i] > 0 else float('inf')
+            print(f"  {B:>4}  {m_pe[i]:>12.4f}  {sp:>24.2f}x")
+        m_B64_idx = list(m_B).index(64) if 64 in list(m_B) else -1
+        if m_B64_idx >= 0:
+            m_speedup_b64 = pe_baseline_b1 / m_pe[m_B64_idx]
+            print(f"\n  multi-GPU speedup at B=64: {m_speedup_b64:.2f}x  "
+                  f"(target: >= {SPEEDUP_TARGET_B64}x)")
+            multigpu_speedup_ok = m_speedup_b64 >= SPEEDUP_TARGET_B64
+        else:
+            multigpu_speedup_ok = False
+        if 'step_counts' in m.files:
+            ms = np.asarray(m['step_counts'])
+            if ms.ndim == 2 and ms.any():
+                ms_med = np.median(ms, axis=1)
+                ms_max = ms.max(axis=1)
+                ms_ratio = ms_max / np.maximum(1, ms_med)
+                print(f"  multi-GPU step-count spread (worst-k max/med over B): "
+                      f"{ms_ratio.max():.2f}")
+    else:
+        multigpu_speedup_ok = None
+
     # -------------------- Verdict --------------------
     print("\n" + "=" * 70)
     print("VERDICT")
     print("=" * 70)
-    print(f"  Criterion 1 (wall-clock):       {'PASS' if crit1_ok else 'FAIL'}")
-    print(f"    sub: speedup at B=64 >= 3x:   {'PASS' if crit1_speedup_ok else 'FAIL'}")
-    print(f"    sub: regression at B=1 <= 2x: {'PASS' if crit1_regression_ok else 'FAIL'}")
-    print(f"  Criterion 2 (step-count tax):   {'PASS' if crit2_ok else 'FAIL'}")
-    overall = crit1_ok and crit2_ok
-    print(f"\n  OVERALL: {'PROCEED' if overall else 'ABANDON / REDISCUSS'}")
+    print(f"  Criterion 1 (single-GPU wall-clock):  "
+          f"{'PASS' if crit1_ok else 'FAIL'}")
+    print(f"    sub: single-GPU speedup at B=64 >= 3x:   "
+          f"{'PASS' if crit1_speedup_ok else 'FAIL'}")
+    print(f"    sub: single-GPU regression at B=1 <= 2x: "
+          f"{'PASS' if crit1_regression_ok else 'FAIL'}")
+    print(f"  Criterion 2 (step-count tax):         "
+          f"{'PASS' if crit2_ok else 'FAIL'}")
+    if multigpu_speedup_ok is not None:
+        print(f"  Criterion 1' (multi-GPU wall-clock):  "
+              f"{'PASS' if multigpu_speedup_ok else 'FAIL'}")
+    overall_single = crit1_ok and crit2_ok
+    overall_multi = (multigpu_speedup_ok and crit2_ok
+                     if multigpu_speedup_ok is not None else False)
+    overall = overall_single or overall_multi
+    print(f"\n  Single-GPU verdict: "
+          f"{'PROCEED' if overall_single else 'MARGINAL/FAIL'}")
+    if multigpu_speedup_ok is not None:
+        print(f"  Multi-GPU verdict:  "
+              f"{'PROCEED' if overall_multi else 'FAIL'}")
+    print(f"\n  OVERALL: "
+          f"{'PROCEED' if overall else 'ABANDON / REDISCUSS'}")
     sys.exit(0 if overall else 1)
 
 

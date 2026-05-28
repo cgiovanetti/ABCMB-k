@@ -1,27 +1,27 @@
 """
-Phase B flipped-order spike (v3: double-vmap).
+Phase B flipped-order spike — multi-GPU variant.
 
-Iteration order:
-  outer = vmap over k_axis_perturbations
-  inner = vmap over B (BG, params)
+Same double-vmap as flipped_spike.py, but the batch axis B is sharded over
+N_DEVICES GPUs via jax.sharding. Each GPU runs vmap(k) x vmap(B/N_DEVICES).
+Wall-clock per-params should drop ~linearly in N_DEVICES once the single-GPU
+case is fully utilizing the device.
 
-Both axes parallelized on GPU. Compile is fast (no lax.scan around
-diffrax). Memory at B=64 estimated ~13 GB on A100 (40 GB) — should fit.
-If it OOMs we'll fall back to k-chunking.
+The single-GPU spike showed memory pressure at B=64 (28-31 GiB rematerialize
+warning). Sharding to 4 GPUs gives each device only B/4=16 params worth of
+in-flight diffrax solves, comfortably under memory budget.
 
-Compare against bench/baseline_stepcounts.npz from Phase A:
-  baseline B=1 PE-only per-params = 8.14 s; step count max/median = 4.16
-  Decision gate: flipped per-params at B=64 < 2.71 s
-                 flipped per-k worst-B max/median << 4.16
+Save artifacts to flipped_multigpu_stepcounts.npz so single-GPU data is
+preserved.
 
-Run on GPU:
-    module load conda && conda activate actdr6 && python -u bench/flipped_spike.py
+Run on a 4-GPU node:
+    salloc --no-shell --gpus=4 ... ; srun --gpus-per-task=4 ... python -u this
 """
 
 import os
 import sys
 import time
 from contextlib import contextmanager
+from functools import partial
 
 import numpy as np
 import jax
@@ -30,31 +30,24 @@ import jax.numpy as jnp
 import equinox as eqx
 import diffrax
 from jax import vmap
+from jax.sharding import PartitionSpec as P, NamedSharding, Mesh
 
 from abcmb.main import Model
 
 BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
 RNG_SEED = 0
-B_VALUES = [1, 4, 16, 64]
-B_MAX = max(B_VALUES)
+
+# B sweep limited by what's evenly divisible by the device count.
+# We test B in {N_DEVICES, 4*N_DEVICES, 16*N_DEVICES, 64} so per-device
+# work scales 1, 4, 16, 16-ish.
 ELLMAX = 2500
 
 FIDUCIAL = {
-    'h': 0.6762,
-    'omega_cdm': 0.1193,
-    'omega_b': 0.0225,
-    'A_s': 2.12424e-9,
-    'n_s': 0.9709,
-    'Neff': 3.044,
-    'YHe': 0.245,
-    'TCMB0': 2.34865418e-4,
-    'N_nu_massive': 0,
-    'T_nu_massive': 0.71611,
-    'm_nu_massive': 0.06,
-    'tau_reion': 0.0544,
-    'Delta_z_reion': 0.5,
-    'z_reion_He': 3.5,
-    'Delta_z_reion_He': 0.5,
+    'h': 0.6762, 'omega_cdm': 0.1193, 'omega_b': 0.0225,
+    'A_s': 2.12424e-9, 'n_s': 0.9709, 'Neff': 3.044, 'YHe': 0.245,
+    'TCMB0': 2.34865418e-4, 'N_nu_massive': 0, 'T_nu_massive': 0.71611,
+    'm_nu_massive': 0.06, 'tau_reion': 0.0544,
+    'Delta_z_reion': 0.5, 'z_reion_He': 3.5, 'Delta_z_reion_He': 0.5,
     'exp_reion': 1.5,
 }
 PARAM_BOXES = {
@@ -149,10 +142,29 @@ def make_evolution_one_k_stats(PE):
 
 
 def main():
-    print(f"jax.devices(): {jax.devices()}", flush=True)
-    print(f"jax.default_backend(): {jax.default_backend()}", flush=True)
+    devs = jax.devices('gpu')
+    N_DEVICES = len(devs)
+    print(f"jax.devices(): {devs}", flush=True)
+    print(f"N_DEVICES = {N_DEVICES}", flush=True)
+    if N_DEVICES < 2:
+        print("ERROR: multi-GPU spike requires >= 2 GPUs visible", flush=True)
+        sys.exit(2)
 
-    print("\n[setup] Building Model and 64 perturbed params...", flush=True)
+    # Sweep B values divisible by N_DEVICES, up to 64.
+    B_VALUES = [N_DEVICES, 4 * N_DEVICES, 16 * N_DEVICES, 64]
+    # ensure 64 stays in and is divisible
+    if 64 % N_DEVICES != 0:
+        B_VALUES = [b for b in B_VALUES if b != 64]
+    B_VALUES = sorted(set(B_VALUES))
+    B_MAX = max(B_VALUES)
+    print(f"B_VALUES = {B_VALUES}  B_MAX = {B_MAX}", flush=True)
+
+    # set up mesh / sharding for the batch axis
+    mesh = Mesh(np.array(devs), axis_names=('batch',))
+    batch_sharding = NamedSharding(mesh, P('batch'))
+    replicated = NamedSharding(mesh, P())
+
+    print("\n[setup] Building Model and params...", flush=True)
     model = Model(
         user_species=None, output_Cl=True, l_max=ELLMAX, lensing=True,
         output_Pk=True, output_k_max=0.5,
@@ -160,7 +172,7 @@ def main():
     )
     params_list = make_perturbed_params(B_MAX)
 
-    print("[setup] Building B Backgrounds sequentially (untimed)...", flush=True)
+    print(f"[setup] Building {B_MAX} BGs sequentially (untimed)...", flush=True)
     setups = []
     for i, p in enumerate(params_list):
         full_p, bg = build_one_bg(model, p)
@@ -183,16 +195,25 @@ def main():
 
     evolution_one_k_stats = make_evolution_one_k_stats(PE)
 
-    def slice_batch(B):
-        return (
-            jax.tree.map(lambda x: x[:B], BG_batch_full),
-            jax.tree.map(lambda x: x[:B], params_batch_full),
-        )
+    def shard_batched(pytree):
+        """Place batched array leaves with batch-axis sharding; None left as
+        None. Static fields (non-leaf) are untouched."""
+        def per_leaf(x):
+            if isinstance(x, jax.Array) or hasattr(x, 'shape'):
+                arr = jnp.asarray(x)
+                if arr.ndim >= 1:
+                    return jax.device_put(arr, batch_sharding)
+                return jax.device_put(arr, replicated)
+            return x
+        return jax.tree.map(per_leaf, pytree)
+
+    def slice_and_shard(B):
+        bg = jax.tree.map(lambda x: x[:B], BG_batch_full)
+        pp = jax.tree.map(lambda x: x[:B], params_batch_full)
+        return shard_batched(bg), shard_batched(pp)
 
     @eqx.filter_jit
     def full_evolution_dvmap(BG_batch, params_batch):
-        """Double-vmap: outer over k, inner over B. Returns shape
-        (N_k, B, N_lna, N_y)."""
         lna_batch = vmap(
             lambda lts: jnp.linspace(lts, 0.0, 500)
         )(BG_batch.lna_transfer_start)
@@ -222,13 +243,13 @@ def main():
     # -----------------------------------------------------------------------
     # timing sweep
     # -----------------------------------------------------------------------
-    print("\n[bench] Timing full_evolution_dvmap...", flush=True)
+    print("\n[bench] Timing full_evolution_dvmap sharded over "
+          f"{N_DEVICES} GPUs...", flush=True)
     pe_per_params = {}
     pe_total = {}
     pe_compile = {}
     for B in B_VALUES:
-        BG_b, p_b = slice_batch(B)
-        # warm/compile
+        BG_b, p_b = slice_and_shard(B)
         try:
             with timer() as wt:
                 res = full_evolution_dvmap(BG_b, p_b)
@@ -243,8 +264,6 @@ def main():
             pe_total[B] = float('nan')
             pe_per_params[B] = float('nan')
             continue
-
-        # measure
         with timer() as t:
             res = full_evolution_dvmap(BG_b, p_b)
             jax.block_until_ready(res)
@@ -254,16 +273,14 @@ def main():
         pe_per_params[B] = per_params
         print(f"  B={B:>3}  total={total:.3f}s  per_params={per_params:.4f}s",
               flush=True)
-        # drop the result to free memory before next B
         del res
 
     # -----------------------------------------------------------------------
     # step counts at B = B_MAX
     # -----------------------------------------------------------------------
-    print(f"\n[stepcounts] Double-vmap step counts at B={B_MAX}...",
-          flush=True)
+    print(f"\n[stepcounts] Sharded step counts at B={B_MAX}...", flush=True)
     try:
-        BG_b, p_b = slice_batch(B_MAX)
+        BG_b, p_b = slice_and_shard(B_MAX)
         with timer() as wt:
             sc = stats_dvmap(BG_b, p_b)
             jax.block_until_ready(sc)
@@ -282,9 +299,9 @@ def main():
         step_counts = np.zeros((N_k, B_MAX), dtype=np.int64)
 
     # -----------------------------------------------------------------------
-    # save artifacts
+    # save
     # -----------------------------------------------------------------------
-    npz_path = os.path.join(BENCH_DIR, 'flipped_stepcounts.npz')
+    npz_path = os.path.join(BENCH_DIR, 'flipped_multigpu_stepcounts.npz')
     np.savez(
         npz_path,
         k_axis=k_axis,
@@ -293,15 +310,15 @@ def main():
         pe_per_params=np.asarray([pe_per_params[B] for B in B_VALUES]),
         pe_total=np.asarray([pe_total[B] for B in B_VALUES]),
         pe_compile=np.asarray([pe_compile[B] for B in B_VALUES]),
+        n_devices=N_DEVICES,
         seed=RNG_SEED,
     )
     print(f"\n[save] Wrote {npz_path}", flush=True)
 
-    summary_path = os.path.join(BENCH_DIR, 'flipped_summary.txt')
+    summary_path = os.path.join(BENCH_DIR, 'flipped_multigpu_summary.txt')
     with open(summary_path, 'w') as f:
-        f.write("Phase B flipped-order spike (v3: double-vmap)\n")
-        f.write(f"  backend: {jax.default_backend()}\n")
-        f.write(f"  N_k: {N_k}\n  B_max: {B_MAX}\n\n")
+        f.write(f"Phase B flipped multi-GPU (N={N_DEVICES})\n")
+        f.write(f"  N_k: {N_k}  B_max: {B_MAX}\n\n")
         f.write("Wall-clock (s):\n")
         f.write(f"  {'B':>4}  {'compile':>10}  {'total':>10}  "
                 f"{'per_params':>12}\n")
@@ -309,15 +326,13 @@ def main():
             f.write(f"  {B:>4}  {pe_compile[B]:>10.2f}  "
                     f"{pe_total[B]:>10.3f}  {pe_per_params[B]:>12.4f}\n")
         if step_counts.any():
-            f.write(f"\nStep counts (N_k x B): "
-                    f"min={step_counts.min()} med={int(np.median(step_counts))} "
+            f.write(f"\nStep counts: min={step_counts.min()} "
+                    f"med={int(np.median(step_counts))} "
                     f"max={step_counts.max()}\n")
             f_med = np.median(step_counts, axis=1)
             f_max = step_counts.max(axis=1)
             ratio = f_max / np.maximum(1, f_med)
             f.write(f"  worst-k max/median over B: {ratio.max():.2f}\n")
-            f.write(f"  median-k max/median over B: "
-                    f"{float(np.median(ratio)):.2f}\n")
     print(f"[save] Wrote {summary_path}", flush=True)
     print("\nDone.", flush=True)
 

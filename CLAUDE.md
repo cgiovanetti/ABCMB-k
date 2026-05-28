@@ -68,7 +68,11 @@ HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: th
 
 ## GPU access (do not wait for the user)
 
-Request your own NERSC GPU allocation when ABCMB code needs to run. Up to two concurrent interactive allocations are permitted. Non-interactive pattern that works inside Claude Code's per-call fresh shells:
+Request your own NERSC GPU allocations when ABCMB code needs to run.
+
+**Use both allowed allocations when you can.** NERSC permits **up to two concurrent interactive allocations** for this account; if you have two independent jobs to run (e.g., baseline + spike benchmarks), allocate two nodes and run them in parallel instead of serializing. Don't leave the second slot idle to be polite — wall-clock is the cost. Always `scancel` allocations when done so they don't sit idle.
+
+Non-interactive pattern that works inside Claude Code's per-call fresh shells:
 
 ```bash
 # allocate (returns immediately with a JOBID line on stderr/stdout):
@@ -81,6 +85,8 @@ srun --jobid=$(cat bench/.jobid) --ntasks=1 --cpus-per-task=32 \
 # free the node when done:
 scancel $(cat bench/.jobid) && rm bench/.jobid
 ```
+
+For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, etc.).
 
 ## Current task
 

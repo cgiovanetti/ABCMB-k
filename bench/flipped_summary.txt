@@ -1,0 +1,15 @@
+Phase B flipped-order spike (v3: double-vmap)
+  backend: gpu
+  N_k: 571
+  B_max: 64
+
+Wall-clock (s):
+     B     compile       total    per_params
+     1       28.26       7.773        7.7727
+     4       36.06      19.025        4.7564
+    16       69.95      57.102        3.5689
+    64      233.41     219.727        3.4332
+
+Step counts (N_k x B): min=43 med=383 max=1595
+  worst-k max/median over B: 1.12
+  median-k max/median over B: 1.02
