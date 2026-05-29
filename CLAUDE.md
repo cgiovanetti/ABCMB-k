@@ -154,6 +154,46 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
+### Status & where to resume (updated 2026-05-29)
+
+The batched pipeline (`Model.call_batched`) is implemented AND fast. Two sessions so far:
+- `perk-refactor` branch: landed the batched evolution + spectrum + `call_batched`
+  (Phases A–G). See `CHANGELOG.txt` 2026-05-28.
+- `perk-perf` branch (cut from `perk-refactor`, **current HEAD, not merged to main**):
+  the performance pass. `call_batched` went from 12.4 → 4.0 s/param single-GPU at
+  B=16, and **1.13 s/param on 4 GPUs at B=64** — the ~1 s/param target. See
+  `CHANGELOG.txt` 2026-05-29 for the full arc + before/after perf table, and the
+  "Batched (per-k) pipeline" section above for the resulting architecture.
+
+What a resuming session should know:
+- **Branch state:** `perk-perf` holds all the perf work; it is NOT merged to `main`
+  (or to `perk-refactor`). Decide whether to merge before building on it.
+- **Correctness is green:** `pytests/accuracy_test.py` passes (<0.25% vs CLASS);
+  snapshots were regenerated for the keystone (`pytests/fixtures/snapshots.npz`,
+  committed). Run `pytests/test_snapshots.py` (GPU backend) to confirm parity if you
+  touch theory code.
+- **The win was killing flat eager-dispatch costs** (spectrum python-loop + eager
+  `get_BG`), NOT solver tuning. A `k_chunk_size` sweep confirmed the default 100 is
+  already optimal — don't re-litigate it.
+
+Likely next directions (none started):
+1. **Larger-B / scan harness:** sharding's payoff grows with B (only ~1.16× at B=16
+   since one A100 is near-saturated there; 4× territory needs bigger B per call). A
+   real frequentist scan wants B≳32–64 per call. Sharding quarters per-device memory,
+   so 4-GPU fits B≫64.
+2. **Wire `call_batched` into a likelihood** (the stated end-goal: collapse to Cls →
+   evaluate a frequentist likelihood over the param grid).
+3. **Remaining single-GPU floor** is the perturbation solve (~1.6–1.9 s/param); the
+   analysis memos (`bench/notes_solve.md`, `bench/ideas_*.md`) discuss
+   stiffness-homogeneous k-chunking and float32 as the next (accuracy-gated) levers.
+4. **Compile cache / B-padding** for production scans (persistent
+   `jax_compilation_cache_dir`, pad B to a fixed size) — see `bench/ideas_singlegpu.md` §5.
+
+Benchmark/analysis artifacts in `bench/`: `profile_stages.py` (per-stage profiler),
+`perf_multigpu.py` (sharded benchmark + pad-check), `sweep_kchunk.py`, `probe_setup.py`,
+`validate_keystone.py` (peak-normalized parity), plus the `notes_*.md` / `ideas_*.md`
+design memos from the two subagent rounds.
+
 ## Special instructions
 
 You are free to ignore all memories and instructions about making diffs in this repo; this repo (AND THIS REPO ALONE) is your playground.  You're free to use git to its fullest potential, staging and pushing commits, making new branches, and anything else that helps you stay organized.  But you are expected to stay organized; don't generate so much garbage that we can't find anything, and clear out stale artifacts as necessary (you may ignore memories and previous instructions about saving certain artifacts).
