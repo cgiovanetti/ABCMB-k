@@ -9,6 +9,88 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-05-29 — Performance pass on call_batched: 12.4 → ~1 s/param (target met)
+---------------------------------------------------------------------------
+Session: perk-perf branch (cut from perk-refactor). Goal: make the already-
+landed batched pipeline FAST — no new features, just performance. Target
+~1 s per parameter combination.
+
+THE KEY REFRAMING (from measurement, not assumption):
+The Phase A baseline said the perturbation solve dominates (8.1 of 9.9 s
+single-cosmology). True single-cosmology, but FALSE in the batched path. A
+real per-stage block_until_ready profile of Model.call_batched
+(bench/profile_stages.py) showed:
+  - perturb amortizes well: 12.2 (B=1) → 2.6 (B=8) → 2.0 (B=16) s/param.
+  - the bottleneck was TWO FLAT eager-dispatch costs that did NOT amortize:
+      spec_Cl  ~3.2 s/param  (the python-loop spectrum)
+      setup    ~6.9 s/param  (get_BG run EAGERLY, not jitted)
+  - end-to-end batched was ~12.4 s/param at B=16 — SLOWER than 9.5 single.
+The whole win came from killing those two flat costs, not from tuning the
+solver. (A k_chunk_size sweep confirmed the default 100 is already optimal.)
+
+WHAT LANDED (commits on perk-perf):
+
+1. Keystone — tabulate expmkappa, vmap the spectrum (63696b9):
+   Background.kappa_func was a diffrax.Solution — the one non-array leaf that
+   blocked stacking Backgrounds across cosmologies, forcing get_Cl_batched /
+   Pk_lin_batched into python loops (each get_Cl ran fully EAGER → the flat
+   3.2 s/param). Replaced it with expmkappa_tab, a plain array tabulated on
+   the shared lna_tau_tab axis (mirroring tau/tau_tab), and rewrote expmkappa
+   to interpolate it. Background is now a pure-array PyTree that stacks
+   cleanly, so get_Cl_batched / Pk_lin_batched became a single
+   @eqx.filter_jit jax.vmap over B, and strip_bg_kappa was deleted.
+     spec_Cl: 3.18 → 0.01 s/param (~300x).
+
+2. Cubic interp for expmkappa (d194627):
+   Linear fast_interp made expmkappa C0, so grad(BG.visibility) (the ClTE
+   source term) was piecewise-constant and amplified diffrax step-noise into
+   ~1e-1 ClTE error. Switched to interpax.interp1d(method="cubic") (C1). Only
+   TE was affected (TT/EE/Pk were already at the ~3e-4 diffrax-noise floor);
+   the 10000-pt grid makes the cubic essentially exact vs the old dense
+   Solution.evaluate.
+
+3. Batch + shard the setup (ed1224c):
+   Replaced the per-cosmology python _build_one_bg loop (get_BG run EAGERLY →
+   the flat ~7 s/param) with _build_bgs_batched: vmapped BackgroundPreRecomb
+   (GPU), vmapped RecModel/HyRex (CPU), vmapped get_BG (GPU) — one jit + one
+   device transfer each way instead of O(B). Possible only because of (1).
+   Added call_batched(shard=): jax.sharding Mesh + NamedSharding(P('batch'))
+   applied BEFORE the setup so every GPU stage (pre-recomb, get_BG, perturb,
+   spectrum) auto-partitions over the mesh and each device builds/solves only
+   B/n_dev cosmologies (GSPMD, no collectives; embarrassingly parallel over
+   B). B is padded to a multiple of the device count and the padding sliced
+   off. (Sharding AFTER the setup instead built all B on device 0 → OOM at
+   B=64; fixed by sharding first.)
+
+PERF (ELLMAX=800, A100, post-compile, per param):
+              before    single-GPU after    4-GPU sharded
+   B=8         12.6            6.54              —
+   B=16        12.4            4.00            3.28
+   B=32         —              1.81            1.81
+   B=64         —               —             1.13
+  single-GPU B=16 stage split after: setup 2.01 + perturb 1.97 + spec 0.01;
+  setup amortizes 30.8 → 2.0 as B grows, so perturb is now the single-GPU
+  floor. 4-GPU B=64 = 1.13 s/param meets the ~1 s/param goal and is still
+  falling with B (sharding quarters per-device memory, so larger B fits).
+
+CORRECTNESS (gates both PASS — unchanged by the refactor):
+  - pytests/accuracy_test.py (1%-vs-CLASS, single path): TT 0.197%, EE 0.231%,
+    Pk 0.185% — all < 1%.
+  - batched-vs-single Cl/Pk peak-normalized |Δ|/peak ~1e-6 (better than the
+    pre-change ~1e-5 python-loop). The pointwise-relative metric is meaningless
+    across ClTE zero-crossings (|spectrum|→0); use peak-normalized error
+    (bench/validate_keystone.py).
+  - snapshot fixtures regenerated: the keystone shifts ABCMB output at the
+    ~1e-8 snapshot tolerance (interp vs dense Solution.evaluate) — deliberate.
+
+NEW/CHANGED bench artifacts: profile_stages.py (per-stage profiler — the
+experiment that reframed the problem), perf_multigpu.py (multi-GPU sharded
+benchmark + pad-check), sweep_kchunk.py (k_chunk=100 confirmed optimal),
+probe_setup.py (eager get_BG = 5.5x slower than jitted), validate_keystone.py
+(peak-normalized parity). Analysis memos: bench/notes_{spectrum,solve,strategy}.md
+and bench/ideas_{singlegpu,multigpu,redteam}.md (two subagent brainstorm rounds).
+
+
 2026-05-28 — Phases A–G of per-k batched refactor: design validated, batched pipeline lands
 -------------------------------------------------------------------------------------------
 Session: perk-refactor — first pass on the flipped (params-first) batched
