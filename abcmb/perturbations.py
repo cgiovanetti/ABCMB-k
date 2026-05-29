@@ -535,25 +535,6 @@ class PerturbationEvolver(eqx.Module):
             species_perturbations,
         )
 
-def strip_bg_kappa(bg):
-    """Return a copy of ``bg`` with ``kappa_func`` replaced by None.
-
-    ``Background.kappa_func`` is a ``diffrax.Solution`` whose non-array
-    internals don't survive ``jax.tree.map(jnp.stack, ...)``;
-    ``evolution_one_k`` never reads it, so stripping is safe for the
-    batched perturbation path. The caller must arrange any code that does
-    read ``kappa_func`` (visibility/expmkappa in spectrum) to use an
-    un-stripped copy.
-
-    Lives at module scope rather than as a ``@staticmethod`` because
-    ``eqx.Module.__getattribute__`` doesn't expose plain staticmethods.
-    """
-    return eqx.tree_at(
-        lambda b: b.kappa_func, bg, replace=None,
-        is_leaf=lambda x: x is None,
-    )
-
-
 class PerturbationTable(eqx.Module):
     """
     Interpolatable table of perturbation evolution.

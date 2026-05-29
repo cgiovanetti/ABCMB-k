@@ -613,23 +613,22 @@ class SpectrumSolver(eqx.Module):
             get_unlensed_Cls
         )
 
-    def get_Cl_batched(self, PT_batched, BG_list, params_batched):
-        """Batched ``get_Cl`` for a list of background objects with stacked
-        PerturbationTable and parameter dict.
+    @eqx.filter_jit
+    def get_Cl_batched(self, PT_batched, BG_batched, params_batched):
+        """Batched ``get_Cl`` via a single jitted ``vmap`` over the B axis.
 
-        Implementation is a Python loop over the batch axis: each call to
-        ``get_Cl`` runs the full single-cosmology spectrum pipeline. Slow
-        but correct. See abcmb/perturbations.py::make_output_table_batched
-        for the same rationale.
+        Requires ``BG_batched`` to be a single ``Background`` PyTree stacked
+        along a leading B axis (now possible because ``expmkappa`` reads a
+        tabulated array instead of a ``diffrax.Solution`` — see
+        ``background.py``). One compiled graph mapped over B replaces the
+        former python loop (which paid full JIT-dispatch per element).
 
         Parameters
         ----------
         PT_batched : PerturbationTable
             Each array field has a leading B axis.
-        BG_list : list of Background
-            Length-B list of un-stacked Background objects with
-            ``kappa_func`` intact (the spectrum code reads ``BG.visibility``
-            and ``BG.expmkappa`` which need it).
+        BG_batched : Background
+            Stacked Background PyTree; every array field has a leading B axis.
         params_batched : dict
             Each value has a leading B axis of length B.
 
@@ -637,26 +636,18 @@ class SpectrumSolver(eqx.Module):
         -------
         (ClTT, ClTE, ClEE) tuple of jnp.arrays each shape (B, len(self.ells))
         """
-        B = len(BG_list)
-        triples = []
-        for i in range(B):
-            PT_i = jax.tree.map(lambda x: x[i], PT_batched)
-            p_i = jax.tree.map(lambda x: x[i], params_batched)
-            triples.append(self.get_Cl(PT_i, BG_list[i], p_i))
-        ClTT = jnp.stack([t[0] for t in triples])
-        ClTE = jnp.stack([t[1] for t in triples])
-        ClEE = jnp.stack([t[2] for t in triples])
-        return ClTT, ClTE, ClEE
+        return jax.vmap(self.get_Cl, in_axes=(0, 0, 0))(
+            PT_batched, BG_batched, params_batched)
 
+    @eqx.filter_jit
     def Pk_lin_batched(self, k, z, PT_batched, params_batched):
-        """Batched ``Pk_lin``. Python loop over B. Returns shape (B, len(k))."""
-        B = jax.tree_util.tree_leaves(params_batched)[0].shape[0]
-        pks = []
-        for i in range(B):
-            PT_i = jax.tree.map(lambda x: x[i], PT_batched)
-            p_i = jax.tree.map(lambda x: x[i], params_batched)
-            pks.append(self.Pk_lin(k, z, PT_i, p_i))
-        return jnp.stack(pks)
+        """Batched ``Pk_lin`` via a single jitted ``vmap`` over B.
+
+        ``Pk_lin`` reads only ``PT`` and ``params`` (no ``Background``), so
+        ``k``/``z`` are shared (``in_axes=None``). Returns shape (B, len(k)).
+        """
+        return jax.vmap(self.Pk_lin, in_axes=(None, None, 0, 0))(
+            k, z, PT_batched, params_batched)
 
     def Cl_one_ell(self, idx, PT, BG, params):
         """

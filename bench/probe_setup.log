@@ -1,0 +1,31 @@
+W0529 08:35:17.771723  687600 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0529 08:35:17.775937  687483 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+jax.devices(): [CudaDevice(id=0)]
+abcmb from: /pscratch/sd/c/carag/ABCMB-k/abcmb/__init__.py
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+
+[1] get_BG_pre_recomb (jitted GPU): 0.053s
+[2] HyRex (jitted CPU):             0.062s
+[3a] get_BG EAGER:                  6.626s
+[3b] get_BG JITTED:                 1.156s
+
+per-cosmology setup (current, eager BG): 6.741s
+per-cosmology setup (jitted BG):         1.272s
+  -> jitting get_BG saves ~5.470s/cosmo
+
+HyRex CPU floor (hard to batch): 0.062s/cosmo (5% of jitted setup)
+
+[4] vmap test (get_BG_pre_recomb over B=4)...
+     vmapped get_BG_pre_recomb B=4 (warm): 2.67s
+     vmapped get_BG_pre_recomb B=4 (run):  0.068s  -> 0.017s/cosmo
+     VMAP over B WORKS for get_BG_pre_recomb

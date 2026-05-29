@@ -450,8 +450,9 @@ class Background(BackgroundPreRecomb):
         Tabulated matter temperature Tm during recombination.
     lna_Tm_tab : array_with_padding
         Log scale factor axis corresponding to tabulated Tm values.
-    kappa_func : diffrax.solution
-        Optical depth function (dense interpolation).
+    expmkappa_tab : jnp.array
+        exp(-optical depth) tabulated on lna_tau_tab (replaces the former
+        diffrax.Solution kappa_func so Background stacks across cosmologies).
     z_reion : float
         Redshift of hydrogen reionization in the CAMB parameterization.
     tau_reion : float
@@ -488,7 +489,7 @@ class Background(BackgroundPreRecomb):
     lna_xe_tab : "array_with_padding"
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
-    kappa_func : "diffrax.solution"
+    expmkappa_tab : jnp.array  # exp(-kappa) tabulated on the shared lna_tau_tab axis
     z_reion    : float
     tau_reion  : float
     lna_rec    : float
@@ -549,7 +550,16 @@ class Background(BackgroundPreRecomb):
         self.Tm_tab     = _finite_pad(self.Tm_tab)
         self.lna_Tm_tab = _finite_pad(self.lna_Tm_tab)
 
-        self.kappa_func = self._tabulate_optical_depth(params)
+        # Build exp(-kappa) on the shared lna_tau_tab axis, then discard the
+        # diffrax.Solution so Background stays a pure-array PyTree (stackable
+        # across cosmologies for the batched per-k pipeline). The Solution's
+        # non-array internals are what previously forced strip_bg_kappa and the
+        # python-loop spectrum; tabulating here removes that blocker.
+        _kappa_sol = self._tabulate_optical_depth(params)        # transient local
+        def _expmkappa_on(l):
+            l_in = jnp.clip(l, -10.0, 0.0)                       # ODE domain is [-10, 0]
+            return jnp.where(l < -10.0, 0.0, jnp.exp(-_kappa_sol.evaluate(l_in)))
+        self.expmkappa_tab = vmap(_expmkappa_on)(self.lna_tau_tab)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
@@ -738,7 +748,8 @@ class Background(BackgroundPreRecomb):
         return jnp.where(
             lna < -10.,
             0.,
-            jnp.exp(-self.kappa_func.evaluate(lna))
+            tools.fast_interp(lna, self.lna_tau_tab[0],
+                              self.lna_tau_tab[-1], self.expmkappa_tab)
         )
 
     def visibility(self, lna, params):

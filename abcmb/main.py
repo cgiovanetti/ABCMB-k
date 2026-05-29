@@ -202,8 +202,6 @@ class Model(eqx.Module):
         BatchedOutput
             Cls and Pk batched along a leading B axis.
         """
-        from .perturbations import strip_bg_kappa
-
         B = len(params_list)
 
         # --- per-element setup: BGs and full params dicts ---
@@ -215,18 +213,20 @@ class Model(eqx.Module):
             full_ps.append(full_p)
             bgs.append(bg)
 
-        # --- stack params + strip-and-stack BGs for the modes computation ---
+        # --- stack params + full BGs. Background is now a pure-array PyTree
+        # (expmkappa is tabulated, no diffrax.Solution), so the full BG stacks
+        # cleanly and the SAME BG_batch feeds both the modes path and the
+        # spectrum vmap -- no strip_bg_kappa, no python BG list. ---
         params_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps)
-        BG_batch_stripped = jax.tree.map(
-            lambda *xs: jnp.stack(xs), *[strip_bg_kappa(bg) for bg in bgs])
+        BG_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *bgs)
 
         # --- batched perturbations (modes + PT) ---
         PT_batched = self.PE.full_evolution_batched(
-            (BG_batch_stripped, params_batch))
+            (BG_batch, params_batch))
 
-        # --- batched spectrum: python loop over B with un-stripped BG list ---
+        # --- batched spectrum: single jitted vmap over B ---
         ClTT, ClTE, ClEE = self.SS.get_Cl_batched(
-            PT_batched, bgs, params_batch)
+            PT_batched, BG_batch, params_batch)
         l = self.SS.ells
         Pk = self.SS.Pk_lin_batched(
             self.SS.k_axis_Pk_output, 0., PT_batched, params_batch)
