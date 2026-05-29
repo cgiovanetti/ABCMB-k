@@ -6,6 +6,7 @@ import equinox as eqx
 from diffrax import diffeqsolve, ODETerm, Kvaerno5, Tsit5, SaveAt, PIDController, ForwardMode
 import optimistix as optx
 
+from interpax import interp1d
 from .hyrex.array_with_padding import array_with_padding
 from .hyrex import recomb_functions
 from .hyrex.hyrex import RecombInputs
@@ -745,11 +746,17 @@ class Background(BackgroundPreRecomb):
         float
             exp(-(optical depth)) (units: dimensionless)
         """
+        # Cubic (C^1) interpolation: ClTE depends on grad(visibility) =
+        # d/dlna[exp(-kappa)/tau_c], so expmkappa must have a continuous
+        # derivative. Linear fast_interp gives a piecewise-constant grad that
+        # blows up ClTE (~1e-1 rel); interpax cubic keeps grad smooth. The
+        # 10000-pt lna_tau_tab makes the cubic essentially exact vs the old
+        # dense diffrax.Solution.evaluate.
         return jnp.where(
             lna < -10.,
             0.,
-            tools.fast_interp(lna, self.lna_tau_tab[0],
-                              self.lna_tau_tab[-1], self.expmkappa_tab)
+            interp1d(lna, self.lna_tau_tab, self.expmkappa_tab,
+                     method="cubic", extrap=True)
         )
 
     def visibility(self, lna, params):

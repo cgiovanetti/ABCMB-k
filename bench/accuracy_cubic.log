@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0 -- /global/common/software/m3166/carag/envs/actdr6/bin/python
+cachedir: .pytest_cache
+rootdir: /pscratch/sd/c/carag/ABCMB-k
+configfile: pyproject.toml
+plugins: jaxtyping-0.2.37
+W0529 09:05:28.849374  913390 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0529 09:05:28.853623  913276 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+collecting ... collected 1 item
+
+pytests/accuracy_test.py::test_accuracy_checker 
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+0.0019672125207375224
+0.0023093650428195707
+0.0018451781879242958
+PASSED
+
+=============================== warnings summary ===============================
+pytests/accuracy_test.py::test_accuracy_checker
+  /global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/jax/_src/pjit.py:367: DeprecationWarning: backend and device argument on jit is deprecated. You can use `jax.device_put(..., jax.local_devices(backend="cpu")[0])` on the inputs to the jitted function to get the same behavior.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== 1 passed, 1 warning in 161.39s (0:02:41) ===================

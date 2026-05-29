@@ -1,0 +1,49 @@
+W0529 08:48:02.129648  690100 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0529 08:48:02.133889  689985 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+jax.devices(): [CudaDevice(id=0)]
+abcmb from: /pscratch/sd/c/carag/ABCMB-k/abcmb/__init__.py
+
+===== B=1 =====
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+  [warm/compile] total=122.9s  setup=27.95  stack=0.10  perturb=44.76  spec_Cl=49.74  spec_Pk=0.36
+  [post-compile] total=19.36s  per_params=19.364s
+           setup:    7.268s  (37.5%)  per_p=7.268s
+           stack:    0.006s  ( 0.0%)  per_p=0.006s
+         perturb:   12.054s  (62.2%)  per_p=12.054s
+         spec_Cl:    0.035s  ( 0.2%)  per_p=0.035s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.001s
+
+===== B=8 =====
+  [warm/compile] total=144.9s  setup=54.87  stack=0.47  perturb=47.60  spec_Cl=41.59  spec_Pk=0.39
+  [post-compile] total=75.90s  per_params=9.487s
+           setup:   55.202s  (72.7%)  per_p=6.900s
+           stack:    0.044s  ( 0.1%)  per_p=0.006s
+         perturb:   20.565s  (27.1%)  per_p=2.571s
+         spec_Cl:    0.082s  ( 0.1%)  per_p=0.010s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.000s
+
+===== B=16 =====
+  [warm/compile] total=209.0s  setup=108.32  stack=0.60  perturb=59.09  spec_Cl=40.63  spec_Pk=0.41
+  [post-compile] total=141.64s  per_params=8.853s
+           setup:  109.917s  (77.6%)  per_p=6.870s
+           stack:    0.078s  ( 0.1%)  per_p=0.005s
+         perturb:   31.509s  (22.2%)  per_p=1.969s
+         spec_Cl:    0.133s  ( 0.1%)  per_p=0.008s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.000s
+
+==============================================================================
+   B    total    per_p    setup    stack  perturb  spec_Cl  spec_Pk
+------------------------------------------------------------------------------
+   1    19.36   19.364     7.27     0.01    12.05     0.04     0.00
+   8    75.90    9.487    55.20     0.04    20.56     0.08     0.00
+  16   141.64    8.853   109.92     0.08    31.51     0.13     0.00
