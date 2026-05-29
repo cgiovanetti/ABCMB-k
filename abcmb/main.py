@@ -6,6 +6,7 @@ import equinox as eqx
 
 import diffrax
 import jax
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 import sys
 import os
@@ -184,41 +185,77 @@ class Model(eqx.Module):
         return self.run_cosmology_abbr(full_params)
 
 
-    def call_batched(self, params_list):
-        """Frequentist-style batched evaluation.
+    def call_batched(self, params_list, shard=None):
+        """Frequentist-style batched evaluation over a list of cosmologies.
 
-        Builds one ``Background`` per element of ``params_list`` sequentially
-        (HyRex on CPU, no batching there for now), then runs the batched
-        perturbation evolver, batched ``make_output_table``, and per-element
-        spectrum on the stacked PerturbationTable.
+        Runs the whole pipeline params-axis-batched: a vmapped setup
+        (pre-recomb GPU + HyRex CPU + get_BG GPU via ``_build_bgs_batched``),
+        the batched perturbation evolver, and a jitted-vmap spectrum.
 
         Parameters
         ----------
         params_list : list[dict]
             B param dicts (user-input, not derived).
+        shard : bool or None
+            If True (or None with >1 visible GPU), shard the B axis across
+            all visible GPUs via ``jax.sharding`` (GSPMD auto-partition; the
+            pipeline is embarrassingly parallel over B so there are no
+            collectives). B is padded to a multiple of the device count
+            (last cosmology replicated) and the padding is sliced off the
+            output. If False, runs on a single device.
 
         Returns
         -------
         BatchedOutput
-            Cls and Pk batched along a leading B axis.
+            Cls and Pk batched along a leading B axis of length B.
         """
         B = len(params_list)
 
-        # --- per-element setup: BGs and full params dicts ---
-        full_ps = []
-        bgs = []
-        for params in params_list:
-            full_params = self.add_derived_parameters(params)
-            full_p, bg = self._build_one_bg(full_params)
-            full_ps.append(full_p)
-            bgs.append(bg)
+        # decide whether to shard over multiple GPUs
+        try:
+            gpus = jax.devices('gpu')
+        except Exception:
+            gpus = []
+        n_dev = len(gpus)
+        do_shard = (shard is True) or (shard is None and n_dev > 1)
 
-        # --- stack params + full BGs. Background is now a pure-array PyTree
-        # (expmkappa is tabulated, no diffrax.Solution), so the full BG stacks
-        # cleanly and the SAME BG_batch feeds both the modes path and the
-        # spectrum vmap -- no strip_bg_kappa, no python BG list. ---
-        params_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps)
-        BG_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *bgs)
+        # --- pad B to a multiple of the device count (replicate last) so the
+        # B axis divides evenly across the mesh; padding is sliced off below.
+        params_list_run = list(params_list)
+        if do_shard and B % n_dev != 0:
+            pad = n_dev - (B % n_dev)
+            params_list_run = params_list_run + [params_list_run[-1]] * pad
+
+        # --- B-axis sharding fn (GSPMD auto-partition; the pipeline is
+        # embarrassingly parallel over B, no collectives). Applied INSIDE the
+        # setup and again before the modes solve, so pre-recomb / get_BG /
+        # perturb / spectrum all run sharded -- each device builds & solves
+        # only B/n_dev cosmologies (1/n_dev the memory + parallel setup).
+        # Sharding AFTER the setup instead would build all B on device 0 and
+        # OOM at large B. ---
+        shardfn = None
+        if do_shard:
+            mesh = Mesh(np.asarray(gpus), axis_names=('batch',))
+            batch_sh = NamedSharding(mesh, P('batch'))
+            repl_sh = NamedSharding(mesh, P())
+
+            def shardfn(tree):
+                def per_leaf(x):
+                    if eqx.is_array(x):
+                        return jax.device_put(
+                            x, batch_sh if x.ndim >= 1 else repl_sh)
+                    return x
+                return jax.tree.map(per_leaf, tree)
+
+        # --- per-element derived params (eager python: has sys.exit / species
+        # loops / bbn branching, ~ms each, hostile to vmap) ---
+        full_ps = [self.add_derived_parameters(p) for p in params_list_run]
+
+        # --- batched (and optionally sharded) setup: vmap pre-recomb (GPU) +
+        # HyRex (CPU) + get_BG (GPU) over B. Background is a pure-array PyTree
+        # (expmkappa tabulated, no diffrax.Solution), so it stacks cleanly and
+        # the SAME BG_batch feeds both the modes path and the spectrum vmap. ---
+        params_batch, BG_batch = self._build_bgs_batched(full_ps, shardfn=shardfn)
 
         # --- batched perturbations (modes + PT) ---
         PT_batched = self.PE.full_evolution_batched(
@@ -231,6 +268,11 @@ class Model(eqx.Module):
         Pk = self.SS.Pk_lin_batched(
             self.SS.k_axis_Pk_output, 0., PT_batched, params_batch)
         k = self.SS.k_axis_Pk_output
+
+        # --- slice off the B-padding (if any) ---
+        if len(params_list_run) != B:
+            ClTT = ClTT[:B]; ClTE = ClTE[:B]; ClEE = ClEE[:B]; Pk = Pk[:B]
+            params_batch = jax.tree.map(lambda x: x[:B], params_batch)
 
         return BatchedOutput(
             ClTT=ClTT, ClTE=ClTE, ClEE=ClEE,
@@ -263,6 +305,78 @@ class Model(eqx.Module):
         recomb_output = jax.tree_util.tree_map(_to_float, recomb_output)
         bg = self.get_BG(full_params, pre_BG, recomb_output)
         return full_params, bg
+
+    # ---- batched setup (vmap over B) -----------------------------------
+    # The per-cosmology _build_one_bg path above runs get_BG EAGERLY (it is
+    # not under jit), which costs ~7 s/param of pure dispatch overhead and
+    # does NOT amortize over B. The three methods below run the identical
+    # work under ONE jit each, vmapped over the B axis, collapsing 3B jit
+    # dispatches + 2B device transfers into 3 jits + 3 transfers.
+
+    @eqx.filter_jit
+    def _pre_recomb_batched(self, params_batch):
+        """vmap of the BackgroundPreRecomb construction over B (GPU)."""
+        return jax.vmap(
+            lambda p: BackgroundPreRecomb(
+                p, self.species_list, self.RecModel, adjoint=self.adjoint)
+        )(params_batch)
+
+    @eqx.filter_jit
+    def _get_BG_batched(self, params_batch, pre_BG_batch, recomb_batch):
+        """vmap of get_BG over B (GPU). The lax.cond reion branch keys on
+        the static spec ``input_tau_reion`` (same branch for all B), so it
+        vmaps without divergence."""
+        return jax.vmap(self.get_BG, in_axes=(0, 0, 0))(
+            params_batch, pre_BG_batch, recomb_batch)
+
+    def _build_bgs_batched(self, full_ps, shardfn=None):
+        """Batched replacement for the per-cosmology _build_one_bg loop.
+
+        full_ps : list[dict] of B derived-parameter dicts.
+        shardfn : optional callable mapping a pytree to a B-axis-sharded copy
+            (NamedSharding(P('batch')) on ndim>=1 leaves). If given, the
+            GPU stages (pre-recomb, get_BG) auto-partition over the mesh and
+            each device builds only B/n_dev cosmologies. HyRex still gathers
+            to CPU; its output is re-sharded before get_BG.
+        Returns (params_batch, BG_batch) stacked on a leading B axis.
+
+        HyRex stays on CPU (vmapped); everything else is GPU. Math is
+        identical to looping _build_one_bg, but with O(1) jit dispatches
+        and device transfers instead of O(B).
+        """
+        def _to_float(v):
+            arr = jnp.asarray(v)
+            if arr.dtype.kind in 'iub':
+                return arr.astype(jnp.float64)
+            return arr
+
+        params_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps)
+        params_batch = jax.tree_util.tree_map(_to_float, params_batch)
+        if shardfn is not None:
+            params_batch = shardfn(params_batch)
+
+        # pre-recomb (GPU, one vmapped jit; auto-partitioned if sharded)
+        pre_BG_batch = self._pre_recomb_batched(params_batch)
+
+        # HyRex recombination (CPU, one vmapped jit); gather inputs to CPU,
+        # solve, then re-shard the output back across GPUs (or to gpu[0]).
+        cpu_dev = jax.devices('cpu')[0]
+        recomb_inputs_cpu = jax.device_put(pre_BG_batch.recomb_inputs, cpu_dev)
+        params_cpu = jax.device_put(params_batch, cpu_dev)
+        recomb_batch = eqx.filter_jit(jax.vmap(self.RecModel), backend='cpu')(
+            (recomb_inputs_cpu, params_cpu))
+        recomb_batch = jax.tree_util.tree_map(_to_float, recomb_batch)
+        if shardfn is not None:
+            recomb_batch = shardfn(recomb_batch)
+        else:
+            try:
+                recomb_batch = jax.device_put(recomb_batch, jax.devices('gpu')[0])
+            except Exception:
+                pass
+
+        # full Background (GPU, one vmapped jit; auto-partitioned if sharded)
+        BG_batch = self._get_BG_batched(params_batch, pre_BG_batch, recomb_batch)
+        return params_batch, BG_batch
 
     def run_cosmology_abbr(self, params : dict):
         """

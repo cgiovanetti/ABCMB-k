@@ -67,22 +67,23 @@ def block(x):
 
 
 def staged_call(model, params_list, times):
-    """Replicates Model.call_batched with per-stage timing."""
+    """Mirrors Model.call_batched (single-device) with per-stage timing.
+
+    Stages match the production path:
+      derive  : eager python add_derived_parameters loop
+      setup   : _build_bgs_batched (vmap pre-recomb GPU + HyRex CPU + get_BG GPU)
+      perturb : full_evolution_batched
+      spec_Cl : get_Cl_batched (jitted vmap)
+      spec_Pk : Pk_lin_batched (jitted vmap)
+    """
     B = len(params_list)
 
-    with timer(times, "setup"):
-        full_ps = []
-        bgs = []
-        for params in params_list:
-            full_params = model.add_derived_parameters(params)
-            full_p, bg = model._build_one_bg(full_params)
-            full_ps.append(full_p)
-            bgs.append(bg)
-        block([full_ps, bgs])
+    with timer(times, "derive"):
+        full_ps = [model.add_derived_parameters(p) for p in params_list]
+        block(full_ps)
 
-    with timer(times, "stack"):
-        params_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps)
-        BG_batch = jax.tree.map(lambda *xs: jnp.stack(xs), *bgs)
+    with timer(times, "setup"):
+        params_batch, BG_batch = model._build_bgs_batched(full_ps)
         block([params_batch, BG_batch])
 
     with timer(times, "perturb"):
@@ -145,15 +146,22 @@ def main():
             print(f"      {k:>10}: {v:8.3f}s  ({100*v/total:4.1f}%)  "
                   f"per_p={v/B:.3f}s", flush=True)
 
-    print("\n" + "=" * 78, flush=True)
-    print(f"{'B':>4} {'total':>8} {'per_p':>8} {'setup':>8} {'stack':>8} "
+    print("\n" + "=" * 86, flush=True)
+    print(f"{'B':>4} {'total':>8} {'per_p':>8} {'derive':>8} {'setup':>8} "
           f"{'perturb':>8} {'spec_Cl':>8} {'spec_Pk':>8}", flush=True)
-    print("-" * 78, flush=True)
+    print("-" * 86, flush=True)
     for B in bvals:
         t, total = results[B]
         print(f"{B:>4} {total:>8.2f} {total/B:>8.3f} "
-              f"{t['setup']:>8.2f} {t['stack']:>8.2f} {t['perturb']:>8.2f} "
+              f"{t['derive']:>8.2f} {t['setup']:>8.2f} {t['perturb']:>8.2f} "
               f"{t['spec_Cl']:>8.2f} {t['spec_Pk']:>8.2f}", flush=True)
+    print("\n(per-param shown as total/B in the [post-compile] lines above)",
+          flush=True)
+    for B in bvals:
+        t, total = results[B]
+        print(f"  B={B:>3}: per_param  derive={t['derive']/B:.3f}  "
+              f"setup={t['setup']/B:.3f}  perturb={t['perturb']/B:.3f}  "
+              f"spec_Cl={t['spec_Cl']/B:.3f}  total={total/B:.3f}", flush=True)
 
 
 if __name__ == "__main__":
