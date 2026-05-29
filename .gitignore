@@ -17,3 +17,4 @@ bench/perf_multigpu_results.json
 bench/*_results.json
 .claude/scheduled_tasks.lock
 .claude/
+bench/*.log

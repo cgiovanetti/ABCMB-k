@@ -1,0 +1,5 @@
+[
+  {"rtol": 1e-4, "atol": 1e-6, "err_tt": 0.001967, "err_ee": 0.002309, "err_pk": 0.001845, "run": 9.97, "pass": true},
+  {"rtol": 3e-4, "atol": 3e-6, "err_tt": 0.003539, "err_ee": 0.003883, "err_pk": 0.002087, "run": 6.86, "pass": true},
+  {"rtol": 1e-3, "atol": 1e-5, "err_tt": 0.01028, "err_ee": 0.009757, "err_pk": 0.002629, "run": 4.94, "pass": false}
+]

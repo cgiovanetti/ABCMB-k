@@ -185,7 +185,7 @@ class Model(eqx.Module):
         return self.run_cosmology_abbr(full_params)
 
 
-    def call_batched(self, params_list, shard=None):
+    def call_batched(self, params_list, shard=None, k_chunk_size=100):
         """Frequentist-style batched evaluation over a list of cosmologies.
 
         Runs the whole pipeline params-axis-batched: a vmapped setup
@@ -203,6 +203,16 @@ class Model(eqx.Module):
             collectives). B is padded to a multiple of the device count
             (last cosmology replicated) and the padding is sliced off the
             output. If False, runs on a single device.
+        k_chunk_size : int
+            Number of k-modes evolved per ``_evolve_chunk`` JIT kernel — a
+            THROUGHPUT knob, not a memory knob. Default 100 is optimal
+            (bench/sweep_kchunk.py; and bench/round2_{sweep,massive}.jsonl show
+            smaller chunks are strictly slower with NO memory benefit). The
+            GPU memory peak is the persistent saved-trajectory tensor
+            ~3.65·N_k·Nlna·Ny·8B·(B/n_dev), independent of k_chunk — so to fit a
+            larger B, shard over more GPUs or lower B, NOT shrink k_chunk. On an
+            80 GB A100 this allows B/n_dev ≲ 200 (massless ΛCDM, Ny≈46) or ≲ 110
+            (one massive ν, Ny≈83) per device.
 
         Returns
         -------
@@ -247,6 +257,29 @@ class Model(eqx.Module):
                     return x
                 return jax.tree.map(per_leaf, tree)
 
+        # --- memory guard. MEASURED (bench/round2_{sweep,massive}.jsonl, A100):
+        # the per-device GPU peak is set by the PERSISTENT saved-trajectory
+        # tensor, ~ 3.65 * N_k * Nlna * Ny * 8B * B_local, and is INDEPENDENT of
+        # k_chunk (shrinking k_chunk neither lowers the peak nor helps -- it only
+        # adds launch overhead). So memory is governed by B_local = B/n_dev:
+        # shard more / lower B to fit, NOT by tuning k_chunk. Warn (don't fail)
+        # if the estimate exceeds device memory so a scan picks B sanely. ---
+        B_local = -(-len(params_list_run) // n_dev) if do_shard else len(params_list_run)
+        try:
+            n_k = len(self.PE.k_axis_perturbations)
+            Ny = 1 + sum(int(s.num_equations) for s in self.PE.species_list)
+            est_gb = 3.65 * n_k * 500 * Ny * 8 / 1e9 * B_local
+            lim_gb = (gpus[0].memory_stats().get('bytes_limit', 40e9) / 1e9
+                      if gpus else 40.0)
+            if est_gb > 0.9 * lim_gb:
+                print(f"[call_batched] WARNING: estimated GPU peak ~{est_gb:.0f} "
+                      f"GB/device (Ny={Ny}, B_local={B_local}) approaches the "
+                      f"~{lim_gb:.0f} GB limit. Shrinking k_chunk will NOT help "
+                      f"(the peak is the persistent saved-ys tensor, ∝ B_local). "
+                      f"Use more GPUs (shard) or a smaller B per call.")
+        except Exception:
+            pass
+
         # --- per-element derived params (eager python: has sys.exit / species
         # loops / bbn branching, ~ms each, hostile to vmap) ---
         full_ps = [self.add_derived_parameters(p) for p in params_list_run]
@@ -259,7 +292,7 @@ class Model(eqx.Module):
 
         # --- batched perturbations (modes + PT) ---
         PT_batched = self.PE.full_evolution_batched(
-            (BG_batch, params_batch))
+            (BG_batch, params_batch), k_chunk_size=k_chunk_size)
 
         # --- batched spectrum: single jitted vmap over B ---
         ClTT, ClTE, ClEE = self.SS.get_Cl_batched(

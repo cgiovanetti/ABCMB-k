@@ -9,6 +9,78 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-05-29 (round 2) — Throughput for a frequentist scan: raise B + sharding, memory model, multi-node harness
+-------------------------------------------------------------------------------------------------------------
+Session: perk-perf. Goal: much higher capacity for a frequentist scan over many
+cosmologies — "batch B≫64 at ≤1 s/param, or ≪1 s/param." A 4-agent battle royale
+(bench/round2_{solver,precision,scaleout,memory}.md) brainstormed; the user pruned
+the tree with three steers, all recorded:
+  - NO TCA (diffrax regime-switching is expensive — would slow us down).
+  - NO accuracy-for-speed trades (stay near permille; architectural wins only).
+  - NO SLURM job arrays (Perlmutter touchy; only ~2 queued jobs get priority).
+
+THE HEADLINE (all accuracy-neutral, ZERO numerical change):
+Memory — not the solver — was the throughput cap, and it dissolves under sharding.
+Measured 4-GPU A100 (ELLMAX=800, lensing=False, post-compile), bench/round2_sweep.jsonl:
+    B     per-param   peak/device   cosmo/s/node
+    64     1.091 s      5.3 GB         0.92
+    128    0.721 s     10.6 GB         1.39
+    192    0.606 s     15.8 GB         1.65
+    256    0.533 s     21.1 GB         1.88
+    384    0.478 s     31.6 GB         2.09
+    512    0.444 s     42.2 GB         2.25      (still falling, flattening;
+                                                  kc=48 marginally faster, 0.434)
+So just RAISING B (free, sharded) took per-param 1.09 → 0.43 (2.5×). The GPUs are
+A100-SXM4-80GB, so B can go further (B_local ≲ 200 → B ≲ 800 on 4 GPUs).
+
+MEMORY MODEL (calibrated, the key correction to the pre-session memos):
+peak/device ≈ 3.65 · N_k · Nlna · Ny · 8B · B_local  (B_local = B/n_dev). It is the
+PERSISTENT saved-trajectory tensor ∝ B_local, and is INDEPENDENT of k_chunk —
+matches massless ΛCDM (Ny=46 → 0.33 GB/B_local) and one massive ν (Ny≈83 → 0.60
+GB/B_local) exactly. The "transient ∝ k_chunk×B_local" model from the memos is
+WRONG: 256@kchunk100 and 512@kchunk48 sit on the same B_local line.
+
+k_chunk IS A THROUGHPUT KNOB, NOT A MEMORY KNOB (data, both species):
+shrinking k_chunk never lowers the peak and only adds launch overhead —
+  massless B=256: 0.533 s (kc=100) → 0.575 s (kc=48), peak 21.1 GB both;
+  massive  B=16:  6.47 s (kc=100) → 8.22 s (kc=25),  peak 9.5 GB all.
+So the proposed "adaptive k_chunk to fit big B" is refuted: to fit larger B you
+SHARD (lower B_local) — k_chunk can't help. Default 100 is optimal.
+
+MASSIVE-ν caveat (user-flagged before declaring victory): one massive ν grows
+Ny 46→~83 → ~1.8× the memory per B_local (B_local ≲ 110 on 80 GB) AND is ~6×
+slower per solve (B=16 single-GPU: 6.5 s/param vs ~1 s massless sharded). So
+massive-ν scans need more sharding and more wall-clock. (bench/round2_massive.jsonl)
+
+REJECTED levers (measured, not assumed): tol-loosening (3e-4/3e-6 → EE 0.39% >
+permille; 1e-3/1e-5 → TT 1.03% gate fail; bench/tol_bracket_results.json);
+float32/fp32-storage (no-TCA stiff term + make_output_table fp64 sums); persistent
+compile cache (works for plain jit but ABCMB call_batched writes 0 entries — HyRex
+custom_vjp path — so it's best-effort; one-time ~150 s/job compile is parallel
+across nodes, negligible vs hours of compute).
+
+WHAT LANDED (code, perk-perf):
+1. abcmb/main.py call_batched: threaded k_chunk_size (default 100, throughput
+   knob) + an Ny-aware memory WARNING (estimates peak, says "shard / lower B",
+   never silently shrinks k_chunk). Behaviorally identical to the prior default
+   path (verified: B=8 auto-vs-explicit-100 Δ=0; kc=100 vs 25 agree 1e-6
+   peak-normalized — the documented chunking-noise floor).
+2. scan/ — multi-node scan harness (the capacity answer): ONE multi-node SLURM job
+   (NOT a job array), srun one independent worker per node (SLURM_PROCID), each
+   shards its grid slice over the node's 4 GPUs; embarrassingly parallel, no
+   jax.distributed. Resumable (skips done slices) + best-effort persistent compile
+   cache. scan/scan_slice.py + scan/scan_multinode.slurm. Throughput ≈ K × per-node.
+
+RECOMMENDATION: B≈512 per 4-GPU node (≈0.43 s/param, 42 GB/80), scale nodes with
+scan/scan_multinode.slurm. Massless ≈ 2.3 cosmo/s/node → e.g. 8 nodes ≈ 18 cosmo/s.
+
+bench artifacts: round2_plan.md (synthesis), round2_{solver,precision,scaleout,
+memory}.md (battle-royale memos), round2_sweep.jsonl + round2_massive.jsonl
+(measurements), mem_throughput_sweep.py + run_sweep.sh + run_massive.sh (harness),
+tol_bracket.py/.json (why tol-loosening is rejected), cache_probe.py/cache_diag.py
+(cache finding), validate_autokchunk.py (parity).
+
+
 2026-05-29 — Performance pass on call_batched: 12.4 → ~1 s/param (target met)
 ---------------------------------------------------------------------------
 Session: perk-perf branch (cut from perk-refactor). Goal: make the already-
