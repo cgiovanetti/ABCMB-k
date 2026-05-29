@@ -21,3 +21,14 @@ abcmb from: /pscratch/sd/c/carag/ABCMB-k/abcmb/__init__.py
     param 3: ClTT[100]=2.130671e-13  NaN=False
 
 [2] call_batched(B=4) (warm)...
+    warm/compile: 118.4s
+[3] batched vs single agreement:
+    pointwise max_rel:  TT=3.386e-04  TE=3.833e-02  EE=7.415e-05  Pk=7.703e-05
+    TT: |Δ|/peak = 8.358e-07   (pointwise relmax 3.39e-04 at l-idx 199, |spectrum| there = 1.17e-13)
+    TE: |Δ|/peak = 8.339e-07   (pointwise relmax 3.83e-02 at l-idx 548, |spectrum| there = 3.88e-19)
+    EE: |Δ|/peak = 8.107e-07   (pointwise relmax 7.41e-05 at l-idx 780, |spectrum| there = 2.55e-17)
+    Pk: |Δ|/peak = 2.333e-05   (pointwise relmax 7.70e-05 at l-idx 397, |spectrum| there = 1.63e+04)
+    -> PASS (peak-normalized |Δ|/peak < 1e-3 on all)
+
+[4] call_batched(B=4) post-compile timing:
+    total=45.12s  per_param=11.280s

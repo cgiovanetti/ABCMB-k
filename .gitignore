@@ -12,3 +12,6 @@ bench/.jobid
 bench/*_run.log
 bench/snapshots_*.log
 bench/smoke*.log
+bench/.jobid*
+bench/perf_multigpu_results.json
+bench/*_results.json

@@ -1,0 +1,295 @@
+W0529 09:38:36.209979  710369 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0529 09:38:36.221245  710254 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+jax.devices(): [CudaDevice(id=0)]
+abcmb from: /pscratch/sd/c/carag/ABCMB-k/abcmb/__init__.py
+
+===== B=1 =====
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [warm/compile] total=139.5s  derive=0.29  setup=42.68  perturb=44.76  spec_Cl=51.42  spec_Pk=0.34
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [post-compile] total=42.98s  per_params=42.977s
+          derive:    0.015s  ( 0.0%)  per_p=0.015s
+           setup:   30.823s  (71.7%)  per_p=30.823s
+         perturb:   12.103s  (28.2%)  per_p=12.103s
+         spec_Cl:    0.034s  ( 0.1%)  per_p=0.034s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.001s
+
+===== B=8 =====
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [warm/compile] total=136.8s  derive=0.11  setup=41.53  perturb=48.75  spec_Cl=46.01  spec_Pk=0.37
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [post-compile] total=52.30s  per_params=6.538s
+          derive:    0.116s  ( 0.2%)  per_p=0.014s
+           setup:   31.540s  (60.3%)  per_p=3.943s
+         perturb:   20.562s  (39.3%)  per_p=2.570s
+         spec_Cl:    0.081s  ( 0.2%)  per_p=0.010s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.000s
+
+===== B=16 =====
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [warm/compile] total=148.6s  derive=0.20  setup=43.66  perturb=60.45  spec_Cl=43.90  spec_Pk=0.36
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [post-compile] total=64.04s  per_params=4.002s
+          derive:    0.209s  ( 0.3%)  per_p=0.013s
+           setup:   32.211s  (50.3%)  per_p=2.013s
+         perturb:   31.480s  (49.2%)  per_p=1.968s
+         spec_Cl:    0.134s  ( 0.2%)  per_p=0.008s
+         spec_Pk:    0.001s  ( 0.0%)  per_p=0.000s
+
+======================================================================================
+   B    total    per_p   derive    setup  perturb  spec_Cl  spec_Pk
+--------------------------------------------------------------------------------------
+   1    42.98   42.977     0.02    30.82    12.10     0.03     0.00
+   8    52.30    6.538     0.12    31.54    20.56     0.08     0.00
+  16    64.04    4.002     0.21    32.21    31.48     0.13     0.00
+
+(per-param shown as total/B in the [post-compile] lines above)
+  B=  1: per_param  derive=0.015  setup=30.823  perturb=12.103  spec_Cl=0.034  total=42.977
+  B=  8: per_param  derive=0.014  setup=3.943  perturb=2.570  spec_Cl=0.010  total=6.538
+  B= 16: per_param  derive=0.013  setup=2.013  perturb=1.968  spec_Cl=0.008  total=4.002

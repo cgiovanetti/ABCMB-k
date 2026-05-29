@@ -29,3 +29,8 @@ building 32 backgrounds (one-time)...
   32      25       20     800     67.185     2.0995
   32      50       10    1600     55.752     1.7422
   32     100        5    3200     53.635     1.6761
+  32     200        3    6400     58.651     1.8328
+
+=== best k_chunk per B (min per_param) ===
+  B=  8: best k_chunk= 100  per_param=2.5599s
+  B= 32: best k_chunk= 100  per_param=1.6761s
