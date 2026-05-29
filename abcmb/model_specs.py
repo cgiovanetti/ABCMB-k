@@ -58,6 +58,11 @@ def load_specs(input_specs):
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
+    # Number of lna output points per mode (the saved-trajectory / LoS grid).
+    # This is the dominant per-call GPU memory factor (peak ∝ N_k·n_lna_PE·Ny·B
+    # /n_dev). Default 500 is the historical value; lowering it (e.g. ~300, ideally
+    # recomb-dense) cuts memory + the LoS scan but trades time resolution.
+    specs["n_lna_PE"]        = input_specs.get("n_lna_PE", 500)
     # Step size controller
     specs["k_split_PE"]      = input_specs.get("k_split_PE", 0.01)
     specs["rtol_small_k_PE"] = input_specs.get("rtol_small_k_PE", 1.e-5)

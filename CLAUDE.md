@@ -154,45 +154,51 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
-### Status & where to resume (updated 2026-05-29)
+### Status & where to resume (updated 2026-05-29, round 3)
 
-The batched pipeline (`Model.call_batched`) is implemented AND fast. Two sessions so far:
-- `perk-refactor` branch: landed the batched evolution + spectrum + `call_batched`
-  (Phases A–G). See `CHANGELOG.txt` 2026-05-28.
-- `perk-perf` branch (cut from `perk-refactor`, **current HEAD, not merged to main**):
-  the performance pass. `call_batched` went from 12.4 → 4.0 s/param single-GPU at
-  B=16, and **1.13 s/param on 4 GPUs at B=64** — the ~1 s/param target. See
-  `CHANGELOG.txt` 2026-05-29 for the full arc + before/after perf table, and the
-  "Batched (per-k) pipeline" section above for the resulting architecture.
+The batched pipeline (`Model.call_batched`) is implemented, fast, and SCALES.
+`perk-perf` branch (**current HEAD, NOT merged to main**) holds all perf work.
+THREE sessions; read `bench/round3_plan.md` first (forward plan + this round's
+findings), then `bench/round2_plan.md`, then `CHANGELOG.txt`.
 
-What a resuming session should know:
-- **Branch state:** `perk-perf` holds all the perf work; it is NOT merged to `main`
-  (or to `perk-refactor`). Decide whether to merge before building on it.
-- **Correctness is green:** `pytests/accuracy_test.py` passes (<0.25% vs CLASS);
-  snapshots were regenerated for the keystone (`pytests/fixtures/snapshots.npz`,
-  committed). Run `pytests/test_snapshots.py` (GPU backend) to confirm parity if you
-  touch theory code.
-- **The win was killing flat eager-dispatch costs** (spectrum python-loop + eager
-  `get_BG`), NOT solver tuning. A `k_chunk_size` sweep confirmed the default 100 is
-  already optimal — don't re-litigate it.
+**Throughput (the big result):** memory, not the solver, was the throughput cap,
+and it dissolves under sharding. Just raising B: per-param 1.09 s (B=64) → 0.44 s
+(B=512) on 4 GPUs, ~2.3 cosmologies/s/node, still falling with B. GPUs are
+A100-**80GB**. Per-device peak = **0.33 GB × B_local** (B_local=B/n_dev; massless
+ΛCDM) / 0.60 (one massive ν), the persistent saved-trajectory tensor ∝
+N_k·Nlna·Ny·B_local — **independent of k_chunk**. Recommendation: B≈512 per
+4-GPU node, scale nodes. Multi-node harness: `scan/scan_multinode.slurm` +
+`scan/scan_slice.py` (ONE multi-node job, one worker/node, NOT a job array).
 
-Likely next directions (none started):
-1. **Larger-B / scan harness:** sharding's payoff grows with B (only ~1.16× at B=16
-   since one A100 is near-saturated there; 4× territory needs bigger B per call). A
-   real frequentist scan wants B≳32–64 per call. Sharding quarters per-device memory,
-   so 4-GPU fits B≫64.
-2. **Wire `call_batched` into a likelihood** (the stated end-goal: collapse to Cls →
-   evaluate a frequentist likelihood over the param grid).
-3. **Remaining single-GPU floor** is the perturbation solve (~1.6–1.9 s/param); the
-   analysis memos (`bench/notes_solve.md`, `bench/ideas_*.md`) discuss
-   stiffness-homogeneous k-chunking and float32 as the next (accuracy-gated) levers.
-4. **Compile cache / B-padding** for production scans (persistent
-   `jax_compilation_cache_dir`, pad B to a fixed size) — see `bench/ideas_singlegpu.md` §5.
+**Correctness:** `accuracy_test.py` matches CLASS at TT 0.197% on these nodes;
+`test_snapshots.py` rtol loosened 1e-8→1e-5 (the 1e-8 fixtures drift ~4e-7 across
+GPU models — not a regression). Run snapshots (GPU) if you touch theory code.
 
-Benchmark/analysis artifacts in `bench/`: `profile_stages.py` (per-stage profiler),
-`perf_multigpu.py` (sharded benchmark + pad-check), `sweep_kchunk.py`, `probe_setup.py`,
-`validate_keystone.py` (peak-normalized parity), plus the `notes_*.md` / `ideas_*.md`
-design memos from the two subagent rounds.
+**USER CONSTRAINTS (hard — honor these):** stay near PERMILLE (NO tol-loosening /
+float32 / fp32-bf16 storage — all measured & rejected); NO TCA / diffrax
+regime-switching; NO SLURM job arrays (Perlmutter touchy, ≤2 queued jobs get
+priority); k_chunk stays 100 (smaller is slower, no mem benefit); **do NOT lower
+l_max for massive neutrinos**.
+
+**NEXT STEPS (see `bench/round3_plan.md` for code locations + gates):**
+- Accuracy-neutral, START HERE: (1) **transpose-kill** in
+  `_compute_modes_batched` (the (N_k,B,Nlna,Ny) tensor + its transpose co-exist,
+  ~2× spike); (2) **tabulate `aH`** in `background.py` (recomputed ~5–6×/RHS-step,
+  not cached — mirror `expmkappa_tab`; ~1.15–1.35× on massive-ν, helps massless).
+- Accuracy-gated (user OK to try): **reduce Nlna** (now the spec `n_lna_PE`,
+  default 500) — uniform reduction MIGHT hold but probably needs CLASS-like
+  **uneven recomb-dense** spacing (then also fix the LoS trapezoid weights at
+  `spectrum.py:~792` to per-interval). Flat multiplier on memory + LoS scan.
+- From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
+  LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
+  ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
+  (the frequentist likelihood layer — the stated end-goal; `scan/` produces
+  per-slice Cls/Pk, the `summarize` hook in `scan_slice.py` is where χ² plugs in).
+
+Artifacts in `bench/`: `round3_plan.md` + `round3_{memory,massivenu}.md` (this
+round); `round2_plan.md` + `round2_{solver,precision,scaleout,memory}.md` (round 2);
+`round2_sweep.jsonl` / `round2_massive.jsonl` (measurements); `mem_throughput_sweep.py`
+(`--massive`), `perf_multigpu.py`, `validate_autokchunk.py`, `tol_bracket.py`.
 
 ## Special instructions
 

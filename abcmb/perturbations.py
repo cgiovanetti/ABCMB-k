@@ -97,7 +97,7 @@ class PerturbationEvolver(eqx.Module):
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
         BG, params = args
-        lna = jnp.linspace(BG.lna_transfer_start,  0., 500)
+        lna = jnp.linspace(BG.lna_transfer_start,  0., self.specs["n_lna_PE"])
 
         # This scan function is only used if on CPU.
         # For GPUs we vmap over the wavenumbers instead
@@ -177,7 +177,7 @@ class PerturbationEvolver(eqx.Module):
         """
         BG_batch, params_batch = args
         lna_batch = vmap(
-            lambda lts: jnp.linspace(lts, 0., 500)
+            lambda lts: jnp.linspace(lts, 0., self.specs["n_lna_PE"])
         )(BG_batch.lna_transfer_start)
 
         k_axis = self.k_axis_perturbations
