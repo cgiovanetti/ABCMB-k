@@ -154,12 +154,28 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
-### Status & where to resume (updated 2026-05-29, round 3)
+### Status & where to resume (updated 2026-05-29, round 3 DONE)
 
 The batched pipeline (`Model.call_batched`) is implemented, fast, and SCALES.
 `perk-perf` branch (**current HEAD, NOT merged to main**) holds all perf work.
-THREE sessions; read `bench/round3_plan.md` first (forward plan + this round's
-findings), then `bench/round2_plan.md`, then `CHANGELOG.txt`.
+FOUR sessions; read `CHANGELOG.txt` (round-3 entry on top) first, then
+`bench/round3_plan.md`, then `bench/round2_plan.md`.
+
+**ROUND-3 RESULT — per-call GPU memory cut ~2× (accuracy-neutral, both committed):**
+The binding peak was NOT the modes tensor (the round-2 "0.33 GB/B_local persistent
+saved-trajectory tensor" model was WRONG — it mis-fit a transient). It was
+`_tabulate_conformal_time`'s `SaveAt(dense=True)` + `vmap(sol.evaluate)` over 10000
+pts, which under the B-vmap made a `(B,10000,max_steps=4096)` = 21 GB transient at
+B=64, **Ny-independent**. Fixed with `SaveAt(ts=lna_tau_tab[i0:])` (commit 7ce1756,
+PORTABLE to plain ABCMB → `../ABCMB_memory_reduction.md`). Plus the batched
+modes builder held 3 copies of the modes tensor; fixed with a donated in-place
+scatter (`_write_chunk`, commit edb3bb7), the lever for massive (modes ∝ Ny).
+Combined: **massless B=64 21.08→9.46 GB (2.23×), massive B=16 9.51→5.13 GB
+(1.85×)**, runtime unchanged. Gate: massless vs CLASS byte-identical; snapshots 5/5
+@rtol=1e-5 incl massive. Massive THROUGHPUT: freed memory fits B=64 → 6.51→4.25
+s/param (1.53×). `aH`-tabulation was tried and REVERTED (XLA already CSEs aH; no
+speedup) — do not re-attempt. Tools: `bench/profile_buildbgs.py`,
+`bench/runtime_peak.py`, `bench/profile_peak.py --stop`.
 
 **Throughput (the big result):** memory, not the solver, was the throughput cap,
 and it dissolves under sharding. Just raising B: per-param 1.09 s (B=64) → 0.44 s
@@ -180,15 +196,17 @@ regime-switching; NO SLURM job arrays (Perlmutter touchy, ≤2 queued jobs get
 priority); k_chunk stays 100 (smaller is slower, no mem benefit); **do NOT lower
 l_max for massive neutrinos**.
 
-**NEXT STEPS (see `bench/round3_plan.md` for code locations + gates):**
-- Accuracy-neutral, START HERE: (1) **transpose-kill** in
-  `_compute_modes_batched` (the (N_k,B,Nlna,Ny) tensor + its transpose co-exist,
-  ~2× spike); (2) **tabulate `aH`** in `background.py` (recomputed ~5–6×/RHS-step,
-  not cached — mirror `expmkappa_tab`; ~1.15–1.35× on massive-ν, helps massless).
-- Accuracy-gated (user OK to try): **reduce Nlna** (now the spec `n_lna_PE`,
-  default 500) — uniform reduction MIGHT hold but probably needs CLASS-like
-  **uneven recomb-dense** spacing (then also fix the LoS trapezoid weights at
-  `spectrum.py:~792` to per-interval). Flat multiplier on memory + LoS scan.
+**NEXT STEPS:**
+- DONE (round 3): transpose-kill + conformal-time SaveAt fix (committed). aH-tab
+  tried + REVERTED (no-op). The binding peak is now the Ny-dependent modes/PT
+  tensor (massive) or the spectrum LoS source (massless) — both ∝ Nlna.
+- Accuracy-gated, NOW THE LEVER: **reduce Nlna** (`n_lna_PE`, default 500) — flat
+  multiplier on the (now-dominant) modes/PT + LoS-scan peak. Uniform reduction
+  MIGHT hold but probably needs CLASS-like **uneven recomb-dense** spacing (then
+  also fix the LoS trapezoid weights at `spectrum.py:~792` to per-interval). Gate
+  vs CLASS with `bench/accuracy_gate.py --massive 0` (massless solid; the massive
+  vs-CLASS branch of that script has a known parameterization mismatch — fix it or
+  use snapshots for the massive bit-check).
 - From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
   LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
   ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
