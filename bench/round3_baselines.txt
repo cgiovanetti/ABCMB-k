@@ -18,3 +18,11 @@ FINDINGS:
   the O(Ny^2) implicit solve, not the aH recompute.
 - validate_keystone (transpose-kill correctness): batched-vs-single TT |d|/peak=3.2e-7,
   EE=8.1e-7, Pk=2.3e-5 -> PASS (documented chunking-noise floor; no indexing bug).
+
+--- FINAL (transpose-kill + SaveAt conformal-time fix), committed edb3bb7 + 7ce1756 ---
+massless B=64 : 21.08 -> 9.46 GB (2.23x), runtime 1.98 s/param (unchanged)
+massive  B=16 :  9.51 -> 5.13 GB (1.85x), runtime 6.5 s/param (unchanged)
+ROOT CAUSE of the binding peak: _tabulate_conformal_time SaveAt(dense=True)+vmap(evaluate)
+  over 10000 pts -> (B,10000,max_steps=4096) = 21 GB at B=64. Ny-INDEPENDENT.
+ACCURACY: massless vs CLASS byte-identical (0.1967/0.2309/0.1845); snapshots 5/5 @rtol=1e-5
+  incl lcdm_massive_nu. aH-tab reverted (XLA already CSEs aH; no speedup).

@@ -9,6 +9,68 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-05-29 (round 3) — Per-call GPU memory: kill the 21 GB conformal-time peak + the modes triple-buffer
+---------------------------------------------------------------------------------------------------------
+Session: perk-perf. Goal (user): reduce per-call GPU memory in general AND for
+massive neutrinos, and improve massive-ν runtime. Two memory wins landed; the
+massive-ν RUNTIME lever turned out to be a no-op and was reverted.
+
+THE HEADLINE (A100-80GB, single GPU, kchunk=100, ELLMAX=800, lensing=False;
+bench/round3_baselines.txt):
+    config           baseline      after       reduction
+    massless B=64    21.08 GB      9.46 GB      2.23x
+    massive  B=16     9.51 GB      5.13 GB      1.85x
+Runtime unchanged by both fixes.
+
+WHAT LANDED (two independent, accuracy-neutral fixes):
+
+1. SaveAt(ts) in _tabulate_conformal_time (background.py) -- THE BIG ONE, PORTABLE.
+   The conformal-time solve used SaveAt(dense=True) then evaluated the dense
+   Solution at all 10000 lna_tau_tab points via vmap. Under the B-vmap of
+   background construction, sol.evaluate broadcast each query against the solver's
+   padded (max_steps=4096) step array -> a (B,10000,4096) transient = 21.0 GB at
+   B=64. This -- not the modes tensor -- was the BINDING peak of the whole pipeline,
+   and it is Ny-INDEPENDENT (so it capped massless and massive equally). Localized
+   with bench/profile_buildbgs.py (_pre_recomb_batched = 21.27 GB, get_BG only 0.4)
+   and bench/runtime_peak.py (it's real runtime, not compile scratch). Fix: save
+   directly at the in-domain grid suffix with SaveAt(ts=lna_tau_tab[i0:]); same
+   per-step interpolant, so tau is unchanged. Gate: massless vs CLASS byte-identical
+   (TT 0.1967/EE 0.2309/Pk 0.1845); snapshots 5/5 pass at rtol=1e-5 incl.
+   lcdm_massive_nu (the species-independent bit-neutrality proof). PORTS to plain
+   ABCMB unchanged (same code) -> ../ABCMB_memory_reduction.md.
+
+2. transpose-kill in _compute_modes_batched (perturbations.py) -- MASSIVE-specific.
+   The batched modes builder held the per-chunk list AND the concatenated
+   (N_k,B,Nlna,Ny) tensor AND its transpose at once (~3x the raw modes tensor).
+   Replaced with a single pre-allocated (B,Ny,Nlna,N_k) buffer that each chunk is
+   transposed into and scattered into in place via a donated _write_chunk
+   (donate=all-except-first). Bit-identical; validate_keystone batched-vs-single
+   unchanged at the chunking-noise floor (TT |d|/peak=3.2e-7). This is the lever
+   for massive (modes tensor is binding only at Ny~100): massive 9.51->5.30; then
+   fix 1 took it 5.30->5.13. Massless's modes tensor was never binding, so fix 1
+   alone gives its 21.08->9.46.
+
+REVERTED (measured no-op): tabulating aH to avoid the ~5-6 rho_tot recomputes per
+perturbation RHS step. XLA already CSEs the redundant aH calls within a trace, so
+it gave ZERO speedup on either species (massless 1.98->2.02, massive 6.51->6.57).
+(Also: interpax.interp1d(cubic) rebuilds an O(10000) spline per call = a 10%
+regression; linear fast_interp is C0 and makes the rtol-1e-10 background solves hit
+max_steps. None of it mattered since the recompute wasn't the bottleneck.) Massive-
+nu per-solve time is the O(Ny^2) implicit Kvaerno5 solve, whose only lever is
+l_max_ncdm (an accuracy trade, banned). So the massive-nu THROUGHPUT win is the
+memory reduction -> fit larger B -> better amortization (massive now fits B=64
+single-GPU at ~20 GB).
+
+Also: corrects the round-2 memory model, which attributed the peak to "the
+persistent saved-trajectory tensor ~3.65*N_k*Nlna*Ny*B_local". Stage isolation
+shows the real binding peak was the conformal-time dense-evaluate (Ny-independent),
+which round-2 mis-fit because it happened to scale ~0.33 GB/B_local too.
+
+bench artifacts: round3_baselines.txt (all numbers), profile_buildbgs.py,
+runtime_peak.py, profile_peak.py (--stop per-stage), accuracy_gate.py (vs-CLASS;
+massless solid, massive setup still mismatched), mem_throughput_sweep.py (+--nlna).
+
+
 2026-05-29 (round 2) — Throughput for a frequentist scan: raise B + sharding, memory model, multi-node harness
 -------------------------------------------------------------------------------------------------------------
 Session: perk-perf. Goal: much higher capacity for a frequentist scan over many
