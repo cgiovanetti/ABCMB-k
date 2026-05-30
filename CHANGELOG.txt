@@ -52,7 +52,16 @@ ACCURACY (vis-300 vs CLASS, massless, per bench/grid_diag*.log): matches OR BEAT
   0.193 vs 0.212). The ONLY regression is the l=2-4 quadrupole (l=2 EE 0.231->0.304,
   TT 0.089->0.216) -- sub-permille, cosmic-variance-dominated, NOT recoverable by
   clustering (needs broad coverage ~N>=450). User chose to ship N=300 with this
-  tradeoff. Snapshots regenerated at the new default.
+  tradeoff.
+GATES (all green): accuracy_test vs CLASS (massless, 1% gate) PASS; test_snapshots
+  5/5 PASS. Snapshots regenerated at the new default + rtol loosened 1e-5->5e-5:
+  model() is bit-deterministic run-to-run (bench/bbn_repro_check: 0.0), but a fresh
+  PROCESS recompiles and the steeper recomb-concentrated grid amplifies cross-process
+  XLA reduction-order drift to ~1.2e-5 on BBN Pk (was ~4e-7 on ClTT pre-round-4) --
+  benign codegen drift 4 orders below the 0.2% accuracy floor, not a regression; 5e-5
+  still 2x under the rtol_large_k_PE=1e-4 solver tol. Massive ν inherits the grid
+  (visibility shape is Thomson-set): vis-300 reproduces uniform-500 to EE 0.02% /
+  TT-mid 0.25% (bench/massive_grid_check).
 
 HARNESS NOTE: bench/scan scripts MUST be run with PYTHONPATH=repo-root (the runners
 already do `cd ABCMB-k && export PYTHONPATH=$(pwd)`); `python bench/foo.py` alone
