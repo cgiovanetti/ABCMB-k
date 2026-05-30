@@ -20,6 +20,82 @@ cosmic time using background cosmology and species interactions.
 """
 
 
+def make_lna_grid(BG, params, n, specs):
+    """Build the perturbation save / LoS-quadrature grid of ``n`` points from
+    ``BG.lna_transfer_start`` to ``0`` (today).
+
+    ``specs["lna_grid_mode"]``:
+      - ``"uniform"``  : ``jnp.linspace(lna_transfer_start, 0, n)`` (historical
+        behaviour; the default).
+      - ``"visibility"`` : EXTENSIBLE adaptive grid. Points are placed as the
+        inverse-CDF of a density ``floor + g/max(g) (+ gprime_amp*|g'|/max|g'|)``,
+        where ``g`` is the *actual* CMB visibility ``BG.visibility(lna, params)``
+        evaluated on a dense grid. The visibility already carries every localized
+        source feature for the given cosmology (recombination peak, reionization
+        bump, and whatever a new-physics model adds), so resolution is placed
+        where the source varies WITHOUT hard-coding feature locations or widths.
+        The ``floor`` keeps baseline coverage for the broad ISW/Pk contributions.
+      - ``"recomb_dense"`` : legacy hand-placed Gaussian bump(s) at ``BG.lna_rec``
+        (and optionally ``lna_reion_center``). Kept for reference; NOT physics-
+        extensible (a recomb-only bump starves reionization -> EE bias). Prefer
+        ``"visibility"``.
+
+    Shape-controlling values (``n``, ``lna_grid_n_dense``, the mode/knobs) are
+    static; ``BG``/``params`` are traced, so the grid auto-adapts per cosmology
+    with NO recompile when scanning parameters at fixed specs. Endpoints are
+    exactly ``lna_transfer_start`` and ``0``; the grid is strictly increasing.
+    A non-uniform grid MUST be paired with the per-interval ``jnp.diff`` trapezoid
+    weights in ``spectrum.py`` (already grid-agnostic).
+    """
+    lna_start = BG.lna_transfer_start
+    mode = specs.get("lna_grid_mode", "uniform")
+    if mode == "uniform":
+        return jnp.linspace(lna_start, 0., n)
+
+    n_dense = specs.get("lna_grid_n_dense", 4000)
+    u = jnp.linspace(lna_start, 0., n_dense)
+
+    if mode == "visibility":
+        g = vmap(lambda l: BG.visibility(l, params))(u)
+        g = jnp.maximum(g, 0.0)
+        # Broaden the (very narrow, FWHM~0.07 in lna) visibility spike to cover the
+        # acoustic neighborhood the source actually varies over; the smoothing scale
+        # is a physics scale (acoustic coverage), not a per-model knob. Convolution
+        # on the uniform dense grid u with a Gaussian of width lna_vis_smooth.
+        sm = specs.get("lna_vis_smooth", 0.0)
+        if sm > 0.0:
+            # Kernel SIZE must be static (n_dense, sm static; window assumed ~7.5
+            # e-folds for sizing only). Kernel VALUES use the traced du -> exact.
+            half = max(1, int(round(4.0 * sm * n_dense / 7.5)))
+            du = (u[-1] - u[0]) / (n_dense - 1)
+            idx = jnp.arange(-half, half + 1)
+            ker = jnp.exp(-0.5 * (idx * du / sm) ** 2)
+            ker = ker / jnp.sum(ker)
+            g = jnp.convolve(g, ker, mode="same")
+        g = g / (jnp.max(g) + 1e-300)
+        dens = specs.get("lna_vis_floor", 0.3) + g
+        gp_amp = specs.get("lna_vis_gprime_amp", 0.0)
+        if gp_amp > 0.0:
+            gp = jnp.abs(jnp.gradient(g, u))
+            dens = dens + gp_amp * gp / (jnp.max(gp) + 1e-300)
+    elif mode == "recomb_dense":
+        lna_rec = BG.lna_rec
+        amp   = specs.get("lna_recomb_amp", 12.0)
+        width = specs.get("lna_recomb_width", 0.4)
+        dens = 1.0 + amp * jnp.exp(-0.5 * ((u - lna_rec) / width) ** 2)
+        reion_amp = specs.get("lna_reion_amp", 0.0)
+        if reion_amp > 0.0:
+            lna_reion   = specs.get("lna_reion_center", -2.1)
+            reion_width = specs.get("lna_reion_width", 0.5)
+            dens = dens + reion_amp * jnp.exp(-0.5 * ((u - lna_reion) / reion_width) ** 2)
+    else:
+        raise ValueError(f"unknown lna_grid_mode {mode!r}")
+
+    cdf = jnp.cumsum(dens)
+    cdf = (cdf - cdf[0]) / (cdf[-1] - cdf[0])
+    return jnp.interp(jnp.linspace(0., 1., n), cdf, u)
+
+
 class PerturbationEvolver(eqx.Module):
     """
     Linear scalar perturbation evolution solver.
@@ -97,7 +173,7 @@ class PerturbationEvolver(eqx.Module):
         Time integration runs from early times to z=1 (lna=-ln(2)).
         """
         BG, params = args
-        lna = jnp.linspace(BG.lna_transfer_start,  0., self.specs["n_lna_PE"])
+        lna = make_lna_grid(BG, params, self.specs["n_lna_PE"], self.specs)
 
         # This scan function is only used if on CPU.
         # For GPUs we vmap over the wavenumbers instead
@@ -185,8 +261,8 @@ class PerturbationEvolver(eqx.Module):
         """
         BG_batch, params_batch = args
         lna_batch = vmap(
-            lambda lts: jnp.linspace(lts, 0., self.specs["n_lna_PE"])
-        )(BG_batch.lna_transfer_start)
+            lambda bg, p: make_lna_grid(bg, p, self.specs["n_lna_PE"], self.specs)
+        )(BG_batch, params_batch)
 
         k_axis = self.k_axis_perturbations
         n_k = len(k_axis)

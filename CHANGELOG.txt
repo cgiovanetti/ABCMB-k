@@ -9,6 +9,58 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-05-30 (round 4) — n_lna lever: visibility-driven recomb-dense save grid (default n_lna_PE 500->300)
+--------------------------------------------------------------------------------------------------------
+Session: perk-perf. Goal (user): finish the refactor + improve runtime. Took the
+round-3 "NOW THE LEVER" item: shrink the save/LoS grid (n_lna_PE), a linear factor
+on the per-call memory peak AND the LoS scan.
+
+DEFAULT CHANGED (model_specs.py): n_lna_PE 500->300, lna_grid_mode "uniform"->
+"visibility" (lna_vis_smooth=0.3, lna_vis_floor=0.4). Revert = n_lna_PE=500,
+lna_grid_mode="uniform".
+
+WHY NOT UNIFORM-300: uniform reduction degrades TT non-monotonically below ~400 and
+hits the acoustic peaks (TT@mid 0.197->0.231 at 300, a 0.985% spike at 350); user
+rejected even uniform-400. So the points must go where the source varies.
+
+THE GRID (perturbations.make_lna_grid): points = inverse-CDF of a density
+floor + smooth(g)/max(g), where g = BG.visibility(lna,params) on a dense grid,
+Gaussian-smoothed by lna_vis_smooth (broadens the FWHM~0.07 visibility spike to the
+acoustic neighborhood the TT source needs). EXTENSIBLE + recompile-free: g is a
+TRACED per-cosmology quantity carrying every localized feature (recomb peak, reion
+bump, and whatever new physics adds), so the grid auto-adapts across a parameter
+scan with NO recompile (only n / mode / knobs are static). A hand-placed Gaussian at
+BG.lna_rec was tried and REJECTED: it ignores reionization -> EE@l=2 0.23->0.39
+(EE@l=2 is reion-/broad-coverage-limited; clustering at recomb starves it). Raw
+(unsmoothed) g also failed (over-resolves the spike, starves the acoustic region:
+TT 2-4%).
+
+LoS WEIGHTS (spectrum.py): replaced the uniform delta_lna trapezoid weights with
+per-interval 0.5*(jnp.pad(dl,(0,1))+jnp.pad(dl,(1,0)))[:-1], dl=jnp.diff(PT.lna).
+Bit-identical for a uniform grid (reduces to the old full-delta / half-first-point);
+REQUIRED for a non-uniform grid (else silent integral bias).
+
+RESULT (A100-80GB, massless B=64, lensing off, ELLMAX=800):
+  per-call peak 11.73 -> 7.09 GB (1.65x, exactly the linear 300/500). per_param
+  unchanged at B=64 (1.98s; solver-bound, not memory-bound there) -> the win is
+  fitting ~1.65x more cosmologies/GPU (better large-B amortization) + a cheaper LoS
+  scan. Batched-vs-single parity 1.7e-4 TT (recomb-concentrated grid amplifies the
+  diffrax PID chunking noise vs the ~3e-5 uniform floor; still 10x under the 0.2%
+  vs-CLASS accuracy).
+ACCURACY (vis-300 vs CLASS, massless, per bench/grid_diag*.log): matches OR BEATS
+  uniform-500 at every multipole l>=5 (TT mid 0.192 vs 0.197, hi 0.135 vs 0.155; EE
+  0.193 vs 0.212). The ONLY regression is the l=2-4 quadrupole (l=2 EE 0.231->0.304,
+  TT 0.089->0.216) -- sub-permille, cosmic-variance-dominated, NOT recoverable by
+  clustering (needs broad coverage ~N>=450). User chose to ship N=300 with this
+  tradeoff. Snapshots regenerated at the new default.
+
+HARNESS NOTE: bench/scan scripts MUST be run with PYTHONPATH=repo-root (the runners
+already do `cd ABCMB-k && export PYTHONPATH=$(pwd)`); `python bench/foo.py` alone
+imports the STALE editable parent /pscratch/.../ABCMB (no n_lna_PE) and silently
+gives wrong results. New bench: nlna_accuracy_sweep, recomb_grid_sweep, grid_diag,
+validate_vis300, massive_grid_check; mem_throughput_sweep gained --gridmode.
+
+
 2026-05-29 (round 3) — Per-call GPU memory: kill the 21 GB conformal-time peak + the modes triple-buffer
 ---------------------------------------------------------------------------------------------------------
 Session: perk-perf. Goal (user): reduce per-call GPU memory in general AND for

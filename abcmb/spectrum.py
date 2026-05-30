@@ -673,8 +673,8 @@ class SpectrumSolver(eqx.Module):
         """
         l = bessel_l_tab[idx]
         k_axis = self.k_axis_transfer
-        lna_axis = PT.lna[:-1]
-        delta_lna = PT.lna[-1] - PT.lna[-2]
+        lna_full = PT.lna
+        lna_axis = lna_full[:-1]
 
         ### TRANSFER FUNCTION ###
         # Background quantities, all Nlna 1D vectors
@@ -789,8 +789,15 @@ class SpectrumSolver(eqx.Module):
             )
 
         Nlna = lna_axis.shape[0]
-        weights = jnp.full((Nlna,), delta_lna, dtype=sourceT0.dtype)
-        weights = weights.at[0].set(0.5 * delta_lna)
+        # Trapezoid weights for the LoS integral over the (possibly non-uniform)
+        # lna grid. lna_axis = PT.lna[:-1] drops the lna=0 endpoint, whose
+        # integrand is identically zero (phi_l(chi=0)=0), so its boundary weight
+        # is irrelevant. The per-interval form below reduces EXACTLY to the old
+        # uniform weights (full delta_lna, half on the first point) when PT.lna is
+        # evenly spaced, and stays correct on a recomb-dense non-uniform grid.
+        dl = jnp.diff(lna_full)                                     # (N-1,)
+        w_full = 0.5 * (jnp.pad(dl, (0, 1)) + jnp.pad(dl, (1, 0)))  # (N,)
+        weights = w_full[:-1].astype(sourceT0.dtype)               # (N-1,) -> lna_axis
         zero_k = jnp.zeros(k_axis.shape, dtype=sourceT0.dtype)
 
         def scan_step(carry, xs_l):

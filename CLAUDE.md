@@ -154,12 +154,30 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
-### Status & where to resume (updated 2026-05-29, round 3 DONE)
+### Status & where to resume (updated 2026-05-30, round 4 DONE)
 
 The batched pipeline (`Model.call_batched`) is implemented, fast, and SCALES.
 `perk-perf` branch (**current HEAD, NOT merged to main**) holds all perf work.
-FOUR sessions; read `CHANGELOG.txt` (round-3 entry on top) first, then
+FIVE sessions; read `CHANGELOG.txt` (round-4 entry on top) first, then
 `bench/round3_plan.md`, then `bench/round2_plan.md`.
+
+**ROUND-4 RESULT — n_lna lever: default save grid is now visibility-driven & N=300:**
+`model_specs` defaults changed: `n_lna_PE` 500->300, `lna_grid_mode` "uniform"->
+"visibility" (`lna_vis_smooth`=0.3, `lna_vis_floor`=0.4). The grid
+(`perturbations.make_lna_grid`) places points as the inverse-CDF of
+`floor + smooth(g)/max(g)` where `g=BG.visibility` — a TRACED per-cosmology quantity,
+so resolution auto-tracks recomb+reion+any-new-physics with NO per-parameter
+recompile (EXTENSIBLE; this is why a hand-placed bump at `BG.lna_rec` was rejected —
+it ignored reionization and wrecked EE@l=2). Paired with per-interval `jnp.diff`
+trapezoid weights in `spectrum.py` (bit-identical for uniform, REQUIRED for
+non-uniform). Result: per-call peak **11.73->7.09 GB (1.65×)** at B=64 (exactly
+linear 300/500); per_param unchanged at B=64 (solver-bound) so the win is ~1.65×
+more cosmologies/GPU + a cheaper LoS scan. Accuracy: matches-or-beats uniform-500 at
+every multipole **l>=5** (TT mid 0.192 vs 0.197); only the l=2-4 quadrupole regresses
+sub-permille (l=2 EE 0.231->0.304), which clustering can't fix and the user accepted.
+Revert = `n_lna_PE=500, lna_grid_mode="uniform"`. Tools: `bench/grid_diag.py`
+(per-ell error map), `bench/recomb_grid_sweep.py`, `bench/validate_vis300.py`
+(batched parity + memory), `bench/massive_grid_check.py`.
 
 **ROUND-3 RESULT — per-call GPU memory cut ~2× (accuracy-neutral, both committed):**
 The binding peak was NOT the modes tensor (the round-2 "0.33 GB/B_local persistent
@@ -198,15 +216,23 @@ l_max for massive neutrinos**.
 
 **NEXT STEPS:**
 - DONE (round 3): transpose-kill + conformal-time SaveAt fix (committed). aH-tab
-  tried + REVERTED (no-op). The binding peak is now the Ny-dependent modes/PT
-  tensor (massive) or the spectrum LoS source (massless) — both ∝ Nlna.
-- Accuracy-gated, NOW THE LEVER: **reduce Nlna** (`n_lna_PE`, default 500) — flat
-  multiplier on the (now-dominant) modes/PT + LoS-scan peak. Uniform reduction
-  MIGHT hold but probably needs CLASS-like **uneven recomb-dense** spacing (then
-  also fix the LoS trapezoid weights at `spectrum.py:~792` to per-interval). Gate
-  vs CLASS with `bench/accuracy_gate.py --massive 0` (massless solid; the massive
-  vs-CLASS branch of that script has a known parameterization mismatch — fix it or
-  use snapshots for the massive bit-check).
+  tried + REVERTED (no-op).
+- DONE (round 4): the Nlna lever. `n_lna_PE` 500->300 on a visibility-driven
+  recomb-dense grid + per-interval LoS weights (1.65× per-call memory; accuracy
+  matches uniform-500 for l>=5, only the l=2-4 quadrupole regresses sub-permille,
+  user-approved). The remaining ∝Nlna memory is now at N=300; going lower hits the
+  l=2 quadrupole floor (needs broad coverage). Massive ν inherits the same grid
+  (visibility shape is Thomson-set, mass-independent).
+- Possible further levers (untried): (a) the visibility-grid knobs
+  (`lna_vis_smooth`/`lna_vis_floor`) could be re-tuned per-likelihood if l<5 is cut;
+  (b) Idea A2 from `bench/round3_memory.md` — stream PT per k-chunk so the full
+  modes tensor never co-exists (bigger refactor; blocked by the spectrum's global
+  cubic spline over PT.k).
+- From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
+  LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
+  ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
+  (the frequentist likelihood layer — the stated end-goal; `scan/` produces
+  per-slice Cls/Pk, the `summarize` hook in `scan_slice.py` is where χ² plugs in).
 - From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
   LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
   ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
