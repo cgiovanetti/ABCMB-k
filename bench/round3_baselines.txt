@@ -32,3 +32,23 @@ massive B=16: 6.51 s/param @ 5.13 GB
 massive B=64: 4.25 s/param @ 20.42 GB   <- 1.53x throughput from amortization
   (B=64 massive did not fit comfortably before the fixes; modes triple-buffer
    alone was ~38 GB. Can push higher: B=128 ~41 GB still fits 80 GB.)
+
+=== BATCH-SIZE PUSH (sharded, 4-GPU node) — answering "how many / how fast" ===
+NOTE: these nodes are 40GB-A100 (nvidia-smi: 40960 MiB total -> ~31.8 GB usable/device,
+JAX default mem fraction). Round-2's 80GB nodes were different hardware. On 80GB you
+can roughly DOUBLE every B below.
+
+MASSLESS (4x A100-40GB):
+  B=512 : 0.449 s/param, 23.46 GB/device, OK   <- max on 40GB (B=640 OOMs at 31.8)
+  B=640 : OOM (needs ~31 GB), B=1024 OOM
+  -> ~2.2 cosmologies/s/node. (round-2 needed 42 GB/device for B=512 -> would NOT
+     fit on these 40GB nodes; the conformal-time SaveAt fix is what makes B=512 fit.)
+
+MASSIVE nu (4x A100-40GB), the user's focus:
+  B=128 : 1.36 s/param, 12.70 GB/device, OK
+  B=256 : 1.13 s/param, 25.35 GB/device, OK   <- max on 40GB (B=384 ~37 GB OOMs)
+  -> ~0.9 cosmologies/s/node, and 6.5 (B=16 single-GPU) -> 1.13 s/param = 5.8x
+     throughput from sharding + the memory headroom that lets B=256 fit.
+
+THE TRANSPOSE-KILL had to be made sharding-safe (concatenate(axis=3), not a donated
+full-B jnp.zeros which replicates at full B and OOMs under sharding). Fixed in 487fa7d.
