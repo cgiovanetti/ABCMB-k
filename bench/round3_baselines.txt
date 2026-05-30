@@ -26,3 +26,9 @@ ROOT CAUSE of the binding peak: _tabulate_conformal_time SaveAt(dense=True)+vmap
   over 10000 pts -> (B,10000,max_steps=4096) = 21 GB at B=64. Ny-INDEPENDENT.
 ACCURACY: massless vs CLASS byte-identical (0.1967/0.2309/0.1845); snapshots 5/5 @rtol=1e-5
   incl lcdm_massive_nu. aH-tab reverted (XLA already CSEs aH; no speedup).
+
+--- Massive-nu THROUGHPUT via the freed memory headroom (single A100-80GB) ---
+massive B=16: 6.51 s/param @ 5.13 GB
+massive B=64: 4.25 s/param @ 20.42 GB   <- 1.53x throughput from amortization
+  (B=64 massive did not fit comfortably before the fixes; modes triple-buffer
+   alone was ~38 GB. Can push higher: B=128 ~41 GB still fits 80 GB.)
