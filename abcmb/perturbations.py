@@ -147,6 +147,24 @@ class PerturbationEvolver(eqx.Module):
         return vmap(per_k, in_axes=(0, None, None, None))(
             k_chunk, lna_batch, BG_batch, params_batch)
 
+    @eqx.filter_jit(donate="all-except-first")
+    def _write_chunk(self, modes, chunk, start):
+        """Transpose a raw ``(K_CHUNK, B, Nlna, Ny)`` chunk into the
+        ``(B, Ny, Nlna, K_CHUNK)`` output layout and scatter it into the
+        pre-allocated ``modes`` buffer at k-offset ``start``.
+
+        ``modes`` and ``chunk`` are donated (``donate="all-except-first"``
+        keeps only ``self``), so XLA writes the transposed chunk in place:
+        only ONE full ``(B, Ny, Nlna, N_k)`` tensor plus one transient chunk
+        live at a time. This replaces the former
+        ``concatenate(chunks)`` + ``.transpose()`` which held the whole
+        per-chunk list AND the concatenated AND the transposed tensor
+        simultaneously (~3x the raw tensor — the dominant memory peak). The
+        arithmetic and k-ordering are bit-identical to the old path.
+        """
+        chunk = chunk.transpose(1, 3, 2, 0)        # (B, Ny, Nlna, K_CHUNK)
+        return lax.dynamic_update_slice(modes, chunk, (0, 0, 0, start))
+
     def _compute_modes_batched(self, args, k_chunk_size=100):
         """Compute raw modes tensor for a B-axis batch.
 
@@ -182,14 +200,22 @@ class PerturbationEvolver(eqx.Module):
 
         k_axis = self.k_axis_perturbations
         n_k = len(k_axis)
-        chunks = []
+
+        # Stream each k-chunk into a single pre-allocated (B, Ny, Nlna, N_k)
+        # buffer via the donated _write_chunk scatter, instead of holding the
+        # whole per-chunk list and concatenating+transposing it (which kept
+        # ~3 full copies of the raw modes tensor alive at the peak). The first
+        # chunk fixes (B, Ny, Nlna); allocate from its shape, then write.
+        modes = None
         for i in range(0, n_k, k_chunk_size):
             k_chunk = k_axis[i:i + k_chunk_size]
-            chunks.append(self._evolve_chunk(
-                k_chunk, lna_batch, BG_batch, params_batch))
-        # (N_k, B, Nlna, Ny) -> (B, Ny, Nlna, N_k)
-        modes = jnp.concatenate(chunks, axis=0)
-        return modes.transpose(1, 3, 2, 0), lna_batch
+            chunk = self._evolve_chunk(
+                k_chunk, lna_batch, BG_batch, params_batch)  # (K_CHUNK, B, Nlna, Ny)
+            if modes is None:
+                B, Nlna, Ny = chunk.shape[1], chunk.shape[2], chunk.shape[3]
+                modes = jnp.zeros((B, Ny, Nlna, n_k), dtype=chunk.dtype)
+            modes = self._write_chunk(modes, chunk, jnp.asarray(i))
+        return modes, lna_batch
 
     def full_evolution_batched(self, args, k_chunk_size=100):
         """Evolve perturbations for a B-axis batch of (BG, params), return

@@ -1,0 +1,20 @@
+Round-3 baselines (perk-perf @ 9fe4104, A100-80GB, single GPU, kchunk=100, ELLMAX=800, lensing=False)
+massless B=64 : per_param=1.98 s, peak=21.08 GB   (0.33 GB/B_local)   jobid 53586121
+massive  B=16 : per_param=6.51 s, peak= 9.51 GB   (0.59 GB/B_local)   jobid 53586122
+
+--- Round-3 measurements (A100-80GB, single GPU, kchunk=100, ELLMAX=800, lensing=False) ---
+                       baseline(HEAD)      transpose-kill+aH-tab      transpose-kill only
+massless B=64    1.98s / 21.08 GB      2.02s / 21.08 GB           (peak unchanged)
+massive  B=16    6.51s /  9.51 GB      6.57s /  5.30 GB           5.30 GB (mem win), runtime wash
+
+FINDINGS:
+- transpose-kill (perturbations.py donated-scatter): massive peak 9.51->5.30 GB (1.8x),
+  both species now sit at 0.33 GB/B_local. The modes-build triple-buffer was the BINDING
+  peak only for massive (Ny~100); massless (Ny~46) binding peak is a DIFFERENT Ny-independent
+  stage at 0.33 GB/B_local -> needs separate attack for general memory reduction.
+- aH-tab (background.py): RUNTIME WASH on both species. XLA already CSE's the 5-6 redundant
+  aH calls within each RHS trace, so tabulating the single CSE'd rho_tot as an interp lookup
+  gains nothing. REVERTED (kept code bit-identical). Confirms massive runtime is dominated by
+  the O(Ny^2) implicit solve, not the aH recompute.
+- validate_keystone (transpose-kill correctness): batched-vs-single TT |d|/peak=3.2e-7,
+  EE=8.1e-7, Pk=2.3e-5 -> PASS (documented chunking-noise floor; no indexing bug).
