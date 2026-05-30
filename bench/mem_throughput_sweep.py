@@ -62,15 +62,18 @@ def main():
     ap.add_argument("--shard", type=int, default=1)
     ap.add_argument("--massive", type=int, default=0,
                     help="if 1, add one massive neutrino (Ny ~46 -> ~250)")
+    ap.add_argument("--nlna", type=int, default=500,
+                    help="n_lna_PE (perturbation save grid; default 500)")
     a = ap.parse_args()
     shard = bool(a.shard)
     rec = {"B": a.B, "kchunk": a.kchunk, "shard": int(shard),
-           "massive": a.massive, "n_dev": len(jax.devices('gpu'))}
+           "massive": a.massive, "nlna": a.nlna, "n_dev": len(jax.devices('gpu'))}
     try:
         user_species = (species.MassiveNeutrino,) if a.massive else None
         model = Model(user_species=user_species, output_Cl=True, l_max=ELLMAX,
                       lensing=False, output_Pk=True, output_k_max=0.5,
-                      l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17)
+                      l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+                      n_lna_PE=a.nlna)
         pl = make_params(a.B)
         if a.massive:                       # enable 1 massive nu in each cosmology
             for p in pl:
