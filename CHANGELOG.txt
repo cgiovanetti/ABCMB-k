@@ -9,6 +9,64 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-08 — Frequentist feasibility study: ABCMB + Planck plik-lite
+--------------------------------------------------------------------
+Session: perk-perf. Goal (user): is the batched runtime good enough for a
+frequentist profile? Wire up plik-lite (foreground-marginalized, so its only
+nuisance A_planck varies WITHOUT re-running ABCMB) and either build a profiling
+strategy or show it's too slow. Full writeup: scan/FEASIBILITY_plik_lite.md.
+
+VERDICT: feasible TODAY for LCDM and LCDM+1-extension profiles via a sharded
+brute/adaptive grid scan (hours on a handful of 4-GPU nodes). Higher-dim models
+want the differentiable-optimizer route (open item: grad-through-lensed-solve
+memory).
+
+NEW (all in scan/, no production code touched):
+  * plik_lite.py  — pure-JAX re-impl of cobaya PlanckPlikLite binning; vmaps the
+    per-cosmo pieces (bin D_l, invcov contraction, profile A_planck) over B.
+    Turns a (B,n_ell) BatchedOutput into a (B,) chi2. Loads on-disk data at
+    Neal_ACTDR6/cobaya_packages/data/planck_2018_pliklite_native (613 bins).
+    Key trick: A_s AND A_planck are both overall amplitudes (model ∝ A_s/A^2),
+    so the amplitude is profiled CLOSED-FORM (a - b^2/c) with NO extra ABCMB runs
+    -> removes 2 nuisances from the scan grid for free (profile_amplitude()).
+  * validate_plik.py, bench_plik_runtime.py, profile_demo.py(+.png/.npz).
+
+NORMALIZATION BRIDGE (validated, not assumed): ABCMB returns raw dimensionless
+C_l; plik-lite wants D_l=l(l+1)C_l/2pi in muK^2. D_l = l(l+1)/2pi * C_l *
+T_CMB_uK^2, T_CMB=2.7255e6 uK (ABCMB TCMB0=2.349e-4 eV == 2.7255 K). A_planck:
+model -> model/A_planck^2.
+
+CORRECTNESS (Planck18 base-LCDM best fit, l_max=2508, LENSED): D_l^TT(220)=5737
+uK^2 (~5700 expected); full TTTEEE chi2=607.6 profiled, chi2/dof=0.99; profile-
+demo global min chi2=584.5 == literature plik_lite ~585. Confirms binning, cov,
+T_CMB^2 norm, AND TE/EE signs. Batched-vs-single chi2 differs ~0.1 (chunked PID
+noise) -> ~10% of a 1-sigma (dchi2=1) interval; smooth the profile / refine the
+min with single calls for publication intervals.
+
+RUNTIME (the headline; CHANGELOG perf was l_max=800/lensing-OFF — NOT Planck-
+grade). l_max=2508 + LENSING, 4xA100-80GB, post-compile, incl. the chi2:
+  B=16/64/128/256 -> 3.75 / 1.30 / 0.89 / 0.67 s/param. B=512 OOMs (B_local=128,
+  ~49 GB/dev). So B=256 (B_local=64) is the memory-limited max; UNIT COST ~0.67
+  s/cosmology, ~1.5 cosmo/s/node, LINEAR in nodes. 1 massive nu (0.06 eV, Planck
+  baseline) is within noise: B=256 -> 0.670 and still fits. Single-GPU 3.7x
+  slower at equal B_local (near-linear sharding). NOTE: the bench peakGB column
+  UNDER-reports the transient (B_local=128 truly needs ~49 GB, not the 18 a
+  linear fit of the reported 9.2@B=256 would predict) — trust the OOM/estimator.
+
+DEMO (profile_demo.py): 25x25 (n_s, omega_cdm) grid, amplitude profiled
+analytically -> clean elliptical dchi2 surface + parabolic 1D profiles (1/2/3
+sigma). 625 cosmologies in 641 s incl. compile on ONE node. n_s=0.962+/-0.003.
+
+COST MODEL (0.67 s/param, linear nodes; A_s & A_planck analytic; tau from a lowE
+prior, NOT a grid dim): LCDM is 4D {h,wb,wcdm,ns}: 15/dim=5e4 pts ~ 1.2 h on 8
+nodes; 20/dim ~ 3.7 h. LCDM+1 (5D) ~ 17 h on 8 nodes. 6D -> 1e7 pts, brute grid
+impractical -> differentiable-optimizer profile (vmap a Newton/LBFGS over the
+profile points, ~1 node-hr per 1-D profile; gated on grad memory).
+
+NEXT: (i) memory-check reverse-mode AD through the lensed l_max=2508 batched
+solve; (ii) wire plik_lite.chi2_from_abcmb into scan_slice.py's summarize hook.
+
+
 2026-05-30 (round 4) — n_lna lever: visibility-driven recomb-dense save grid (default n_lna_PE 500->300)
 --------------------------------------------------------------------------------------------------------
 Session: perk-perf. Goal (user): finish the refactor + improve runtime. Took the
