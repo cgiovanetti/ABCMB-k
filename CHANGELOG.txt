@@ -9,6 +9,37 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-09 — Forward-mode AD validation + Option B (optimizer profile) feasibility
+----------------------------------------------------------------------------------
+Session: perk-perf. Tested whether the optimizer-based frequentist profile
+(minimize chi2 over nuisances per POI value) is viable. Reverse-mode AD OOMs
+(stores the perturbation trajectory); question was forward-mode. Writeup:
+scan/OPTION_B_feasibility.md. Tools: scan/fwdad_validate.py (correctness+memory),
+scan/fwdad_scaling.py (serial-vs-parallel).
+
+RESULTS (l_max=2508, lensed, 1 massive nu):
+  * jacfwd traces END-TO-END through add_derived_parameters + HyRex(CPU) +
+    perturbations(GPU) + spectrum + plik chi2. gradient finite; matches central
+    finite differences 1e-4..5e-3 on 5/6 params (omega_b 6% is FD-reference-noise,
+    AD is exact). add_derived_parameters branches only on STATIC config so it
+    traces; ABCMB defaults to adjoint=diffrax.ForwardMode.
+  * MEMORY FLAT: primal 1.20 GB == jacfwd 1.20 GB. The reverse-mode blocker is
+    gone -> Option B is not memory-limited. THE key result.
+  * gradient is CHEAP: single jvp = 2.1x primal; jacfwd over all 6 params ~4x
+    (tangents PARALLELIZED: 4x << 6*2.1=12.8x serial). An earlier "33x" was a
+    measurement ARTIFACT (jit-wrapped gradient / un-wrapped primal). PITFALL:
+    do NOT outer-jax.jit the cross-device chi2 (GPU->CPU HyRex->GPU) -> ~8x
+    slowdown (10s->82s); use the internal filter_jit path / call_batched.
+
+COST: optimizer profile ~4x/gradient -> full 6-param LCDM profile set ~10-20
+node-hours (~1-2 h wall on 4-8 nodes) vs ~2090 node-hours for a dense 6D grid
+(15/dim ~1.1e7 pts) -> ~180x cheaper. Forward-AD now beats finite differences ~2x;
+use it as the workhorse, FD as the no-AD fallback. NEXT: reparametrize h->100*theta*
+(degeneracy from the grid run), wire the batched gradient through call_batched (not
+vmap-of-single / not outer-jit), confirm ~4x at B~256, then BFGS over nuisances
+vmapped across the POI grid + forward-AD Hessian for Fisher errors.
+
+
 2026-06-09 — Real analysis: 6-param LCDM x plik-lite profile, VALIDATION run
 ----------------------------------------------------------------------------
 Session: perk-perf. Built the production profile harness (scan/profile_config.py,
