@@ -9,6 +9,40 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-09 — Optimizer-profile tooling (Option B) + a live-run compile blocker
+------------------------------------------------------------------------------
+Session: perk-perf. Tooled up the optimizer-based frequentist profile:
+scan/profile_opt.py -- L-BFGS-B minimization over nuisances {h, omega_b,
+omega_cdm} per POI value (POI=n_s), A_s/A_planck amplitude profiled ANALYTICALLY
+(pl.profile_amplitude), tau fixed, sigma-scaled coords, warm-started across POI,
+per-POI npz CHECKPOINT, matplotlib output. Two gradient backends: GRAD=fd
+(central differences via ONE call_batched stencil per eval, default) and
+GRAD=fwdad (forward-mode jacfwd, single-cosmology -- the validated production
+gradient).
+
+LIVE TEST at l_max=2508 did NOT complete -- blocked by XLA COMPILE of the small
+per-iteration batch, not by the methodology:
+  * BUG (mine, fixed): outer jax.jit of the cross-device chi2 (GPU->CPU HyRex->GPU)
+    -> pathological >28-min compile, GPU 0%. Fix: call jacfwd(obj)/call_batched
+    WITHOUT an outer jax.jit (matches the OPTION_B pitfall note).
+  * shard=False, B=7 -> XLA crash "INTERNAL: Failed to materialize symbols
+    (add_divide_fusion)" -- a CPU-backend codegen failure in the vmapped HyRex at
+    this odd small batch.
+  * shard=True, B=7 -> compiles cleanly (proven path) but the FRESH compile took
+    >9 min and didn't fit the remaining interactive walltime.
+ROOT CAUSE: the bench's 0.66 s/param used a CACHED B=256 HLO; the optimizer's
+small B=7 stencil is a NEW shape that pays a heavy (~5-15 min) compile EACH run,
+and I kept changing the cache key (shard/B) so never reused it.
+
+FIX / NEXT (needs a fresh node, modest): warm the persistent compile cache ONCE
+for the chosen (small B, shard=True, l_max=2508) -- then every optimizer run
+reuses it and the per-eval cost drops to seconds; OR size the per-iteration batch
+to an already-cached shape; AND file/avoid the shard=False B=7 codegen bug. The
+SCIENCE is unblocked: chi2 validated (607.6), forward-AD validated (memory-flat,
+~4x), Option B costed (~10-20 node-hr). Only the live demo run is pending the
+cache-warm.
+
+
 2026-06-09 — Forward-mode AD validation + Option B (optimizer profile) feasibility
 ----------------------------------------------------------------------------------
 Session: perk-perf. Tested whether the optimizer-based frequentist profile
