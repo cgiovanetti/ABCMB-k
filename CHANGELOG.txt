@@ -9,6 +9,37 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-09 — Real analysis: 6-param LCDM x plik-lite profile, VALIDATION run
+----------------------------------------------------------------------------
+Session: perk-perf. Built the production profile harness (scan/profile_config.py,
+scan_profile.py, collect_profile.py, profile.slurm) and ran a 2-node debug-qos
+VALIDATION (job 54219723): 3375-pt coarse 6D grid {h,omega_b,omega_cdm,n_s,A_s,
+tau_reion}, A_planck profiled analytically (with prior), tau lowE prior
+0.0544+/-0.0073, 1 massive nu. Result + plot in scan/results/validation_lcdm_3375pt.*.
+
+HARNESS VALIDATED: ran end-to-end across 2 nodes in 23 min at 0.66 s/param (==
+the feasibility estimate), all 3375 pts present, resumable, slices->profiles->
+intervals->plot. chi2(Planck center)~607.5 matches the single-point validate_plik
+(607.6). A_s and tau 1-D profiles are textbook single parabolas centered correctly
+(tau pinned by its prior) -> the strided-slice gidx/reshape is correct (a mapping
+bug would corrupt these too).
+
+KEY FINDING (not a bug): the h and omega_cdm 1-D profiles are BIMODAL/jagged
+(center at dchi2~8.5, +/-2sigma points at ~0) and omega_b rails on the low grid
+edge. Cause = the brute Cartesian grid aliasing the thin geometric (theta_*)
+degeneracy: h-omega_b-omega_cdm are anti-correlated along a valley far narrower
+than the 2-sigma grid spacing, and plik-lite's high-l-only min is displaced ~8 in
+chi2 from the full-Planck center along it. This is the curse the feasibility study
+flagged for brute grids at >=4-5 D.
+
+PRODUCTION FIX (next step): reparametrize h -> 100*theta_* (the well-constrained,
+nearly-orthogonal CMB param; invert theta_*(h,omega_b,omega_cdm)->h per grid point
+via a cheap 1-D root-find on ABCMB's background) so the valley becomes axis-aligned
+and a modest grid resolves it; AND widen omega_b. Or use the differentiable-
+optimizer profile (feasibility study's scalable recommendation; gated on grad
+memory). QOS: used debug (NEVER premium -- 2x charge; noted in top-level CLAUDE.md).
+
+
 2026-06-08 — Frequentist feasibility study: ABCMB + Planck plik-lite
 --------------------------------------------------------------------
 Session: perk-perf. Goal (user): is the batched runtime good enough for a
