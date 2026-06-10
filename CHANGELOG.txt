@@ -24,7 +24,17 @@ production chi2 path (call_batched(shard=True) -> plik-lite profile_A + tau prio
   (B) same cosmology at B=7/13/33 (different chunk boundaries): offsets 1.2e-10 /
       6.7e-11 (machine precision) => batch size / chunking introduces NO bias, so a
       POI's chi2 is independent of which chunk it lands in -> no spurious profile
-      steps. (C) batched-vs-single-path comparison: confirmatory.
+      steps.
+  (C) batched(k-chunked) vs single-call-path, the genuine approximation. For the
+      SAME cosmology they differ by D = chi2_batched - chi2_single ~ +0.1, and D
+      VARIES with n_s: D = +0.080 / +0.107 / +0.136 at n_s = 0.9565 / 0.9649 /
+      0.9733 -- monotonic, nearly LINEAR (slope ~3.3, tiny curvature). A linear D
+      shifts the inferred profile MINIMUM by ~ -L*sigma^2/2 ~ 0.7% of sigma and the
+      WIDTH by <0.05%. So the batched k-chunking approximation costs <~0.7% of
+      sigma on the n_s central value, negligible on the interval. Measured along
+      n_s only; the peak-location params (h, omega_cdm) could differ. The lever to
+      shrink it (and verify tolerance-convergence) is TIGHTENING the PE solver
+      rtol (allowed -- only loosening was ruled out).
 CONSEQUENCE: the Newton FD gradients/Hessians difference DETERMINISTIC values (only
 truncation error ~O(delta^2), no noise amplification), and the profile interval is
 limited by GRID interpolation alone -- not noise. So tightening solver rtol for
