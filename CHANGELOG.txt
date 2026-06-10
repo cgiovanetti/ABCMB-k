@@ -9,6 +9,52 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-10 (b) — Production LCDM frequentist profile: driver built + 2-node submit
+----------------------------------------------------------------------------------
+Session: perk-perf. Built the production profile driver and SUBMITTED the full
+6-parameter LCDM frequentist profile vs Planck plik-lite (job 54265369, regular
+queue, 2 nodes x 4 GPU, 4h).
+
+scan/profile_prod.py -- POI-agnostic production driver. Profiles each LCDM param
+(h, omega_b, omega_cdm, n_s, ln10As, tau_reion) in turn: a grid of POI values,
+each MINIMIZED over the OTHER 5 params with damped full-Hessian Newton in
+sigma-scaled coords. Uniform 5-D / 51-pt central stencil for EVERY POI => one
+shared compiled HLO. Each Newton iter = ONE (POI-chunked) call_batched(shard=True)
+over the whole POI grid's stencils, auto-partitioned across the node's GPUs.
+  * A_s is a REAL Newton dimension (ln10As) -- exact w.r.t. lensing nonlinearity
+    (the user's "A_s as a real dimension"; the analytic-amplitude shortcut is only
+    feasibility-grade).
+  * A_planck profiled ANALYTICALLY each eval with its N(1,0.0025) prior
+    (pl.profile_A; pure multiplicative cal => exact).
+  * tau_reion is a free nuisance carrying its N(0.0544,0.0073) prior (added at
+    each point, whether tau is POI or nuisance). plik-lite can't break A_s-tau, so
+    the prior makes that subspace well-posed; the tau profile is the prior parabola.
+  * Memory-aware POI-chunking to a fixed batch (BCAP = n_dev*BLOCAL); RESUMABLE
+    (skip POIs whose results/profile_prod_<poi>.npz has done=True); multi-node via
+    SLURM_PROCID strided POI ownership (one worker/node, shards over its 4 GPUs).
+
+scan/profile_prod.slurm -- ONE 2-node job (NOT an array), gpu_regular qos (NEVER
+premium), 4h, srun one worker/node owning POIS[procid::2] (6 POIs split 3/3).
+
+SHAKEOUT (1 GPU; n_s, 3pts, 2 iters) validated the 5-nuisance machinery:
+chi2(center)=607.7, converges 607->583.0 in ONE Newton step (matches the
+3-nuisance profile_batched 583.1), RSS FLAT 5.2 GB (leak fix holds),
+DONE/interval/plot/checkpoint path clean. The coarse-grid 1sigma ~+/-0.002 and
+nan 2sigma are 3-point/+-2sigma sampling artifacts (linear interp of a parabola;
+grid doesn't reach Delta-chi2=4); production NPTS=13/+-3sigma resolves <=9.
+
+PERF/ENV notes learned: (1) with A_s & tau now per-cosmology ARRAY inputs (not
+folded constants as in profile_batched), the call_batched compile is ~230s at
+B=51 (vs ~133s) -- XLA can't constant-fold them. One-time per worker, negligible.
+(2) These interactive/regular nodes are 40 GB A100s (~32 GB usable), NOT 80 GB --
+B sized with BLOCAL=95 (~20 GB/device); the call_batched memory warning is
+~1.6x conservative (hardcodes Nlna=500 vs default 300) so it fires but fits.
+
+Config: PROD_NPTS=13, PROD_NSIG=3, PROD_ITERS=5, all 6 POIs. Outputs land in
+scan/results/profile_prod_<poi>.{npz,png} (Delta-chi2 profile + 1/2/3-sigma
+intervals). Resize via env: PROD_POIS/NPTS/NSIG/ITERS/BLOCAL before sbatch.
+
+
 2026-06-10 — Frequentist profile WORKS end-to-end + a host-memory leak fix
 --------------------------------------------------------------------------
 Session: perk-perf. The Option-B optimizer profile now runs to completion and
