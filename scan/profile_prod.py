@@ -190,18 +190,44 @@ def newton_step(g, H, nd):
 
 
 def interval(x, y, level):
-    y = np.asarray(y, float); x = np.asarray(x, float); m = np.isfinite(y)
-    if m.sum() < 3:
+    """Delta-chi2=level crossings via shape-preserving (PCHIP) interpolation of
+    the profile, then dense-grid root finding. The chi2 is DETERMINISTIC and
+    smooth (in-batch noise floor MEASURED = 0, scan/noise_floor.py), so PCHIP
+    crossings are sub-grid accurate -- far better than the old linear interp of
+    a 0.5-sigma grid. Returns (lo, min_x, hi)."""
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    if m.sum() < 4:
         return np.nan, np.nan, np.nan
-    x, y = x[m], y[m]; i = int(np.argmin(y)); t = y[i] + level
-    def cross(up):
-        rng = range(i, len(x) - 1) if up else range(i, 0, -1)
-        for q in rng:
-            r = q + 1 if up else q - 1
-            if (y[q] - t) * (y[r] - t) <= 0:
-                fr = (t - y[q]) / (y[r] - y[q] + 1e-30); return x[q] + fr * (x[r] - x[q])
+    x, y = x[m], y[m]; o = np.argsort(x); x, y = x[o], y[o]
+    try:
+        from scipy.interpolate import PchipInterpolator
+        p = PchipInterpolator(x, y - y.min())
+        xs = np.linspace(x[0], x[-1], 40001); ys = p(xs)
+    except Exception:                                   # fallback: dense-linear
+        xs = np.linspace(x[0], x[-1], 40001); ys = np.interp(xs, x, y - y.min())
+    i = int(np.argmin(ys)); x0 = xs[i]; t = ys[i] + level
+    def cross(side):
+        seg, vs = (xs[:i + 1][::-1], ys[:i + 1][::-1]) if side < 0 else (xs[i:], ys[i:])
+        k = np.where(vs >= t)[0]
+        if len(k) == 0 or k[0] == 0:
+            return np.nan
+        j = k[0]; a, b, fa, fb = seg[j - 1], seg[j], vs[j - 1], vs[j]
+        return a + (t - fa) * (b - a) / (fb - fa + 1e-30)
+    return cross(-1), x0, cross(+1)
+
+
+def sigma_parabola(x, y):
+    """Symmetric Gaussian sigma from a parabola fit to the points with
+    Delta-chi2 <= 4 of the minimum (curvature -> sigma = 1/sqrt(0.5*d2chi2/dx2))."""
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    x, y = x[m], y[m]
+    if len(x) < 3:
         return np.nan
-    return cross(False), x[i], cross(True)
+    d = y - y.min(); sel = d <= 4.0
+    if sel.sum() < 3:
+        sel = np.argsort(d)[:max(3, len(x) // 2)]
+    a = np.polyfit(x[sel], y[sel], 2)[0]                 # chi2 ~ a x^2 + ...
+    return np.nan if a <= 0 else 1.0 / np.sqrt(2.0 * a)
 
 
 def profile_one(poi, outdir):
@@ -240,13 +266,16 @@ def profile_one(poi, outdir):
     best = np.minimum(best, c2[:, 0])
     lo1, mid, hi1 = interval(poi_grid, best, 1.0)
     lo2, _, hi2 = interval(poi_grid, best, 4.0)
+    sig_p = sigma_parabola(poi_grid, best)               # Gaussian cross-check
     np.savez(npz, poi=poi, poi_grid=poi_grid, chi2=best, xstar=bestx,
              nuis=np.array(nuis), iter=ITERS, done=True,
-             sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]))
+             sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
+             sigma_parab=sig_p)
     j = int(np.nanargmin(best))
     print(f"[{poi}] DONE ({time.perf_counter()-t0:.0f}s): min chi2={best[j]:.2f} "
           f"at {poi}={poi_grid[j]:.5f}; 1sigma=[{lo1:.5f},{hi1:.5f}] "
-          f"(+/-{(hi1-lo1)/2:.5f}); 2sigma=[{lo2:.5f},{hi2:.5f}] -> {npz}", flush=True)
+          f"(PCHIP +/-{(hi1-lo1)/2:.5f}; parab sigma={sig_p:.5f}); "
+          f"2sigma=[{lo2:.5f},{hi2:.5f}] -> {npz}", flush=True)
     _plot(poi, poi_grid, best, npz)
 
 

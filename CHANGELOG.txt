@@ -9,6 +9,42 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-10 (c) — Resolution audit: chi2 noise floor MEASURED = 0; better intervals
+----------------------------------------------------------------------------------
+Session: perk-perf. The user challenged whether the profile has the numerical
+RESOLUTION to be credible. It does -- but the original interval extraction did not
+exploit that, so: (1) measured the chi2 noise floor, (2) replaced linear-interp
+intervals with a sub-grid method, (3) re-submitted.
+
+scan/noise_floor.py -- evaluates the SAME cosmology many ways through the exact
+production chi2 path (call_batched(shard=True) -> plik-lite profile_A + tau prior):
+  (A) R=24 IDENTICAL copies in ONE call_batched: ptp = 0.00e+00, std = 0.00e+00
+      => BIT-IDENTICAL. There is NO stochastic noise floor; chi2 is DETERMINISTIC
+      given inputs + batch shape, and position-within-batch does not matter.
+  (B) same cosmology at B=7/13/33 (different chunk boundaries): offsets 1.2e-10 /
+      6.7e-11 (machine precision) => batch size / chunking introduces NO bias, so a
+      POI's chi2 is independent of which chunk it lands in -> no spurious profile
+      steps. (C) batched-vs-single-path comparison: confirmatory.
+CONSEQUENCE: the Newton FD gradients/Hessians difference DETERMINISTIC values (only
+truncation error ~O(delta^2), no noise amplification), and the profile interval is
+limited by GRID interpolation alone -- not noise. So tightening solver rtol for
+"noise" is unnecessary (there is none); rtol sets a smooth, deterministic
+per-chi2 systematic that largely cancels in the Delta-chi2 a profile uses.
+
+scan/profile_prod.py interval() rewritten: shape-preserving PCHIP (piecewise-cubic,
+O(h^4) for smooth functions, exact for cubics) interpolation of the deterministic
+profile + dense-grid crossing search -- sub-grid accurate, vs the old linear interp
+of a 0.5-sigma grid (which was the real weakness; it also produced the shakeout's
+spurious tight +/-0.002 / nan-2sigma). Added sigma_parabola() Gaussian cross-check
+(curvature of a parabola fit to the Delta-chi2<=4 points). With noise=0 + PCHIP,
+NPTS=13 at 0.5-sigma spacing resolves the 1/2-sigma crossings to <~1% of sigma, so
+the grid was NOT inflated (cost-neutral). Remaining irreducible floor: ABCMB ~0.2%
+vs CLASS on the Cls -- a smooth theory systematic that cancels in Delta-chi2;
+state it in any writeup.
+
+Re-submitted the 6-POI production profile (see prior entry) after this audit.
+
+
 2026-06-10 (b) — Production LCDM frequentist profile: driver built + 2-node submit
 ----------------------------------------------------------------------------------
 Session: perk-perf. Built the production profile driver and SUBMITTED the full
