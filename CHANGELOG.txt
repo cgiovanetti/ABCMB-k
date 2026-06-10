@@ -9,6 +9,74 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-10 — Frequentist profile WORKS end-to-end + a host-memory leak fix
+--------------------------------------------------------------------------
+Session: perk-perf. The Option-B optimizer profile now runs to completion and
+recovers Planck. HEADLINE (real analysis: Planck plik-lite, l_max=2508, lensed,
+1 massive nu, single GPU):
+
+    profiled n_s = 0.9650   1sigma [0.9588, 0.9673]   (+/- 0.0042)
+    Planck18     n_s = 0.9649 +/- 0.0042       <- EXACT agreement: value AND error
+    min chi2 = 583.10 at n_s=0.9650; whole 5-point profile in 17.5 min.
+
+CORRECTION to the prior entry's diagnosis. The profile_opt.py blocker was NOT the
+compile cache. It was a ~0.12 GB/CALL HOST-MEMORY LEAK. The HyRex recombination
+CPU stage was wrapped inline as eqx.filter_jit(jax.vmap(self.RecModel),
+backend='cpu') at EACH call site (_build_bgs_batched, run_cosmology_abbr,
+_build_one_bg). XLA dedups the compiled executable -- so calls did NOT recompile
+(they stayed fast) -- but constructing a fresh jit wrapper every call accumulated
+host-side JAX cache metadata. Over ~26 L-BFGS-B evals this bloated+fragmented host
+RAM until an LLVM CPU-backend section allocation failed -> "Unable to allocate
+section memory" crash at ~minute 27 with ZERO POI done. The "LLVM compile" framing
+was a red herring (it's just where the failing allocation surfaced).
+
+Diagnosis: scan/diag_recompile.py loops call_batched(B=7) on DIFF then IDENTICAL
+inputs and logs wall + VmRSS. Pre-fix: identical-input REPEAT calls ran fast (no
+recompile) yet still grew RSS +0.12/call -> wrapper-IDENTITY leak, not values, not
+recompile.
+
+FIX (main.py, behaviour-preserving): module-level _recmodel_cpu(recmodel, batched)
+cache keyed by id(RecModel) -> ONE stable CPU-backend wrapper, reused across calls.
+Closes over only RecModel (not the full Model) so no GPU arrays get dragged onto
+CPU. Same RecModel, same backend -> NO theory change (chi2(center)=607.44
+reproduces the standalone validation). Post-fix diag_recompile: RSS FLAT at 4.41 GB
+across all calls (+0.00, leak gone) AND wall HALVED 58.9 -> 28.9 s/call (the inline
+rebuild was also re-dispatching the CPU vmap each call). So: leak fixed + ~2x
+faster recombination stage. (The two BBN-path inline CPU filter_jits at the bottom
+of add_derived_parameters are only hit for bbn_type != "" and are left for the
+Phase F.2 LINX-under-vmap work.)
+
+NEW DRIVER scan/profile_batched.py -- the recommended production shape (the
+"vmap the optimizer across the POI grid" step from OPTION_B_feasibility.md),
+replacing the serial-scipy scan/profile_opt.py:
+  * All POI optimized IN LOCKSTEP -- each iteration is ONE call_batched over every
+    POI's finite-difference stencil at once (B = NS_N * 19), so the GPU sees a
+    healthy batch and the ~55s fixed per-call overhead amortizes (vs scipy's B=7).
+  * Damped full-Hessian Newton over nuisances {h, omega_b, omega_cdm} in
+    sigma-scaled coords. A 19-pt central stencil per POI yields the gradient AND
+    the full symmetric 3x3 Hessian, so Newton walks the h-omega_cdm (theta*)
+    degeneracy DIRECTLY (affine-invariant -> NO 100*theta_star reparametrization
+    needed). This is exactly the degeneracy the brute grid scan (commit 14b9309)
+    aliased; here the profiled nuisances trace it cleanly: as n_s 0.955->0.975,
+    h 0.667->0.689 and omega_cdm 0.1224->0.1176 (anti-correlated).
+  * A_s/A_planck amplitude profiled ANALYTICALLY (pl.profile_amplitude); tau fixed
+    (prior-profiled tau is a cheap add-on). Converges in 1-2 Newton steps
+    (chi2 607->583 by iter 1); RSS flat 4.97->5.14 GB confirming the leak fix at
+    B=95 too. Per-iteration npz CHECKPOINT + matplotlib output.
+
+GPU MEMORY REALITY CHECK: this node is a 40 GB A100 (memory_stats bytes_limit
+~32 GB), NOT the 80 GB assumed in the round-3/4 notes. B=95 (5 POI x 19) fits with
+margin (actual peak ~22 GB at the default n_lna=300; the call_batched warning
+hardcodes Nlna=500 so over-estimates ~1.6x). For finer/wider POI grids use
+call_batched(shard=True) across the 4 GPUs of a node -- the production path.
+
+Aside: the persistent JAX compile cache does NOT pick up the sharded executables
+(+0 disk entries), a known limitation -- harmless, the in-process JIT cache means
+each process pays the one-time ~104s (B=7) / ~160s (B=95) compile only.
+Tools: scan/profile_batched.py, scan/diag_recompile.py, scan/warm_compile.py
+(one-shot compile timer that revealed COLD 162s vs WARM 58s-exec at B=7).
+
+
 2026-06-09 — Optimizer-profile tooling (Option B) + a live-run compile blocker
 ------------------------------------------------------------------------------
 Session: perk-perf. Tooled up the optimizer-based frequentist profile:

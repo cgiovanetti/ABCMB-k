@@ -21,3 +21,4 @@ bench/*.log
 logs/
 scan/out_profile/
 scan/out/
+scan/*.log

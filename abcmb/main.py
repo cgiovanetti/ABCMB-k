@@ -27,6 +27,33 @@ from .linx import thermo as linxThermo
 config.update("jax_enable_x64", True)
 
 
+# --- cached CPU-backend HyRex wrappers (built ONCE per RecModel) ---------------
+# The recombination stage runs on the CPU backend. It used to be wrapped inline
+# as ``eqx.filter_jit(jax.vmap(self.RecModel), backend='cpu')`` at each call site
+# (in ``_build_bgs_batched`` and ``run_cosmology_abbr``). The compiled executable
+# is deduped by XLA -- so individual calls stayed fast -- but creating a fresh
+# jit wrapper on every call accumulated host-side JAX cache metadata
+# (~0.12 GB/call, MEASURED with scan/diag_recompile.py). Over a long optimizer
+# loop this bloated and fragmented host RAM until an LLVM CPU-backend section
+# allocation failed ("Unable to allocate section memory" -> OOM crash in
+# scan/profile_opt.py after ~26 evaluations). Caching the wrapper by RecModel
+# identity keeps a single stable executable + cache entry and removes the leak.
+# It closes over ONLY RecModel (not the full ``Model``) so no unrelated GPU
+# arrays are dragged onto the CPU backend.
+_RECMODEL_CPU_CACHE = {}
+
+
+def _recmodel_cpu(recmodel, batched):
+    """Return a (cached) CPU-backend filter_jit of RecModel, vmapped iff batched."""
+    cache_key = (id(recmodel), bool(batched))
+    fn = _RECMODEL_CPU_CACHE.get(cache_key)
+    if fn is None:
+        target = jax.vmap(recmodel) if batched else recmodel
+        fn = eqx.filter_jit(target, backend='cpu')
+        _RECMODEL_CPU_CACHE[cache_key] = fn
+    return fn
+
+
 class Model(eqx.Module):
     """
     Model configuration and computation manager.
@@ -328,7 +355,7 @@ class Model(eqx.Module):
         cpu_dev = jax.devices('cpu')[0]
         recomb_inputs_cpu = jax.device_put(pre_BG.recomb_inputs, cpu_dev)
         params_cpu = jax.device_put(full_params, cpu_dev)
-        recomb_output = eqx.filter_jit(self.RecModel, backend='cpu')(
+        recomb_output = _recmodel_cpu(self.RecModel, False)(
             (recomb_inputs_cpu, params_cpu))
         try:
             recomb_output = jax.device_put(
@@ -396,7 +423,7 @@ class Model(eqx.Module):
         cpu_dev = jax.devices('cpu')[0]
         recomb_inputs_cpu = jax.device_put(pre_BG_batch.recomb_inputs, cpu_dev)
         params_cpu = jax.device_put(params_batch, cpu_dev)
-        recomb_batch = eqx.filter_jit(jax.vmap(self.RecModel), backend='cpu')(
+        recomb_batch = _recmodel_cpu(self.RecModel, True)(
             (recomb_inputs_cpu, params_cpu))
         recomb_batch = jax.tree_util.tree_map(_to_float, recomb_batch)
         if shardfn is not None:
@@ -444,7 +471,7 @@ class Model(eqx.Module):
         recomb_inputs_cpu = jax.device_put(pre_BG.recomb_inputs, cpu_dev)
         params_cpu = jax.device_put(params, cpu_dev)
 
-        recomb_output = eqx.filter_jit(self.RecModel, backend='cpu')((recomb_inputs_cpu, params_cpu))
+        recomb_output = _recmodel_cpu(self.RecModel, False)((recomb_inputs_cpu, params_cpu))
 
         try:
             recomb_output = jax.device_put(recomb_output, jax.devices('gpu')[0])
