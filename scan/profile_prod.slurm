@@ -9,6 +9,8 @@
 #SBATCH --time=06:00:00
 #SBATCH --job-name=abcmb_profile
 #SBATCH --output=logs/abcmb_profile_%j.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=cgiovanetti@lbl.gov
 #
 # Production LCDM frequentist profile vs Planck plik-lite. ONE multi-node job
 # (NOT an array): each node runs one independent profile_prod.py worker that owns

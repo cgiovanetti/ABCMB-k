@@ -9,6 +9,8 @@
 #SBATCH --time=04:00:00
 #SBATCH --job-name=abcmb_scan
 #SBATCH --output=logs/abcmb_scan_%j.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=cgiovanetti@lbl.gov
 #
 # ONE multi-node job (NOT a job array). Each node runs one independent worker
 # (scan_slice.py) that owns grid[procid::nprocs] and shards its slice over the
