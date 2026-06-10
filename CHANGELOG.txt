@@ -9,6 +9,38 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-10 (d) — Tolerance convergence: rtol_large_k_PE 1e-4->1e-5; NOT a bug
+-----------------------------------------------------------------------------
+Session: perk-perf. User wants state-of-the-art precision, no corners (target
+~0.1% of sigma). Ran scan/tol_converge.py to decide whether the batched-vs-single
+chi2 discrepancy D (~0.1, varying ~0.7-1.4% of sigma at the 1e-4 default) is a BUG
+or finite solver tolerance, and to pick the production rtol. Sweep of
+rtol_large_k_PE (atol x1e-2), fixed Planck-centre nuisances, n_s line +/-2sigma:
+
+  rtol   |D|(centre)   D-variation(+/-2s)   bias(sigma)   sigma_b(fixed-nuis)
+  1e-4   0.107         0.056                ~0.7-1.4%     0.0020 87
+  1e-5   0.011         0.0008               ~0.02%        0.0020 88
+  1e-6   0.0003        0.0003               ~0.01%        0.0020 88
+
+VERDICT: |D| shrinks ~10x/decade => the discrepancy is the finite Kvaerno5/PID
+solver tolerance (global error ~ rtol), NOT a chunking bug (no plateau). The
+profile is CONVERGED at 1e-5: sigma identical at 1e-5 & 1e-6 (0.0020 88), and the
+profile-biasing piece (D's VARIATION) collapses 70x by 1e-5 to ~0.02% of sigma --
+below the 0.1% target and far below the irreducible ABCMB-vs-CLASS ~0.2%-Cl theory
+floor. 1e-6 buys nothing meaningful.
+
+GOTCHA: tightening rtol made the adaptive solve exceed max_steps_PE=2048
+(_EquinoxRuntimeError) -- EXPECTED (tighter tol = more steps), not a bug. Raised
+max_steps_PE -> 16384 (env knob; costs RUNTIME not memory -- ForwardMode adjoint is
+memory-flat, SaveAt(ts=) fixes output size, and adaptive stepping stops early at
+1e-4 so a big cap doesn't slow the loose case). Tighter rtol ~2-4x more solve time
+(B=5 wall 162->191->241s incl compile); size the production nodes/walltime for it.
+
+DECISION: production at rtol_large_k_PE=1e-5, atol_large_k_PE=1e-7,
+max_steps_PE=16384 (profile_prod.py/.slurm now take PROD_RTOL_LARGE / PROD_MAXSTEPS).
+Tools: scan/tol_converge.py + scan/tol_converge.slurm (one rtol per debug job).
+
+
 2026-06-10 (c) — Resolution audit: chi2 noise floor MEASURED = 0; better intervals
 ----------------------------------------------------------------------------------
 Session: perk-perf. The user challenged whether the profile has the numerical

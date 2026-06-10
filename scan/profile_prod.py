@@ -55,6 +55,12 @@ DELTA  = float(os.environ.get("PROD_DELTA", 0.4))     # sigma-scaled FD step
 BLOCAL = int(os.environ.get("PROD_BLOCAL", 95))       # target cosmologies/device
 BCAP_ENV = int(os.environ.get("PROD_BCAP", 0))        # 0 => auto (n_dev*BLOCAL)
 RESUME = os.environ.get("PROD_RESUME", "1") != "0"
+# PE solver tolerance (large-k modes set the high-ell Cls). Tighten below the
+# 1e-4 default for tolerance-converged / theory-floor-limited precision
+# (scan/tol_converge.py). atol_large scales x1e-2 with rtol_large by default.
+RTOL_LG = float(os.environ.get("PROD_RTOL_LARGE", 1e-4))
+ATOL_LG = float(os.environ.get("PROD_ATOL_LARGE", RTOL_LG * 1e-2))
+MAXSTEPS = int(os.environ.get("PROD_MAXSTEPS", 16384))  # tighter rtol needs more steps
 XBOX, STEP_CAP, LAM, BIG = 4.0, 1.5, 1e-3, 1e6
 
 # LCDM params: name -> (center, sigma, gauss_prior or None). ln10As: A_s=exp/1e10.
@@ -80,7 +86,9 @@ NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 
 pl = PlikLite()
 model = Model(user_species=None, output_Cl=True, l_max=LMAX, lensing=True,
-              output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17)
+              output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+              rtol_large_k_PE=RTOL_LG, atol_large_k_PE=ATOL_LG,
+              rtol_small_k_PE=min(1e-5, RTOL_LG), max_steps_PE=MAXSTEPS)
 try:
     NDEV = len(jax.devices('gpu'))
 except Exception:
@@ -301,7 +309,7 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     mine = POIS[RANK::NPROC]
     print(f"rank {RANK}/{NPROC} devices={jax.devices()} BCAP={BCAP} "
-          f"POIs={POIS} -> mine={mine}", flush=True)
+          f"rtol_large={RTOL_LG:.0e} POIs={POIS} -> mine={mine}", flush=True)
     for poi in mine:
         profile_one(poi, outdir)
     print(f"rank {RANK}: all POIs done", flush=True)

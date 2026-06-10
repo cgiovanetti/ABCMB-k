@@ -40,6 +40,9 @@ export PROD_ITERS=${PROD_ITERS:-5}
 export PROD_BLOCAL=${PROD_BLOCAL:-95}
 export PROD_POIS=${PROD_POIS:-h,omega_b,omega_cdm,n_s,ln10As,tau_reion}
 export PROD_RESUME=${PROD_RESUME:-1}
+# PE solver tolerance for the high-ell modes; tighten for tolerance-converged
+# precision (set by scan/tol_converge.py). Default keeps the ABCMB 1e-4.
+export PROD_RTOL_LARGE=${PROD_RTOL_LARGE:-1e-4}
 
 # One task per node; each owns all 4 GPUs and shards its POIs over them.
 # Do NOT pin CUDA_VISIBLE_DEVICES per local rank -- that disables B-sharding.
