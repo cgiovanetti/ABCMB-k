@@ -124,3 +124,19 @@ P=5 tangents add ~sublinear, vs 85 s/point single).
 De-risk risk #1 in isolation: a tiny script that `jax.jvp`s `full_evolution_batched` (staged)
 at small l_max + small B + P=2 tangents, checks the tangent matches single-path `jacfwd`, and
 times the compile. If that's clean and not a monolith, the rest is mechanical assembly.
+
+## RESULT — risk #1 CLEARED (2026-06-11, scan/derisk_batched_ad.py)
+`jax.jvp` through `full_evolution_batched` (l_max=128, B=2, n_k=320, the per-k batched
+perturbation solver):
+  * COMPILE RATIO jvp/primal = **1.55x** (111s vs 72s) -- STAGED, not the ~20 min monolith.
+    This is the make-or-break number and it passes: forward-mode through the batched per-k
+    stage does NOT trigger the cross-device-monolith pathology.
+  * CORRECTNESS: worst MEDIAN rel(jvp, central-FD of the stage) = **5.0e-4** over the
+    (B, n_lna=300, n_k=320) per-mode trajectory leaves (max-rel ~1 only at source-function
+    zero-crossings where FD blows up -- median is the metric). The tangent is CORRECT.
+  * Memory 0.60 GB (2x primal -- forward-flat); tangent finite.
+=> The gradient CAN ride the per-k pipeline. The staged forward-mode design is validated on
+the riskiest stage. NEXT: (risk #2) the HyRex stage under jvp+vmap (lower risk -- single-path
+jacfwd through HyRex already worked in scan/derisk_ad.py); then assemble
+`Model.call_batched_grad` (build_bgs push + perturbation push + spectrum push + likelihood
+tangent) and validate the END-TO-END gradient against single-path jacfwd at rtol=1e-5.
