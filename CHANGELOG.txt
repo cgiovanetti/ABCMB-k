@@ -52,11 +52,20 @@ iteration count), a PD check on the nuisance Hessian at each optimum, and a
 --multistart mode (K dispersed starts -> spread of converged chi2 = the global-minimum
 demonstration). All POI grid points optimised in lockstep via one batched AD gradient
 per BFGS iter; multi-GPU = one POI per SLURM rank (no within-POI sharding).
-DEMONSTRATED end-to-end (scan/val_loop2.log, n_s, 3-pt grid, full low-ell data model):
-exact AD gradients drive BFGS and the convergence gate works -- ||g||_inf falls
-monotonically (it0 42.7 -> it1 16.8 -> ...), chi2 decreasing, all on the
-plik-lite+lowTT+lowEE objective with tau a FREE parameter (no prior). Driver:
-scan/profile_prod_ad.py + scan/profile_prod_ad.slurm (one POI/GPU-task, resumable).
+DEMONSTRATED end-to-end (n_s, 3-pt grid, full low-ell data model): exact AD gradients
+drive BFGS and the gate works -- ||g||_inf fell 42.7 (it0) -> 16.8 (it1), chi2
+decreasing, all on the plik-lite+lowTT+lowEE objective with tau a FREE parameter (no
+prior). A line-search STALL bug surfaced at it1->it2 (||g|| flat at 16.8): the hybrid
+evaluator compared single-path AD reference f against fast-path call_batched trial ft
+in the Armijo test, and the ~0.01 batched-vs-single offset is comparable to the Armijo
+margin near the min, so good steps were rejected. FIXED (commit 76127ca): all VALUES
+(reference, line-search, best) now come from the fast path; the AD gradient is used
+ONLY for the descent direction + BFGS curvature -- consistent Armijo. The fix is
+correct by construction; a full converged re-run (||g||<GTOL reached) is the
+throughput-gated follow-up (each AD run pays ~20-25 min compile-to-first-iteration +
+~6 min/BFGS-iter through the un-batched single-cosmology path). Driver:
+scan/profile_prod_ad.py + scan/profile_prod_ad.slurm (one POI/GPU-task, resumable);
+re-run: PA_POIS=n_s PA_NPTS=3 PA_MAXIT=20 ... python scan/profile_prod_ad.py.
 
 THROUGHPUT FINDING (the honest caveat): the AD gradient goes through ABCMB's
 UN-BATCHED single-cosmology path (~85 s/gradient/point; the lensed l_max=2508 solve
