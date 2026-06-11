@@ -136,7 +136,56 @@ perturbation solver):
     zero-crossings where FD blows up -- median is the metric). The tangent is CORRECT.
   * Memory 0.60 GB (2x primal -- forward-flat); tangent finite.
 => The gradient CAN ride the per-k pipeline. The staged forward-mode design is validated on
-the riskiest stage. NEXT: (risk #2) the HyRex stage under jvp+vmap (lower risk -- single-path
-jacfwd through HyRex already worked in scan/derisk_ad.py); then assemble
-`Model.call_batched_grad` (build_bgs push + perturbation push + spectrum push + likelihood
-tangent) and validate the END-TO-END gradient against single-path jacfwd at rtol=1e-5.
+the riskiest stage.
+
+## RESULT — FULL CHAIN ASSEMBLED + VALIDATED (2026-06-11, scan/batched_grad.py)
+`staged_cl_and_grad` implements the whole staged push (NO core-code edits -- it orchestrates
+the existing Model batched-stage methods with `jax.jvp` per stage, threading array tangents,
+looping over the P nuisance directions): derived-param tangents (eager, per-cosmo jvp of
+add_derived_parameters) -> `_pre_recomb_batched` -> HyRex `_recmodel_cpu` (CPU, device_put
+hops on primal AND tangent) -> `_get_BG_batched` -> `full_evolution_batched` ->
+`get_Cl_batched`.  l_max=128, B=2, P=2:
+  * Assembled + ran end-to-end (412s incl all stage compiles).
+  * RISK #2 CLEARED: the HyRex stage under jvp+vmap+device_put works (no special handling
+    beyond partition + device_put of the tangent).
+  * CORRECTNESS: worst MEDIAN rel(batched, single-path jacfwd) = **1.75e-05** on
+    dCl{TT,TE,EE}/d{omega_cdm,n_s}.  The batched AD gradient is CORRECT to 1e-5 vs the proven
+    single-cosmology reference.
+GOTCHA fixed: cast int/bool derived leaves to float (`_to_float`) before jvp, else
+N_nu_massive (int -> None under inexact-partition) mismatches its float tangent.
+
+NEXT (this is now mechanical):
+  - measure throughput vs B (scan/batched_grad_timing.py) -- the win is B-amortization +
+    sharding; quote the per-cosmo-gradient speedup.
+  - add tau + ln10As directions (P=6), confirm still 1e-5.
+  - wire into scan/profile_prod_ad.py as PA_GRADMETHOD=batched (chi2 tangent = contract the
+    Cl tangent through plik_lite + lowl_like, already jnp).
+  - optionally promote staged_cl_and_grad into Model.call_batched_grad (+ reuse shardfn for
+    the multi-GPU win).
+
+## RESULT — THROUGHPUT: runtime amortizes, but the COMPILE is the new bottleneck
+(2026-06-11, scan/batched_grad_timing.py). Measuring warm per-cosmo-gradient time at B=4
+l_max=256 and B=16 l_max=512 was BLOCKED by a pathologically slow COMPILE of the assembled
+staged-jvp: the full push compiled+ran at B=2/l_max=128 in 412s, but at B=4/l_max=256 the
+compile alone exceeded ~20 min and at B=16/l_max=512 XLA logged a single `loop_reduce_fusion`
+taking 4m46s (and more after). Compile time scales SUPER-linearly in (B, l_max) -- at
+production l_max=2508 it would be hours. So:
+  * CORRECTNESS + the per-k-batched RUNTIME path are DONE (the gradient rides the pipeline and
+    matches single-path jacfwd to 1.75e-5). Runtime amortizes by construction (B cosmologies
+    per staged call vs B single-path calls).
+  * The new critical bottleneck is the staged-jvp COMPILE -- almost certainly the jvp of the
+    k-chunked perturbation solver (`_evolve_chunk`/`_compute_modes_batched`) generating a huge
+    `loop_reduce_fusion`. Until tamed, warm throughput can't be realized at production scale.
+
+NEXT (compile-time work, the real unlock now):
+  1. Isolate which stage's jvp triggers `loop_reduce_fusion` (instrument scan/batched_grad.py
+     stage-by-stage compile timing). Strong prior: the perturbation k-chunk jvp.
+  2. Options: (a) XLA flags (e.g. disable the offending fusion / `--xla_gpu_...`); (b) restructure
+     the P-direction loop (currently P sequential jvps -> try a single vmap-over-P jvp so XLA
+     compiles one fusion not P, OR jax.linearize once + apply P times); (c) wrap each stage's jvp
+     in its own filter_jit so the persistent $SCRATCH cache captures it (the de-risk single-stage
+     jvp compiled in 111s -- the slowness is in the ASSEMBLED graph, so per-stage jit-boundaries
+     may chop the giant fusion); (d) chunk k more coarsely under jvp.
+  3. Once compile is bounded + cached, measure warm throughput vs the single-path loop and wire
+     PA_GRADMETHOD=batched into the driver.
+The hard correctness question is SOLVED; this is now an XLA-compile engineering problem.

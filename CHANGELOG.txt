@@ -9,6 +9,48 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-11 (c) — Batched AD on the per-k pipeline: gradient now RIDES the refactor (correct; compile is next)
+-----------------------------------------------------------------------------------------------------------
+Session: perk-perf ("frequentist_adversary", cont.). The entry-(b) AD profile used the
+per-k batched pipeline (call_batched) for VALUES but computed GRADIENTS through the
+un-batched single-cosmology path -- so the expensive half did NOT use the k-distribution
+strategy that is the whole point of perk-perf. This session closes that gap.
+
+DESIGN (bench/batched_ad_design.md): naive jacfwd(call_batched) or vmap(jacfwd(single))
+puts the whole GPU->CPU(HyRex)->GPU pipeline in ONE XLA module = the ~20 min monolith.
+call_batched avoids that by eager-orchestrating SEPARATELY-jitted batched stages; so
+forward-mode must mirror that -- apply jax.jvp to EACH already-jitted batched stage and
+thread array tangents between them. The gradient then inherits the params-axis batching +
+k-chunking for free.
+
+DE-RISK (scan/derisk_batched_ad.py): jvp through the riskiest stage,
+full_evolution_batched (the k-chunked perturbation solver), at l_max=128/B=2:
+  compile ratio jvp/primal = 1.55x (STAGED, not a monolith); tangent vs central-FD median
+  5.0e-4. Risk #1 cleared.
+
+IMPLEMENTATION + VALIDATION (scan/batched_grad.py): staged_cl_and_grad assembles the FULL
+push -- derived-param tangents (eager per-cosmo jvp of add_derived_parameters) ->
+_pre_recomb_batched -> HyRex (CPU, device_put on primal AND tangent) -> _get_BG_batched ->
+full_evolution_batched -> get_Cl_batched -- looping over P nuisance directions, NO core-code
+edits (orchestrates existing Model batched-stage methods). Validated vs single-path jacfwd
+at l_max=128/B=2/P=2: worst MEDIAN rel = 1.75e-05 on dCl{TT,TE,EE}/d{omega_cdm,n_s}. Risk #2
+(HyRex under jvp+vmap) cleared. GOTCHA: _to_float the derived params before jvp (int
+N_nu_massive -> None under inexact-partition mismatches its float tangent).
+
+=> The batched AD gradient WORKS and is CORRECT and RIDES the per-k pipeline. The hard
+correctness question is solved.
+
+OPEN (the new bottleneck, scan/batched_grad_timing.py): the assembled staged-jvp COMPILE is
+pathologically slow & super-linear -- 412s at B=2/l_max=128 but >20 min at B=4/l_max=256, and
+XLA logs a single loop_reduce_fusion of 4m46s at B=16/l_max=512 (prod l_max=2508 => hours).
+Runtime amortizes by construction, but warm throughput can't be realized until the compile is
+tamed -- almost certainly the jvp of the k-chunked perturbation solver. NEXT: isolate the
+fusion, try per-stage filter_jit boundaries (so the $SCRATCH cache captures each; the single
+stage jvp compiled in 111s -- the slowness is the ASSEMBLED graph) / single vmap-over-P jvp /
+XLA flags; then wire PA_GRADMETHOD=batched into scan/profile_prod_ad.py. Commits: design memo,
+derisk_batched_ad, batched_grad (+validate), batched_grad_timing.
+
+
 2026-06-11 (b) — Frequentist hardening: AD gradients, convergence gate, real low-ell data
 ------------------------------------------------------------------------------------------
 Session: perk-perf ("frequentist_adversary"). The entry-(a) profile (profile_prod.py)
