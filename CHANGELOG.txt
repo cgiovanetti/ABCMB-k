@@ -9,6 +9,43 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-11 (a) — Production profile COMPLETE; profiled rtol threshold = 1e-5
+-----------------------------------------------------------------------------
+Session: perk-perf. Production job 54275721 (3 nodes / 4 GPUs each, regular qos,
+rtol_large_k_PE=1e-5) COMPLETED in 2h49m (well under the 6h budget). All 6 LCDM
+POIs profiled vs Planck plik-lite (B=357, 51-pt Newton stencil, 13-pt grid, 5
+iters, A_s a real Newton dim, tau a free nuisance with its N(0.0544,0.0073) prior).
+Global best-fit chi2 ~582.5 (consistent across all 6 profiles, vs ~607.5 at the
+Planck centre). Deliverable (best-fit; 1sigma PCHIP):
+  h        0.6763  [0.6702, 0.6831]      omega_b   0.02230 [0.02219, 0.02249]
+  omega_cdm 0.1206 [0.1190, 0.1218]      n_s       0.9628  [0.9577, 0.9671]
+  ln10As   3.0510  [3.0358, 3.0683]      tau_reion 0.0581  [0.0516, 0.0622]
+All within ~1sigma of Planck 2018 TT,TE,EE+lowE centres. npz per POI in
+scan/results/profile_prod_<poi>.npz.
+
+TOLERANCE THRESHOLD (answers "is it 1e-5 or 8e-4?" -- the runtime bottleneck):
+the DEFINITIVE test is the PROFILED scan (nuisances re-minimised), not the
+fixed-nuisance proxy. Ran the real n_s profile (7-pt grid, 3 iters, B=357) at
+three rtols, identical except rtol; re-extracted with the SAME interval()/
+sigma_parabola() (r1e5 timed out before its DONE block -> recomputed from the saved
+chi2 grid via scan/tol_profconv_table.py). Shift of the 1sigma-interval MIDPOINT
+vs the tightest rtol (n_s sigma=0.0042):
+  rtol   argmin   chi2min  1sigma midpoint  d(mid) vs 1e-5   d(halfwidth)
+  1e-4   0.96070  582.90   0.96332          +19.1% sigma     -2.8%
+  3e-5   0.96070  582.62   0.96265          + 3.2% sigma     -2.1%
+  1e-5   0.96070  582.56   0.96252          ref              ref
+The coarse grid-argmin is rtol-stable (0.96070 everywhere), but the sub-grid PCHIP
+midpoint is NOT: 1e-4 biases the central value 19% of sigma (near-min curvature
+flattens at the loose tol), 3e-5 cuts that 6x to 3.2%, 1e-5 is reference. Monotone
+convergence; the series extrapolates to a residual ~0.5% sigma at 1e-5 -- at the
+~0.2%-Cl ABCMB-vs-CLASS theory floor. CONCLUSION: the threshold is ~1e-5, NOT
+loosenable to 1e-4/8e-4. Production used 1e-5 = correct; nothing to change. The
+fixed-nuisance proxy from entry (d) (1e-4 ~16% sigma) AGREES in magnitude, so it
+was directionally reliable for n_s after all. 3e-5 (~1.5x faster, 3.2% sigma bias)
+is a defensible quick-scan setting but not for the SOTA deliverable.
+Tool: scan/tol_profconv_table.py (pure-numpy re-extraction of the 3 profconv npz).
+
+
 2026-06-10 (d) — Tolerance convergence: rtol_large_k_PE 1e-4->1e-5; NOT a bug
 -----------------------------------------------------------------------------
 Session: perk-perf. User wants state-of-the-art precision, no corners (target

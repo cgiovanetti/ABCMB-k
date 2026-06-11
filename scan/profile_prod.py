@@ -243,7 +243,7 @@ def profile_one(poi, outdir):
     offs = make_offsets(nd); nsten = len(offs)
     c, s = LCDM[poi][0], LCDM[poi][1]
     poi_grid = np.linspace(c - NSIG * s, c + NSIG * s, NPTS)
-    npz = os.path.join(outdir, f"profile_prod_{poi}.npz")
+    npz = os.path.join(outdir, f"profile_prod_{poi}{os.environ.get('PROD_TAG', '')}.npz")
     if RESUME and os.path.exists(npz):
         try:
             if bool(np.load(npz, allow_pickle=True)["done"]):
