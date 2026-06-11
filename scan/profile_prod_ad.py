@@ -207,7 +207,12 @@ def bfgs_profile(poi_idx, PV, x0=None, maxit=MAXIT, gtol=GTOL, log_prefix=""):
     B = len(PV)
     _, vg = _vg_one(poi_idx)
     x = np.zeros((B, 5)) if x0 is None else np.array(x0, float)
-    f, g = iterate_fg(poi_idx, x, PV, vg, GRADMETHOD)
+    # CONSISTENCY: all VALUES come from the fast call_batched path (f, line-search
+    # ft, best); the AD gradient (single path) is used ONLY for the descent
+    # direction.  Mixing single-path f with fast-path ft in the Armijo test makes
+    # the ~0.01 batched-vs-single offset stall the line search near the minimum.
+    _, g = iterate_fg(poi_idx, x, PV, vg, GRADMETHOD)     # exact AD gradient
+    f = fast_values(poi_idx, x, PV)                       # value (fast path)
     best_f = f.copy(); best_x = x.copy()
     Hinv = np.tile(np.eye(5), (B, 1, 1))
     gnorm = np.abs(g).max(1)
@@ -233,8 +238,9 @@ def bfgs_profile(poi_idx, PV, x0=None, maxit=MAXIT, gtol=GTOL, log_prefix=""):
         stuck = active & ~accept
         if stuck.any():
             x_new[stuck] = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)[stuck]
-        # exact (f, g) at the new iterate via AD (consistent pair)
-        f_new, g_new = iterate_fg(poi_idx, x_new, PV, vg, GRADMETHOD)
+        # AD gradient at the new iterate (single path); f_new already holds the
+        # fast-path values of the accepted line-search points (consistent profile)
+        _, g_new = iterate_fg(poi_idx, x_new, PV, vg, GRADMETHOD)
         s = x_new - x; y = g_new - g; sy = (s * y).sum(1)
         for b in np.where(active & (sy > 1e-12))[0]:
             rho = 1.0 / sy[b]; I = np.eye(5)
