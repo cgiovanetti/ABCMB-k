@@ -51,10 +51,30 @@ GATE (||grad||_inf < GTOL, reported per POI = the stationarity evidence -- not a
 iteration count), a PD check on the nuisance Hessian at each optimum, and a
 --multistart mode (K dispersed starts -> spread of converged chi2 = the global-minimum
 demonstration). All POI grid points optimised in lockstep via one batched AD gradient
-per BFGS iter; multi-GPU = one POI per SLURM rank (no within-POI sharding). STATUS:
-implemented + low-ell validated; batched-AD throughput validation in progress (the
-one-time vmap compile is the gas pedal). Remaining review gaps #2 (MCMC anchor on the
-SAME likelihood) and #4 (coverage / Wilks vs Feldman-Cousins) are NOT yet addressed.
+per BFGS iter; multi-GPU = one POI per SLURM rank (no within-POI sharding).
+DEMONSTRATED end-to-end (scan/val_loop2.log, n_s, 3-pt grid, full low-ell data model):
+exact AD gradients drive BFGS and the convergence gate works -- ||g||_inf falls
+monotonically (it0 42.7 -> it1 16.8 -> ...), chi2 decreasing, all on the
+plik-lite+lowTT+lowEE objective with tau a FREE parameter (no prior). Driver:
+scan/profile_prod_ad.py + scan/profile_prod_ad.slurm (one POI/GPU-task, resumable).
+
+THROUGHPUT FINDING (the honest caveat): the AD gradient goes through ABCMB's
+UN-BATCHED single-cosmology path (~85 s/gradient/point; the lensed l_max=2508 solve
+doesn't amortize as it does in call_batched's 0.67 s/param batched path), and the
+forward-mode compile through the GPU->CPU-HyRex->GPU pipeline is ~15-20 min (cached).
+So a full 6-POI x 13-pt AD profile is hours/POI -- correct but slow. Mitigations in
+place: (a) hybrid eval (FAST call_batched VALUES for the BFGS line search + recorded
+profile; AD only for gradients); (b) low-ell spline coeffs precomputed at init (the
+56 tridiag solves were bloating the AD compile). The real throughput fix -- batched
+AD by differentiating call_batched itself (vmap over the cross-device pipeline
+compiles pathologically; the proper path is per-stage forward-mode like
+_build_bgs_batched) -- is the scoped FOLLOW-UP. For now production runs the loop path
+at a reduced grid (PA_NPTS=9) one-POI-per-GPU, overnight.
+
+STATUS: #3 done+validated; #5 proven exact + wired in + demonstrated; #1 implemented
++ convergence demonstrated (multistart global-min mode coded, run with production).
+NOT addressed this session: review gaps #2 (MCMC anchor on the SAME likelihood) and
+#4 (coverage / Wilks vs Feldman-Cousins); fast batched AD (throughput follow-up).
 
 
 2026-06-11 (a) — Production profile COMPLETE; profiled rtol threshold = 1e-5
