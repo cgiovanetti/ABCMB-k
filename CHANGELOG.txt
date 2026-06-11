@@ -9,6 +9,54 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-11 (b) — Frequentist hardening: AD gradients, convergence gate, real low-ell data
+------------------------------------------------------------------------------------------
+Session: perk-perf ("frequentist_adversary"). The entry-(a) profile (profile_prod.py)
+is a strong proof-of-concept but NOT yet a defensible frequentist measurement.
+Adversarial review flagged five gaps; this session takes on three:
+
+#5 AUTODIFF replaces finite differences (ABCMB's whole selling point; the old driver
+used a 51-pt FD stencil). De-risk scan/derisk_ad.py (A100, l_max=2508): forward-mode
+jacfwd of the ENVELOPE-profiled chi2 (A_planck profiled analytically, frozen via
+stop_gradient => exact profiled gradient by the envelope theorem) traces end-to-end
+and is EXACT -- vs central FD, rel(AD,FD)=2.7e-4 on h; the 1-7% on omega_b/omega_cdm
+is the FD REFERENCE failing (steep curvature at a 0.33-sigma step), NOT AD. That IS
+the argument for dropping FD. AD gradient memory ~4.7 GB/cosmo (flat). The
+forward-over-forward HESSIAN OOMs (~35 GB/cosmo) -> curvature is built by BFGS from
+the exact gradient history; the Fisher/nuisance Hessian at the optimum is one central
+FD of the EXACT AD gradient (not of chi2). GOTCHA recorded: a naive vmap(jacfwd) over
+the POI grid compiles pathologically slowly (the GPU->CPU-HyRex->GPU hop becomes ONE
+monolithic XLA module) -- same root cause as wrapping the cross-device chi2 in an
+outer jax.jit (OPTION_B_feasibility.md). The compile is CACHEd, so it is a one-time
+tax amortized across the grid + all POIs of the same batch shape.
+
+#3 DATA MODEL de-circularized + un-limited. The N(0.0544,0.0073) tau "prior" was the
+Planck low-ell EE POSTERIOR injected as data (circular). Replaced with the ACTUAL
+Planck low-ell likelihoods, re-implemented AD-differentiably in JAX from cobaya's
+NATIVE clik-free data (scan/lowl_like.py):
+  * LowLEE -- SRoll2 low-ell EE (ell=2..29): cubic-interpolates the per-multipole
+    prob table (cobaya floor-looks-up => not differentiable). tau is now constrained
+    by FITTING the real reionization-bump EE spectrum, not by a parameter prior.
+  * LowLTT -- Commander low-ell TT (ell=2..29): cl2x change-of-variable splines
+    (interpax cubic + analytic Jacobian) -- restores the ell=2..29 TEMPERATURE the
+    plik-lite-only run was dropping.
+Validated vs cobaya's native formula (scan/validate_lowl.py, CPU): EE max |dchi2|=
+0.052 (cubic-vs-floor table quantization, <<1 the 1-sigma scale), TT max |dchi2|=
+0.0000 (matches scipy InterpolatedUnivariateSpline). Data model is now plik-lite
+high-ell TTTEEE + low-ell TT + low-ell EE; A_planck still envelope-profiled on high-ell.
+
+#1 CONVERGENCE / GLOBAL MIN. New driver scan/profile_prod_ad.py: exact AD gradients,
+BFGS with Armijo backtracking line search (guaranteed descent), a REAL convergence
+GATE (||grad||_inf < GTOL, reported per POI = the stationarity evidence -- not a fixed
+iteration count), a PD check on the nuisance Hessian at each optimum, and a
+--multistart mode (K dispersed starts -> spread of converged chi2 = the global-minimum
+demonstration). All POI grid points optimised in lockstep via one batched AD gradient
+per BFGS iter; multi-GPU = one POI per SLURM rank (no within-POI sharding). STATUS:
+implemented + low-ell validated; batched-AD throughput validation in progress (the
+one-time vmap compile is the gas pedal). Remaining review gaps #2 (MCMC anchor on the
+SAME likelihood) and #4 (coverage / Wilks vs Feldman-Cousins) are NOT yet addressed.
+
+
 2026-06-11 (a) — Production profile COMPLETE; profiled rtol threshold = 1e-5
 -----------------------------------------------------------------------------
 Session: perk-perf. Production job 54275721 (3 nodes / 4 GPUs each, regular qos,
