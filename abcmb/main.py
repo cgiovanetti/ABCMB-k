@@ -212,6 +212,42 @@ class Model(eqx.Module):
         return self.run_cosmology_abbr(full_params)
 
 
+    def _make_shardfn(self, shard=None):
+        """Build the B-axis GSPMD shardfn used by the batched pipeline.
+
+        Returns ``(shardfn, n_dev)`` where ``shardfn`` maps a pytree to a
+        B-axis-sharded copy (``NamedSharding(P('batch'))`` on ndim>=1 array
+        leaves, replicated for scalars) and ``n_dev`` is the number of visible
+        GPUs. If sharding is off (``shard is False``, or ``shard is None`` with
+        <=1 visible GPU) ``shardfn`` is ``None``.
+
+        This is the single source of the mesh/sharding policy shared by
+        ``call_batched`` and the staged batched-AD gradient
+        (``scan/batched_grad.py``) so both partition the B axis identically.
+        """
+        try:
+            gpus = jax.devices('gpu')
+        except Exception:
+            gpus = []
+        n_dev = len(gpus)
+        do_shard = (shard is True) or (shard is None and n_dev > 1)
+        if not do_shard:
+            return None, n_dev
+
+        mesh = Mesh(np.asarray(gpus), axis_names=('batch',))
+        batch_sh = NamedSharding(mesh, P('batch'))
+        repl_sh = NamedSharding(mesh, P())
+
+        def shardfn(tree):
+            def per_leaf(x):
+                if eqx.is_array(x):
+                    return jax.device_put(
+                        x, batch_sh if x.ndim >= 1 else repl_sh)
+                return x
+            return jax.tree.map(per_leaf, tree)
+
+        return shardfn, n_dev
+
     def call_batched(self, params_list, shard=None, k_chunk_size=100):
         """Frequentist-style batched evaluation over a list of cosmologies.
 
@@ -248,13 +284,15 @@ class Model(eqx.Module):
         """
         B = len(params_list)
 
-        # decide whether to shard over multiple GPUs
-        try:
-            gpus = jax.devices('gpu')
-        except Exception:
-            gpus = []
-        n_dev = len(gpus)
-        do_shard = (shard is True) or (shard is None and n_dev > 1)
+        # decide whether to shard over multiple GPUs + build the B-axis
+        # shardfn (GSPMD auto-partition; the pipeline is embarrassingly
+        # parallel over B, no collectives). Applied INSIDE the setup and again
+        # before the modes solve, so pre-recomb / get_BG / perturb / spectrum
+        # all run sharded -- each device builds & solves only B/n_dev
+        # cosmologies (1/n_dev the memory + parallel setup). Sharding AFTER the
+        # setup instead would build all B on device 0 and OOM at large B.
+        shardfn, n_dev = self._make_shardfn(shard)
+        do_shard = shardfn is not None
 
         # --- pad B to a multiple of the device count (replicate last) so the
         # B axis divides evenly across the mesh; padding is sliced off below.
@@ -262,27 +300,6 @@ class Model(eqx.Module):
         if do_shard and B % n_dev != 0:
             pad = n_dev - (B % n_dev)
             params_list_run = params_list_run + [params_list_run[-1]] * pad
-
-        # --- B-axis sharding fn (GSPMD auto-partition; the pipeline is
-        # embarrassingly parallel over B, no collectives). Applied INSIDE the
-        # setup and again before the modes solve, so pre-recomb / get_BG /
-        # perturb / spectrum all run sharded -- each device builds & solves
-        # only B/n_dev cosmologies (1/n_dev the memory + parallel setup).
-        # Sharding AFTER the setup instead would build all B on device 0 and
-        # OOM at large B. ---
-        shardfn = None
-        if do_shard:
-            mesh = Mesh(np.asarray(gpus), axis_names=('batch',))
-            batch_sh = NamedSharding(mesh, P('batch'))
-            repl_sh = NamedSharding(mesh, P())
-
-            def shardfn(tree):
-                def per_leaf(x):
-                    if eqx.is_array(x):
-                        return jax.device_put(
-                            x, batch_sh if x.ndim >= 1 else repl_sh)
-                    return x
-                return jax.tree.map(per_leaf, tree)
 
         # --- memory guard. MEASURED (bench/round2_{sweep,massive}.jsonl, A100):
         # the per-device GPU peak is set by the PERSISTENT saved-trajectory
@@ -293,11 +310,15 @@ class Model(eqx.Module):
         # if the estimate exceeds device memory so a scan picks B sanely. ---
         B_local = -(-len(params_list_run) // n_dev) if do_shard else len(params_list_run)
         try:
+            try:
+                _gpus0 = jax.devices('gpu')
+            except Exception:
+                _gpus0 = []
             n_k = len(self.PE.k_axis_perturbations)
             Ny = 1 + sum(int(s.num_equations) for s in self.PE.species_list)
             est_gb = 3.65 * n_k * 500 * Ny * 8 / 1e9 * B_local
-            lim_gb = (gpus[0].memory_stats().get('bytes_limit', 40e9) / 1e9
-                      if gpus else 40.0)
+            lim_gb = (_gpus0[0].memory_stats().get('bytes_limit', 40e9) / 1e9
+                      if _gpus0 else 40.0)
             if est_gb > 0.9 * lim_gb:
                 print(f"[call_batched] WARNING: estimated GPU peak ~{est_gb:.0f} "
                       f"GB/device (Ny={Ny}, B_local={B_local}) approaches the "
