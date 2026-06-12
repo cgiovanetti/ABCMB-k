@@ -54,6 +54,7 @@ from abcmb.main import Model
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
 from scan.profile_prod import interval, sigma_parabola
+from scan.batched_grad import staged_chi2_and_grad, _to_float as _bg_to_float
 
 # ---------------- config ----------------
 LMAX = int(os.environ.get("PA_LMAX", 2508))
@@ -65,6 +66,7 @@ RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
 GRADMETHOD = os.environ.get("PA_GRADMETHOD", "loop").lower()
+GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for the batched grad path
 DO_HESS = os.environ.get("PA_HESS", "1") != "0"
 _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 MULTISTART = os.environ.get("PA_MULTISTART", "0") != "0"
@@ -187,9 +189,69 @@ def _vg_one(poi_idx):
     return f, vg
 
 
-def iterate_fg(poi_idx, X, PV, vg, method):
-    """(f, g) at every grid point.  method 'loop' or 'vmap'."""
+# ======================================================================
+# BATCHED AD gradient: ride the per-k pipeline (scan/batched_grad.py).
+# Computes dchi2/dx5 (scaled coords) at ALL B grid points with ONE staged
+# forward-mode push over the k-distributed batched stages -- the gradient now
+# uses the same k-distribution strategy as the values.  See
+# bench/batched_ad_design.md + bench/grad_compile_findings.md.
+# ======================================================================
+def _chi2_of_cls(ClTT, ClTE, ClEE):
+    """Pure-jnp, batched envelope-profiled plik-lite + low-ell chi2 from Cls.
+    Mirrors chi2_scaled_single's objective but as a function of the (B,n_l) Cls."""
+    lvec = model.SS.ells
+    Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
+    Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
+    m0 = pl.bin_model(Dtt, Dte, Dee)
+    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
+    diff = pl.X_data - m0 / (A_star[..., None] ** 2)
+    c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
+        + ((A_star - 1.0) / 0.0025) ** 2
+    if lowee is not None:
+        c2 = c2 + lowee.chi2(Dee)
+    if lowtt is not None:
+        c2 = c2 + lowtt.chi2(Dtt)
+    return c2
+
+
+def _phys_to_derived(th6):
+    """physical 6-vector -> derived param dict, _to_float'd so the jvp tangent's
+    inexact-array tree matches staged_cl_and_grad's _to_float'd primal (int
+    derived keys like N_nu_massive -> float; the documented batched-AD gotcha)."""
+    p = dict(FIXED)
+    p['h'] = th6[0]; p['omega_b'] = th6[1]; p['omega_cdm'] = th6[2]
+    p['n_s'] = th6[3]; p['A_s'] = jnp.exp(th6[4]) / 1e10; p['tau_reion'] = th6[5]
+    return _bg_to_float(model.add_derived_parameters(p))
+
+
+def batched_grad_fg(poi_idx, X, PV):
+    """(F (B,), G (B,5)) via the staged batched AD gradient. G = dchi2/dx5 in
+    scaled coords (tangent = SIG[i] e_i on the 5 non-POI params)."""
+    import equinox as eqx
+    nuis = [i for i in range(6) if i != poi_idx]
     B = len(PV)
+    thetas = [jnp.asarray(assemble_phys(poi_idx, X[b], PV[b])) for b in range(B)]
+    full_ps = [_phys_to_derived(t) for t in thetas]
+    per = []
+    for t in thetas:
+        dots = []
+        for i in nuis:
+            tan = jnp.zeros(6).at[i].set(SIG[i])
+            _, fd = jax.jvp(_phys_to_derived, (t,), (tan,))
+            dots.append(eqx.filter(fd, eqx.is_inexact_array))
+        per.append(dots)
+    params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs),
+                                *[per[b][j] for b in range(B)]) for j in range(5)]
+    chi2, grad = staged_chi2_and_grad(model, full_ps, params_dots, _chi2_of_cls,
+                                      k_chunk_size=GRAD_KCHUNK)
+    return np.asarray(chi2, float), np.asarray(grad, float)
+
+
+def iterate_fg(poi_idx, X, PV, vg, method):
+    """(f, g) at every grid point.  method 'loop' | 'vmap' | 'batched'."""
+    B = len(PV)
+    if method == "batched":
+        return batched_grad_fg(poi_idx, X, PV)
     if method == "vmap":
         F, G = jax.vmap(vg)(jnp.asarray(X), jnp.asarray(PV))
         return np.asarray(F), np.asarray(G)

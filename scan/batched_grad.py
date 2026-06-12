@@ -79,12 +79,18 @@ def _to_float(tree):
 
 
 # ---------- the staged forward-mode push: params_batch -> (Cl, dCl) ----------
-def staged_cl_and_grad(model, full_ps, params_dots):
+def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
     """full_ps: list[B] of derived param dicts (primal).
     params_dots: list[P] of derived-param-tangent dicts, each stacked over B
         (i.e., params_dots[j] is the dB-stacked tangent of params_batch in
         direction j). Returns (ClTT,ClTE,ClEE) primal (B,n_l) and a list[P] of
-        (dClTT,dClTE,dClEE) tangents (B,n_l)."""
+        (dClTT,dClTE,dClEE) tangents (B,n_l).
+
+    k_chunk_size threads through full_evolution_batched on BOTH the primal and the
+    jvp. It is a GRADIENT-path knob, independent of the primal call_batched (which
+    keeps k_chunk=100): under jvp the augmented ForwardMode-Kvaerno5 loop is fused
+    over vmap(k_chunk, B), so a SMALLER k_chunk shrinks that fusion and the compile
+    (the cost is more cached chunks at runtime). See bench/grad_compile_findings.md."""
     PE = model.PE; SS = model.SS
     cpu = jax.devices('cpu')[0]
     try:
@@ -110,7 +116,7 @@ def staged_cl_and_grad(model, full_ps, params_dots):
     BG = model._get_BG_batched(params_batch, pre_BG, recomb)
 
     # ---- stage 4: perturbations (GPU, k-chunked) ----
-    PT = PE.full_evolution_batched((BG, params_batch))
+    PT = PE.full_evolution_batched((BG, params_batch), k_chunk_size=k_chunk_size)
 
     # ---- stage 5: spectrum (GPU) ----
     ClTT, ClTE, ClEE = SS.get_Cl_batched(PT, BG, params_batch)
@@ -132,14 +138,38 @@ def staged_cl_and_grad(model, full_ps, params_dots):
         _, BG_dot = jvp_stage(model._get_BG_batched,
                               (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot))
         # stage 4 jvp (perturbations)
-        _, PT_dot = jvp_stage(lambda bg, p: PE.full_evolution_batched((bg, p)),
-                              (BG, params_batch), (BG_dot, pdot))
+        _, PT_dot = jvp_stage(
+            lambda bg, p: PE.full_evolution_batched((bg, p), k_chunk_size=k_chunk_size),
+            (BG, params_batch), (BG_dot, pdot))
         # stage 5 jvp (spectrum)
         _, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
                               (PT_dot, BG_dot, pdot))
         # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE) -> a 3-tuple of arrays
         grads.append(cl_dot)
     return (ClTT, ClTE, ClEE), grads
+
+
+# ---------- chi2-aware variant: contract the Cl tangents through a likelihood ----------
+def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls, k_chunk_size=100):
+    """Like staged_cl_and_grad but returns (chi2 (B,), grad (B,P)) by contracting
+    each Cl tangent through a pure-jnp likelihood closure.
+
+    chi2_of_cls : (ClTT, ClTE, ClEE) [each (B, n_l)] -> chi2 (B,). Must be
+        differentiable in the Cls (the driver's envelope-profiled plik-lite +
+        low-ell objective is). The Cl->chi2 map is cheap, so per-direction we just
+        jvp the closure (NOT the expensive pipeline) -- one extra jvp per direction.
+    params_dots[j] is the B-stacked derived-param tangent in direction j; the
+        returned grad column j is d chi2 / d (that direction).
+    """
+    (ClTT, ClTE, ClEE), cl_grads = staged_cl_and_grad(
+        model, full_ps, params_dots, k_chunk_size=k_chunk_size)
+    chi2 = chi2_of_cls(ClTT, ClTE, ClEE)
+    cols = []
+    for cl_dot in cl_grads:                       # cl_dot = (dTT, dTE, dEE)
+        _, c2_dot = jax.jvp(chi2_of_cls, (ClTT, ClTE, ClEE), tuple(cl_dot))
+        cols.append(c2_dot)
+    grad = jnp.stack(cols, axis=-1)               # (B, P)
+    return chi2, grad
 
 
 # ---------- derived-param tangents w.r.t. raw nuisances (eager, per cosmo) ----------

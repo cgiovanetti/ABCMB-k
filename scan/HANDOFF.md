@@ -10,9 +10,12 @@ gradient ride the per-k batched pipeline. Full detail in `CHANGELOG.txt` entries
 - **Autodiff (#5): DONE.** Exact AD gradients, proven, wired into the driver.
 - **Convergence (#1): implemented + demonstrated; a stall bug found & fixed.** Full converged
   run + multistart not yet executed (throughput-gated).
-- **Batched AD on the per-k pipeline: CORRECT (1.75e-5 vs single-path), but compile-blocked.**
-  The gradient now rides the k-distribution refactor; the assembled staged-jvp COMPILE is
-  pathologically slow — that's the #1 next task.
+- **Batched AD on the per-k pipeline: CORRECT (1.75e-5 dCl; 8.58e-4 chi2 grad vs single-path)
+  and the COMPILE is TAMED — see 2026-06-12 (a).** It was never a wall: each batched stage's
+  jvp compiles ONCE per (B,l_max) aval and is cached on the filter_jit'd method, so the staged
+  compile is a ~5-min ONE-TIME-PER-JOB tax (lensed-spectrum jvp at l2508 = 119s, warm 0.57s;
+  perturbation jvp l_max-INDEPENDENT). linearize ruled out (3x worse compile, no runtime win).
+  WIRED into the driver as PA_GRADMETHOD=batched (scan/profile_prod_ad.py).
 - **GPU: released. Working tree: clean except pre-existing entry-(a) result binaries (untracked).**
 
 ## The 5 review gaps (from the assessment at session start)
@@ -42,18 +45,20 @@ gradient ride the per-k batched pipeline. Full detail in `CHANGELOG.txt` entries
 
 ## How to resume each open thread (all need a GPU: salloc ... --gpus=N ...)
 
-### A. Tame the staged-jvp COMPILE (the throughput unlock — highest value)
-The batched AD gradient is correct but `scan/batched_grad.py`'s assembled staged-jvp compiles
-super-linearly (412s @ B2/lmax128 -> >20min @ B4/lmax256; XLA `loop_reduce_fusion` 4m46s @
-B16/lmax512). The single ISOLATED stage-jvp compiled in 111s, so the slowness is the ASSEMBLED
-graph. Plan (bench/batched_ad_design.md "THROUGHPUT" section):
-  1. Instrument `staged_cl_and_grad` to time each stage's jvp compile separately -> find the culprit
-     (prior: the k-chunked perturbation jvp `_evolve_chunk`/`_compute_modes_batched`).
-  2. Try: per-stage `filter_jit` boundaries (so $SCRATCH cache captures each, chopping the giant
-     fusion) / a single `vmap`-over-P jvp instead of the P-direction python loop / XLA flags.
-  3. Then measure warm throughput (scan/batched_grad_timing.py), wire PA_GRADMETHOD=batched into
-     profile_prod_ad.py, retire the loop, and reuse call_batched's shardfn for the multi-GPU win.
-Repro the finding: `BGT_LMAX=256 BGT_B=4 python scan/batched_grad.py` (and batched_grad_timing.py).
+### A. Tame the staged-jvp COMPILE — DONE (2026-06-12 (a); see CHANGELOG + bench/grad_compile_findings.md)
+It was NOT a wall. Each batched stage's jvp compiles ONCE per (B,l_max) aval, cached on the
+filter_jit'd method -> the staged compile is a ~5-min ONE-TIME-PER-JOB tax (lensed-spectrum
+jvp at l2508 = 119s; perturbation jvp l_max-INDEPENDENT). The handoff's "super-linear" numbers
+were COLD end-to-end incl the single-path reference with both axes doubled. linearize ruled out
+(3x worse compile, no runtime win). WIRED as PA_GRADMETHOD=batched in profile_prod_ad.py
+(validated 8.58e-4 vs single-path, scan/validate_chi2_grad.py).
+Remaining (optional) levers, only if the one-time compile or runtime needs more:
+  1. Multi-GPU shard the gradient: reuse call_batched's shardfn on the stacked primal+tangent
+     before the stages (pad B to n_dev). See bench/driver_batched_wiring.md.
+  2. Precompute the param-INDEPENDENT Wigner d-matrices (d00/d1n/...) at SpectrumSolver init so
+     they leave every jvp graph (the lowl_like spline-coeff trick) — core-code change, write a
+     diff first. Only if the 119s SS compile becomes the bottleneck.
+  3. PA_GRAD_KCHUNK (~50) trades a bit of runtime for lower PE jvp compile if compile dominates.
 
 ### B. Finish the #1 demonstration (convergence + global min)
 Stall bug is FIXED (commit 76127ca) but not re-confirmed at scale.
