@@ -83,8 +83,10 @@ SMOKE (interactive l_max=128, N=64, full prior box, SMC_SEED=0; alloc 54363668):
   logZ=-32169.0, n_evals=448; GPUs confirmed back to 0%/0MiB after kill -> clean), then
   resubmitted -- it AUTO-DETECTED smc_resume_state.npz and printed "RESUME from ...:
   stage=2 beta=0.1556 logZ=-32169.011 n_evals=448", restoring the RNG bit-generator
-  state, and continued from stage 3. [resume run completing in-session; the RESUME line
-  + restored counters confirm the resume path works.]
+  state, and continued from stage 3 to beta=1.0 (exit 0). The resumed run's final
+  logZ = -206686.6276 is BIT-IDENTICAL to the uninterrupted smoke's -206686.6276, and
+  stages 3-5 reproduced the uninterrupted stages exactly -> the kill+resume is perfectly
+  deterministic (RNG bit-generator + logW + all counters restored). Resume CONFIRMED.
 
 PRODUCTION SUBMITTED: job 54369057 (regular qos, 1 node 4 GPUs, 12h, mail flags;
 config=lcdm, N=512, l_max=2508 lensed, rtol_large_k_PE=1e-5, full plik-lite+lowTT+

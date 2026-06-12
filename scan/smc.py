@@ -22,10 +22,13 @@ ALGORITHM (tempered SMC, pi_beta ∝ prior x L^beta, beta: 0 -> 1):
   * N particles init from the flat prior box (CEN +- 5*SIG per param, tau floored
     at 0.01). N stays FIXED the whole run -> ONE compile of the call_batched B aval.
   * adaptive beta ladder: each stage finds delta-beta by bisection so the ESS of the
-    incremental weights w_i = exp(-delta_beta * chi2_i / 2) is ~ESS_TARGET*N; beta
-    accumulates to EXACTLY 1.0 at the end.
-  * logZ += logmeanexp(log w_i) at each stage (free evidence from the normalizers).
-  * systematic resampling when ESS < ESS_TARGET*N (after reweighting).
+    UPDATED cumulative weights logW + (-delta_beta*chi2/2) is ~ESS_TARGET*N; beta
+    accumulates to EXACTLY 1.0 at the end. logW carries the running importance
+    weights so the schedule + evidence stay correct even when a stage skips
+    resampling (logW non-uniform). Incremental log-weight = -delta_beta*chi2_i/2.
+  * logZ += logsumexp(logW+logw_incr) - logsumexp(logW) at each stage (the
+    normalizer ratio; reduces to logmeanexp(logw_incr) right after a resample).
+  * systematic resampling when ESS(logW) < ESS_TARGET*N (then logW back to uniform).
   * M random-walk Metropolis moves per stage targeting pi_beta; proposal covariance
     = 2.38^2/D * weighted particle covariance (recomputed each stage; +1e-8 diagonal
     jitter). Each move = ONE batched chi2 eval of all N proposals; accept/reject
@@ -206,6 +209,13 @@ def chi2_batch(thetas):
 # ======================================================================
 # SMC helpers (numpy)
 # ======================================================================
+def logsumexp(logw):
+    m = np.max(logw)
+    if not np.isfinite(m):
+        return -np.inf
+    return m + np.log(np.sum(np.exp(logw - m)))
+
+
 def logmeanexp(logw):
     m = np.max(logw)
     if not np.isfinite(m):
@@ -240,22 +250,23 @@ def systematic_resample(weights, rng):
     return np.clip(idx, 0, Np - 1)
 
 
-def find_delta_beta(chi2, beta, ess_target_frac):
-    """Bisection for delta-beta in (0, 1-beta] so ESS(incremental weights) ~
-    ess_target_frac*N. Incremental log-weight for tempering by delta-beta is
-    log w_i = -delta_beta * chi2_i / 2. Returns delta-beta (clamped so beta+db<=1)."""
+def find_delta_beta(chi2, beta, logW, ess_target_frac):
+    """Bisection for delta-beta in (0, 1-beta] so the ESS of the UPDATED cumulative
+    weights logW + (-delta_beta*chi2/2) is ~ ess_target_frac*N. Carrying logW (the
+    pre-stage cumulative log importance weights) makes the temper schedule correct
+    even when a stage skipped resampling (logW non-uniform). Returns delta-beta."""
     Np = len(chi2)
     target = ess_target_frac * Np
     db_max = 1.0 - beta
     if db_max <= 0:
         return 0.0
     # ESS at full remaining step; if it's already >= target, take the whole rest.
-    if ess_of_logw(-db_max * chi2 / 2.0) >= target:
+    if ess_of_logw(logW - db_max * chi2 / 2.0) >= target:
         return db_max
     lo, hi = 0.0, db_max
     for _ in range(60):
         mid = 0.5 * (lo + hi)
-        e = ess_of_logw(-mid * chi2 / 2.0)
+        e = ess_of_logw(logW - mid * chi2 / 2.0)
         if e < target:        # too aggressive, shrink
             hi = mid
         else:                 # room to push
@@ -275,11 +286,11 @@ def weighted_cov(particles, weights):
 # ======================================================================
 # state persistence (resumable)
 # ======================================================================
-def save_state(path, particles, chi2, beta, logZ, rng, stage, trace, n_evals,
+def save_state(path, particles, chi2, logW, beta, logZ, rng, stage, trace, n_evals,
                wall_start):
     bg = rng.bit_generator.state
     np.savez(path,
-             particles=particles, chi2=chi2, beta=beta, logZ=logZ,
+             particles=particles, chi2=chi2, logW=logW, beta=beta, logZ=logZ,
              stage=stage, n_evals=n_evals, elapsed=time.perf_counter() - wall_start,
              # trace columns: stage, beta, delta_beta, ess_pre, ess_post, acc, logZ
              trace=np.array(trace, dtype=float) if trace else np.zeros((0, 7)),
@@ -307,8 +318,9 @@ def load_state(path):
     trace = [list(r) for r in np.atleast_2d(d["trace"])] if d["trace"].size else []
     return dict(
         particles=np.asarray(d["particles"]), chi2=np.asarray(d["chi2"]),
-        beta=float(d["beta"]), logZ=float(d["logZ"]), stage=int(d["stage"]),
-        n_evals=int(d["n_evals"]), elapsed=float(d["elapsed"]), trace=trace, rng=rng)
+        logW=np.asarray(d["logW"]), beta=float(d["beta"]), logZ=float(d["logZ"]),
+        stage=int(d["stage"]), n_evals=int(d["n_evals"]),
+        elapsed=float(d["elapsed"]), trace=trace, rng=rng)
 
 
 # ======================================================================
@@ -324,7 +336,7 @@ def run_smc():
         particles = st["particles"]; chi2 = st["chi2"]
         beta = st["beta"]; logZ = st["logZ"]; stage = st["stage"]
         n_evals = st["n_evals"]; trace = st["trace"]; rng = st["rng"]
-        prev_elapsed = st["elapsed"]
+        prev_elapsed = st["elapsed"]; logW = st["logW"]
         print(f"[smc] RESUME from {resume_from}: stage={stage} beta={beta:.4f} "
               f"logZ={logZ:.3f} n_evals={n_evals} (prev wall {prev_elapsed:.0f}s)",
               flush=True)
@@ -337,6 +349,7 @@ def run_smc():
         chi2 = chi2_batch(particles)
         n_evals = N
         beta = 0.0; logZ = 0.0; stage = 0; trace = []; prev_elapsed = 0.0
+        logW = np.zeros(N)                     # cumulative log importance weights
         # guard: replace any +inf (shouldn't happen — all init in-box) with a redraw
         bad = ~np.isfinite(chi2)
         if bad.any():
@@ -345,34 +358,40 @@ def run_smc():
             chi2 = np.where(np.isfinite(chi2), chi2, CHI2_INF)
         print(f"[smc] init chi2: min={chi2.min():.2f} med={np.median(chi2):.2f} "
               f"max={chi2.max():.2f}", flush=True)
-        save_state(STATE_NPZ, particles, chi2, beta, logZ, rng, stage, trace,
+        save_state(STATE_NPZ, particles, chi2, logW, beta, logZ, rng, stage, trace,
                    n_evals, wall_start)
 
     prop_scale = 1.0   # proposal shrink factor (halved if acceptance < 0.1)
 
     while beta < 1.0 - 1e-12 and stage < MAXSTAGES:
         stage += 1
-        # ---- adaptive delta-beta by bisection (ESS ~ ESS_TARGET*N) ----
-        db = find_delta_beta(chi2, beta, ESS_TARGET)
+        # ---- adaptive delta-beta by bisection (ESS of UPDATED cumulative weights
+        #      ~ ESS_TARGET*N). logW carries pre-stage cumulative importance weights
+        #      (uniform whenever the previous stage resampled). ----
+        db = find_delta_beta(chi2, beta, logW, ESS_TARGET)
         if db <= 0:
             print(f"[smc] stage {stage}: delta-beta collapsed to 0 at beta={beta}; "
                   f"forcing beta->1", flush=True)
             db = 1.0 - beta
-        logw = -db * chi2 / 2.0
-        ess_pre = ess_of_logw(logw)
-        logZ += logmeanexp(logw)
+        logw_incr = -db * chi2 / 2.0
+        # evidence increment = ratio of normalizers (exact under conditional
+        # resampling): logZ += logsumexp(logW + logw_incr) - logsumexp(logW).
+        logZ += logsumexp(logW + logw_incr) - logsumexp(logW)
+        logW = logW + logw_incr
         beta += db
         if beta > 1.0:
             beta = 1.0
-        w = normalized_weights(logw)
+        w = normalized_weights(logW)
+        ess_pre = ess_of_logw(logW)
 
-        # ---- systematic resampling if ESS < target ----
+        # ---- systematic resampling if ESS < target (then logW back to uniform) ----
         ess_post = ess_pre
         if ess_pre < ESS_TARGET * N:
             anc = systematic_resample(w, rng)
             particles = particles[anc].copy()
             chi2 = chi2[anc].copy()
             w = np.full(N, 1.0 / N)
+            logW = np.zeros(N)
             ess_post = float(N)
 
         # ---- proposal covariance: 2.38^2/D * weighted particle cov ----
@@ -419,17 +438,16 @@ def run_smc():
             prop_scale = min(prop_scale * 1.5, 4.0)
 
         # ---- persist state every stage (resumable) ----
-        save_state(STATE_NPZ, particles, chi2, beta, logZ, rng, stage, trace,
+        save_state(STATE_NPZ, particles, chi2, logW, beta, logZ, rng, stage, trace,
                    n_evals, wall_start)
 
     # ======================================================================
-    # finalize: particles now distributed ~ posterior (uniform weights after the
-    # final resample). Marginal mean/std per parameter, evidence, traces.
+    # finalize: particles ~ posterior at the FINAL importance weights. The last
+    # stage usually resampled (so logW is uniform), but if it didn't, logW carries
+    # the residual weights -> use them so the marginals are unbiased either way.
     # ======================================================================
-    # After the last stage's resampling, weights are uniform. If the loop exited
-    # without a final resample (beta hit 1 on the same stage it resampled), the
-    # current particles already carry the posterior at uniform weight.
-    weights = np.full(N, 1.0 / N)
+    weights = normalized_weights(logW)
+    weights_uniform = bool(np.allclose(weights, 1.0 / N))
     marg_mean = np.average(particles, axis=0, weights=weights)
     marg_std = np.sqrt(np.average((particles - marg_mean) ** 2, axis=0,
                                   weights=weights))
@@ -459,7 +477,7 @@ def run_smc():
              N=N, moves=MOVES, ess_target=ESS_TARGET, lmax=LMAX, seed=SEED,
              rtol=RTOL, use_lowtt=USE_LOWTT, use_lowee=USE_LOWEE,
              a_planck_profiled=True,   # PROFILED not marginalized (see module doc)
-             weights_uniform_after_final_resample=True,
+             final_weights_uniform=weights_uniform,
              config=CONFIG_ABS, done=True)
     print(f"[smc] wrote {final}", flush=True)
     # leave the _state.npz in place (harmless; resume sees done in the final npz)
