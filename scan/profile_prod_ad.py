@@ -1,48 +1,49 @@
-"""profile_prod_ad.py — AD-gradient, convergence-gated frequentist profile.
+"""profile_prod_ad.py — config-driven, lockstep frequentist profile TOOL.
 
-Rebuild of profile_prod.py addressing three reviewer objections:
+The parameter-estimation tool (TOOL_PLAN.md Workstream B). One sbatch in, an npz
++ png per POI out: grid, profiled chi2, best fit, 1sigma/2sigma PCHIP intervals,
+per-point AD ||g|| convergence certificate, multistart spread.
 
-  (#5 autodiff)  The 51-point finite-difference stencil is GONE.  Gradients are
-     exact forward-mode AD (jax.jacfwd) through the full ABCMB->likelihood
-     pipeline -- ABCMB's whole selling point.  (Forward-over-forward Hessians OOM
-     at l_max=2508, ~35 GB/cosmo -- measured, scan/derisk_ad.py -- so curvature is
-     built by BFGS from the exact gradient history, and the Fisher/nuisance Hessian
-     at the optimum is one central FD of the EXACT AD gradient, not of chi^2.)
+Evolved from the entry-(a)/2026-06-11 BFGS profile driver. THREE structural
+changes (TOOL_PLAN section 3 + the 2026-06-12 Workstream-A orchestrator verdict):
 
-  (#1 convergence/global min)  A real convergence GATE: each POI's nuisance
-     minimisation runs to ||grad||_inf < GTOL (reported per POI -- the stationarity
-     evidence), not a fixed iteration count.  BFGS with an Armijo backtracking line
-     search (guaranteed descent).  --multistart re-minimises from K dispersed
-     starts and reports the spread of converged chi^2 (the global-min demonstration).
-     PD check on the nuisance Hessian at the optimum.
+  1. CONFIG-DRIVEN (PA_CONFIG=path/to/config.py). A config declares parameter
+     names (order), fiducials (cen), scale widths (sig), which are POIs, the
+     FIXED dict, optional user_species, likelihood toggles, NPTS/NSIG. LCDM+Neff
+     (or +any ABCMB param) is now a config edit, not a code edit. Ships
+     configs/lcdm.py (the original 6-param setup) + configs/lcdm_neff.py.
 
-  (#3 data model)  No more circular N(0.0544,0.0073) tau "prior".  tau is a free
-     parameter constrained by the ACTUAL low-ell EE likelihood (SRoll2, AD-able,
-     scan/lowl_like.py), and the dropped ell=2..29 TEMPERATURE is restored via the
-     low-ell TT (Commander) likelihood.  Data model = plik-lite high-ell TTTEEE +
-     low-ell TT + low-ell EE.  A_planck still profiled analytically (envelope) on
-     the high-ell block.
+  2. ONE LOCKSTEP BATCH across ALL POIs x grid points x multistart replicas.
+     Each "row" is one optimisation point (poi_idx, poi_val); the BFGS state
+     (x, Hinv, f, g) is per-row arrays, so concatenating POIs just lengthens the
+     batch. Per-row direction j = "the j-th free dim of THAT row's POI"
+     (P = D-1 is uniform). Today's one-POI-per-rank stays as an OPTION
+     (PA_RANK_SLICE) for multi-node; single-task handles the full set.
 
-HYBRID evaluation (throughput): function VALUES (BFGS line search + recorded
-profile) go through the FAST batched/sharded call_batched path (~0.67 s/param);
-GRADIENTS go through the AD path.  PA_GRADMETHOD selects how gradients batch over
-the POI grid:
-  * "loop" (default, robust): single-cosmology jacfwd per POI point -- compiles in
-    ~5 min (scan/derisk_ad.py) and is rock-solid.  Slower per gradient.
-  * "vmap": one vmapped jacfwd over the whole grid -- amortises, but the GPU->CPU-
-    HyRex->GPU hop makes XLA compile a single huge module (10-25 min, then CACHEd).
-    Use for big production grids where the one-time compile amortises.
+  3. GRADIENTS: PA_GRADMETHOD=fdbatch is the DEFAULT (Workstream-A verdict).
+     Central finite-difference gradients assembled ON THE BATCH AXIS: the
+     2*P*N perturbed cosmologies are evaluated through call_batched in chunks
+     of PA_FD_CHUNK (~512, padded to keep shapes stable). VALUES for the Armijo
+     line search + the recorded profile ALWAYS come from the fast call_batched
+     path (the consistency rule, commit 76127ca -- never mix value sources).
+     it0 CALIBRATION compares fdbatch against the exact batched-AD gradient and
+     halves PA_FD_STEP until they agree (max-rel <= PA_FD_CALTOL). The FINAL
+     stationarity CERTIFICATE is ALWAYS the exact AD gradient: ||g||_inf < GTOL
+     per row + the nuisance Hessian (central FD of the AD gradient) + PD check.
+     PA_GRADMETHOD=ad / batched / loop / vmap remain available.
 
-Per POI value the 5 nuisances are optimised in sigma-scaled coords; all POI grid
-points move IN LOCKSTEP.  Multi-GPU = one POI per rank (SLURM_PROCID).
-
-Run via srun, PYTHONPATH=$(pwd).  Env:
-  PA_POIS(csv;all6) PA_NPTS(13) PA_NSIG(3) PA_MAXIT(40) PA_GTOL(3e-2)
+Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
+  PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
+  PA_NPTS(config) PA_NSIG(config) PA_MAXIT(40) PA_GTOL(3e-2)
   PA_LMAX(2508) PA_RTOL(1e-5) PA_TAG('') PA_RESUME(1)
-  PA_GRADMETHOD(loop|vmap) PA_HESS(1) PA_SHARD(auto|0|1)
-  PA_MULTISTART(0) PA_MS_K(6)  PA_USE_LOWTT(1) PA_USE_LOWEE(1)
+  PA_GRADMETHOD(fdbatch|ad|batched|loop|vmap) PA_FD_STEP(1e-2) PA_FD_CHUNK(512)
+  PA_FD_CALTOL(1e-2) PA_FD_CALMIN(32) PA_CAL_RETRIES(3)
+  PA_HESS(1) PA_SHARD(auto|0|1) PA_WARM(1) PA_WARM_DIR(scan/results)
+  PA_MULTISTART(0) PA_MS_K(6) PA_USE_LOWTT(cfg) PA_USE_LOWEE(cfg)
+  PA_RANK_SLICE(0)  -- 1 => slice the ROW list across SLURM ranks (multi-node);
+                       0 (default) => every rank runs the full lockstep set.
 """
-import os, time
+import os, time, importlib.util
 _SCRATCH = os.environ.get("SCRATCH", "/pscratch/sd/c/carag")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", os.path.join(_SCRATCH, ".jax_cache_abcmb"))
@@ -56,47 +57,79 @@ from scan.lowl_like import LowLEE, LowLTT
 from scan.profile_prod import interval, sigma_parabola
 from scan.batched_grad import staged_chi2_and_grad, _to_float as _bg_to_float
 
-# ---------------- config ----------------
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ======================================================================
+# config loading
+# ======================================================================
+def _load_config(path):
+    """Load a CONFIG dict from a .py file (PA_CONFIG)."""
+    if not os.path.isabs(path):
+        # resolve relative to CWD, then to this file's dir, then to configs/
+        for base in (os.getcwd(), _HERE, os.path.join(_HERE, "configs")):
+            cand = os.path.join(base, path)
+            if os.path.exists(cand):
+                path = cand
+                break
+    spec = importlib.util.spec_from_file_location("pa_config", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.CONFIG, os.path.abspath(path)
+
+
+CONFIG_PATH = os.environ.get("PA_CONFIG", "scan/configs/lcdm.py")
+CFG, CONFIG_ABS = _load_config(CONFIG_PATH)
+
+ORDER = list(CFG["order"])
+D = len(ORDER)
+P = D - 1                                            # free nuisance dims per row
+CENTER = np.array([CFG["cen"][k] for k in ORDER])
+SIGMA = np.array([CFG["sig"][k] for k in ORDER])
+FIXED = dict(CFG["fixed"])
+USER_SPECIES = CFG.get("user_species", None)
+
+# ---------------- env config (overrides config-file defaults) ----------------
 LMAX = int(os.environ.get("PA_LMAX", 2508))
-NPTS = int(os.environ.get("PA_NPTS", 13))
-NSIG = float(os.environ.get("PA_NSIG", 3.0))
+NPTS = int(os.environ.get("PA_NPTS", CFG.get("npts", 25)))
+NSIG = float(os.environ.get("PA_NSIG", CFG.get("nsig", 3.0)))
 MAXIT = int(os.environ.get("PA_MAXIT", 40))
-GTOL = float(os.environ.get("PA_GTOL", 3e-2))       # ||grad||_inf gate (scaled coords)
+GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||grad||_inf gate (scaled coords)
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
-GRADMETHOD = os.environ.get("PA_GRADMETHOD", "loop").lower()
-GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for the batched grad path
+GRADMETHOD = os.environ.get("PA_GRADMETHOD", "fdbatch").lower()
+GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for batched AD grad
+FD_STEP = float(os.environ.get("PA_FD_STEP", "1e-2"))        # central FD step (scaled coords)
+FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "512"))        # cosmologies per call_batched call
+FD_CALTOL = float(os.environ.get("PA_FD_CALTOL", "1e-2"))   # it0 fd-vs-ad max-rel target
+FD_CALMIN = int(os.environ.get("PA_FD_CALMIN", "32"))       # min rows in the it0 calibration sample
+CAL_RETRIES = int(os.environ.get("PA_CAL_RETRIES", "3"))
+AD_BCHUNK = int(os.environ.get("PA_AD_BCHUNK", "64"))       # B per staged-AD certificate call
 DO_HESS = os.environ.get("PA_HESS", "1") != "0"
 _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 MULTISTART = os.environ.get("PA_MULTISTART", "0") != "0"
 MS_K = int(os.environ.get("PA_MS_K", 6))
-USE_LOWTT = os.environ.get("PA_USE_LOWTT", "1") != "0"
-USE_LOWEE = os.environ.get("PA_USE_LOWEE", "1") != "0"
+USE_LOWTT = (os.environ["PA_USE_LOWTT"] != "0") if "PA_USE_LOWTT" in os.environ \
+    else bool(CFG.get("use_lowtt", True))
+USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ \
+    else bool(CFG.get("use_lowee", True))
+WARM = os.environ.get("PA_WARM", "1") != "0"
+WARM_DIR = os.environ.get("PA_WARM_DIR", os.path.join(_HERE, "results"))
+RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
 XBOX = 5.0                                            # nuisance box (sigma units)
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
-FDH = 0.05                                            # FD step (sigma) for Fisher Hessian
+FDH = 0.05                                            # FD step (sigma) for the AD Fisher Hessian
 
-LCDM = {'h': (0.6736, 0.0054), 'omega_b': (0.02237, 0.00015),
-        'omega_cdm': (0.1200, 0.0012), 'n_s': (0.9649, 0.0042),
-        'ln10As': (3.044, 0.014), 'tau_reion': (0.0544, 0.0073)}
-ORDER = ['h', 'omega_b', 'omega_cdm', 'n_s', 'ln10As', 'tau_reion']
-CENTER = np.array([LCDM[k][0] for k in ORDER])
-SIGMA = np.array([LCDM[k][1] for k in ORDER])
-FIXED = {'Neff': 3.044, 'YHe': 0.2454, 'TCMB0': 2.34865418e-4,
-         'N_nu_massive': 1, 'T_nu_massive': 0.71611, 'm_nu_massive': 0.06,
-         'Delta_z_reion': 0.5, 'z_reion_He': 3.5, 'Delta_z_reion_He': 0.5,
-         'exp_reion': 1.5}
-
-POIS = os.environ.get("PA_POIS", ",".join(ORDER)).split(",")
-POIS = [p.strip() for p in POIS if p.strip() in LCDM]
+POIS = os.environ.get("PA_POIS", ",".join(CFG.get("pois", ORDER))).split(",")
+POIS = [p.strip() for p in POIS if p.strip() in ORDER]
 RANK = int(os.environ.get("SLURM_PROCID", 0))
 NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 
 pl = PlikLite()
 lowee = LowLEE() if USE_LOWEE else None
 lowtt = LowLTT() if USE_LOWTT else None
-model = Model(user_species=None, output_Cl=True, l_max=LMAX, lensing=True,
+model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
               output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
               rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
               rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384)
@@ -109,33 +142,37 @@ DO_SHARD = (_shard_env == "1") or (_shard_env == "auto" and NDEV > 1)
 
 
 # ======================================================================
-# parameter assembly
+# parameter assembly (generic in ORDER; POI is the row's profiled dim)
 # ======================================================================
-def assemble_phys(poi_idx, x5, poi_val):
-    """scaled nuisance x5 (5,) + POI value -> physical 6-vector (numpy)."""
-    nuis = [i for i in range(6) if i != poi_idx]
+def nuis_idx_of(poi_idx):
+    """global param indices (length P) that are FREE for a row with this POI."""
+    return [i for i in range(D) if i != poi_idx]
+
+
+def assemble_phys(poi_idx, xP, poi_val):
+    """scaled nuisance xP (P,) + POI value -> physical D-vector (numpy)."""
     theta = CENTER.copy(); theta[poi_idx] = poi_val
-    for k, i in enumerate(nuis):
-        theta[i] = CENTER[i] + SIGMA[i] * x5[k]
+    for k, i in enumerate(nuis_idx_of(poi_idx)):
+        theta[i] = CENTER[i] + SIGMA[i] * xP[k]
     return theta
 
 
 def build_dict(theta):
-    """physical 6-vector -> ABCMB param dict (host floats, for call_batched)."""
+    """physical D-vector (ORDER) -> ABCMB param dict (host floats, call_batched).
+    ln10As is stored as A_s; everything else passes through by name."""
     p = dict(FIXED)
-    p['h'] = float(theta[0]); p['omega_b'] = float(theta[1])
-    p['omega_cdm'] = float(theta[2]); p['n_s'] = float(theta[3])
-    p['A_s'] = float(np.exp(theta[4]) / 1e10); p['tau_reion'] = float(theta[5])
+    for i, name in enumerate(ORDER):
+        if name == "ln10As":
+            p["A_s"] = float(np.exp(theta[i]) / 1e10)
+        else:
+            p[name] = float(theta[i])
     return p
 
 
 # ======================================================================
-# FAST function values via call_batched (no AD) -- BFGS line search + profile
+# FAST function values via call_batched (no AD) -- the consistency-rule path
 # ======================================================================
-def fast_values(poi_idx, X, PV):
-    """X:(B,5) PV:(B,) -> (B,) total chi^2 (profiled A_planck + low-ell)."""
-    batch = [build_dict(assemble_phys(poi_idx, X[b], PV[b])) for b in range(len(PV))]
-    out = model.call_batched(batch, shard=DO_SHARD)
+def _chi2_from_out(out):
     Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
     Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
     Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
@@ -148,20 +185,144 @@ def fast_values(poi_idx, X, PV):
     return np.where(np.isfinite(chi2), chi2, 1e6)
 
 
+def fast_values_rows(POI_IDX, X, PV):
+    """POI_IDX:(N,) int, X:(N,P), PV:(N,) -> (N,) total chi^2 (profiled + low-ell).
+    One call_batched over all N rows (shard auto)."""
+    batch = [build_dict(assemble_phys(int(POI_IDX[b]), X[b], PV[b])) for b in range(len(PV))]
+    out = model.call_batched(batch, shard=DO_SHARD)
+    return _chi2_from_out(out)
+
+
+def _chunked_call_batched(batch, chunk):
+    """Evaluate a list of param dicts through call_batched in fixed-size chunks
+    (last chunk PADDED to `chunk` to keep batch avals stable -> no recompile per
+    new B). Returns concatenated chi^2 of length len(batch)."""
+    N = len(batch)
+    out_chi2 = np.empty(N)
+    for s in range(0, N, chunk):
+        sub = batch[s:s + chunk]
+        nsub = len(sub)
+        if nsub < chunk:
+            sub = sub + [sub[-1]] * (chunk - nsub)         # pad (replicate last)
+        out = model.call_batched(sub, shard=DO_SHARD)
+        out_chi2[s:s + nsub] = _chi2_from_out(out)[:nsub]
+    return out_chi2
+
+
 # ======================================================================
-# AD objective (single cosmology) and its gradient
+# fdbatch gradient (DEFAULT): central FD on the batch axis
 # ======================================================================
-def chi2_scaled_single(x5, poi_val, poi_idx):
-    """scalar chi^2 at scaled nuisances x5, AD-differentiable in x5. Envelope-
-    profiled A_planck (stop_gradient) + low-ell. POI fixed."""
-    nuis = [i for i in range(6) if i != poi_idx]
+def fdbatch_grad(POI_IDX, X, PV, step=None):
+    """Central-FD gradient dchi2/dxP (scaled coords) at every row, assembled on
+    the batch axis. For N rows x P dims, build 2*P*N perturbed cosmologies
+    (x +/- step e_j), evaluate via _chunked_call_batched, finite-difference.
+    Returns G (N,P). VALUES are NOT taken from here (consistency rule)."""
+    if step is None:
+        step = FD_STEP
+    N = len(PV)
+    # assemble the 2*P*N perturbed scaled-nuisance vectors
+    batch = []
+    for b in range(N):
+        pidx = int(POI_IDX[b])
+        for j in range(P):
+            xp = np.array(X[b]); xp[j] += step
+            xm = np.array(X[b]); xm[j] -= step
+            batch.append(build_dict(assemble_phys(pidx, xp, PV[b])))
+            batch.append(build_dict(assemble_phys(pidx, xm, PV[b])))
+    chi2 = _chunked_call_batched(batch, FD_CHUNK)              # (2*P*N,)
+    chi2 = chi2.reshape(N, P, 2)
+    G = (chi2[:, :, 0] - chi2[:, :, 1]) / (2.0 * step)
+    return G
+
+
+# ======================================================================
+# batched AD gradient (the it0 calibration + final certificate engine)
+# ======================================================================
+def _chi2_of_cls(ClTT, ClTE, ClEE):
+    """Pure-jnp, batched envelope-profiled plik-lite + low-ell chi2 from Cls."""
+    lvec = model.SS.ells
+    Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
+    Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
+    m0 = pl.bin_model(Dtt, Dte, Dee)
+    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
+    diff = pl.X_data - m0 / (A_star[..., None] ** 2)
+    c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
+        + ((A_star - 1.0) / 0.0025) ** 2
+    if lowee is not None:
+        c2 = c2 + lowee.chi2(Dee)
+    if lowtt is not None:
+        c2 = c2 + lowtt.chi2(Dtt)
+    return c2
+
+
+def _phys_to_derived(thD):
+    """physical D-vector -> derived param dict, _to_float'd so the jvp tangent's
+    inexact-array tree matches staged_cl_and_grad's _to_float'd primal."""
+    p = dict(FIXED)
+    for i, name in enumerate(ORDER):
+        if name == "ln10As":
+            p["A_s"] = jnp.exp(thD[i]) / 1e10
+        else:
+            p[name] = thD[i]
+    return _bg_to_float(model.add_derived_parameters(p))
+
+
+def _ad_grad_block(POI_IDX, X, PV):
+    """One staged batched-AD gradient over a block of rows (no internal chunking).
+    Returns (chi2 (B,), G (B,P)). The P tangents are per-row: direction j of row
+    b is SIG[i] * e_i where i = the j-th free dim of row b's POI -- so the tangent
+    dict for direction j varies row-by-row, which the staged push handles since
+    params_dots[j] is the B-stacked tangent."""
+    import equinox as eqx
+    B = len(PV)
+    thetas = [jnp.asarray(assemble_phys(int(POI_IDX[b]), X[b], PV[b])) for b in range(B)]
+    full_ps = [_phys_to_derived(t) for t in thetas]
+    # per-row, per-direction derived-param tangent
+    per = []   # [B][P] filtered tangent dicts
+    for b in range(B):
+        nuis = nuis_idx_of(int(POI_IDX[b]))
+        dots = []
+        for j in range(P):
+            i = nuis[j]
+            tan = jnp.zeros(D).at[i].set(SIG[i])
+            _, fd = jax.jvp(_phys_to_derived, (thetas[b],), (tan,))
+            dots.append(eqx.filter(fd, eqx.is_inexact_array))
+        per.append(dots)
+    params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs),
+                                *[per[b][j] for b in range(B)]) for j in range(P)]
+    chi2, grad = staged_chi2_and_grad(model, full_ps, params_dots, _chi2_of_cls,
+                                      k_chunk_size=GRAD_KCHUNK, shard=DO_SHARD)
+    return np.asarray(chi2, float), np.asarray(grad, float)
+
+
+def ad_grad_rows(POI_IDX, X, PV, bchunk=None):
+    """Exact batched-AD gradient over ALL rows, in B<=bchunk blocks (B_local=16
+    is the measured sweet spot, so bchunk=64 on a 4-GPU node). Returns
+    (chi2 (N,), G (N,P))."""
+    if bchunk is None:
+        bchunk = AD_BCHUNK
+    N = len(PV)
+    chi2 = np.empty(N); G = np.empty((N, P))
+    for s in range(0, N, bchunk):
+        e = min(s + bchunk, N)
+        c, g = _ad_grad_block(POI_IDX[s:e], X[s:e], PV[s:e])
+        chi2[s:e] = c; G[s:e] = g
+    return chi2, G
+
+
+# ---- single-cosmology AD value-and-grad (loop/vmap fallbacks + Hessian) ----
+def chi2_scaled_single(xP, poi_val, poi_idx):
+    """scalar chi^2 at scaled nuisances xP for ONE row, AD-able in xP."""
+    nuis = nuis_idx_of(poi_idx)
     theta = CEN.at[poi_idx].set(poi_val)
     for k, i in enumerate(nuis):
-        theta = theta.at[i].set(CEN[i] + SIG[i] * x5[k])
-    h, ob, oc, ns, ln10As, tau = theta
+        theta = theta.at[i].set(CEN[i] + SIG[i] * xP[k])
     p = dict(FIXED)
-    p['h'] = h; p['omega_b'] = ob; p['omega_cdm'] = oc; p['n_s'] = ns
-    p['A_s'] = jnp.exp(ln10As) / 1e10; p['tau_reion'] = tau
+    for i, name in enumerate(ORDER):
+        if name == "ln10As":
+            p["A_s"] = jnp.exp(theta[i]) / 1e10
+        else:
+            p[name] = theta[i]
     out = model.run_cosmology_abbr(model.add_derived_parameters(p))
     Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
     Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
@@ -178,105 +339,60 @@ def chi2_scaled_single(x5, poi_val, poi_idx):
 
 
 def _vg_one(poi_idx):
-    """value-and-jacfwd for ONE cosmology (f free from the forward pass)."""
-    def f(x5, poi_val):
-        return chi2_scaled_single(x5, poi_val, poi_idx)
+    """value-and-jacfwd for ONE cosmology with this POI."""
+    def f(xP, poi_val):
+        return chi2_scaled_single(xP, poi_val, poi_idx)
 
-    def vg(x5, poi_val):
-        e = jnp.eye(5)
-        fs, g = jax.vmap(lambda v: jax.jvp(lambda z: f(z, poi_val), (x5,), (v,)))(e)
+    def vg(xP, poi_val):
+        e = jnp.eye(P)
+        fs, g = jax.vmap(lambda v: jax.jvp(lambda z: f(z, poi_val), (xP,), (v,)))(e)
         return fs[0], g
     return f, vg
 
 
 # ======================================================================
-# BATCHED AD gradient: ride the per-k pipeline (scan/batched_grad.py).
-# Computes dchi2/dx5 (scaled coords) at ALL B grid points with ONE staged
-# forward-mode push over the k-distributed batched stages -- the gradient now
-# uses the same k-distribution strategy as the values.  See
-# bench/batched_ad_design.md + bench/grad_compile_findings.md.
+# unified gradient dispatch for BFGS ITERATIONS
 # ======================================================================
-def _chi2_of_cls(ClTT, ClTE, ClEE):
-    """Pure-jnp, batched envelope-profiled plik-lite + low-ell chi2 from Cls.
-    Mirrors chi2_scaled_single's objective but as a function of the (B,n_l) Cls."""
-    lvec = model.SS.ells
-    Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
-    Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
-    m0 = pl.bin_model(Dtt, Dte, Dee)
-    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
-    diff = pl.X_data - m0 / (A_star[..., None] ** 2)
-    c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
-        + ((A_star - 1.0) / 0.0025) ** 2
-    if lowee is not None:
-        c2 = c2 + lowee.chi2(Dee)
-    if lowtt is not None:
-        c2 = c2 + lowtt.chi2(Dtt)
-    return c2
-
-
-def _phys_to_derived(th6):
-    """physical 6-vector -> derived param dict, _to_float'd so the jvp tangent's
-    inexact-array tree matches staged_cl_and_grad's _to_float'd primal (int
-    derived keys like N_nu_massive -> float; the documented batched-AD gotcha)."""
-    p = dict(FIXED)
-    p['h'] = th6[0]; p['omega_b'] = th6[1]; p['omega_cdm'] = th6[2]
-    p['n_s'] = th6[3]; p['A_s'] = jnp.exp(th6[4]) / 1e10; p['tau_reion'] = th6[5]
-    return _bg_to_float(model.add_derived_parameters(p))
-
-
-def batched_grad_fg(poi_idx, X, PV):
-    """(F (B,), G (B,5)) via the staged batched AD gradient. G = dchi2/dx5 in
-    scaled coords (tangent = SIG[i] e_i on the 5 non-POI params)."""
-    import equinox as eqx
-    nuis = [i for i in range(6) if i != poi_idx]
-    B = len(PV)
-    thetas = [jnp.asarray(assemble_phys(poi_idx, X[b], PV[b])) for b in range(B)]
-    full_ps = [_phys_to_derived(t) for t in thetas]
-    per = []
-    for t in thetas:
-        dots = []
-        for i in nuis:
-            tan = jnp.zeros(6).at[i].set(SIG[i])
-            _, fd = jax.jvp(_phys_to_derived, (t,), (tan,))
-            dots.append(eqx.filter(fd, eqx.is_inexact_array))
-        per.append(dots)
-    params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs),
-                                *[per[b][j] for b in range(B)]) for j in range(5)]
-    chi2, grad = staged_chi2_and_grad(model, full_ps, params_dots, _chi2_of_cls,
-                                      k_chunk_size=GRAD_KCHUNK, shard=DO_SHARD)
-    return np.asarray(chi2, float), np.asarray(grad, float)
-
-
-def iterate_fg(poi_idx, X, PV, vg, method):
-    """(f, g) at every grid point.  method 'loop' | 'vmap' | 'batched'."""
-    B = len(PV)
-    if method == "batched":
-        return batched_grad_fg(poi_idx, X, PV)
+def iterate_grad(POI_IDX, X, PV, method, fd_step=None):
+    """G (N,P) at every row by the chosen ITERATION method. VALUES come from
+    fast_values_rows separately (consistency rule)."""
+    if method == "fdbatch":
+        return fdbatch_grad(POI_IDX, X, PV, step=fd_step)
+    if method in ("ad", "batched"):
+        return ad_grad_rows(POI_IDX, X, PV)[1]
+    # per-row single-cosmology AD (loop/vmap): build a vg per distinct POI
+    N = len(PV); G = np.empty((N, P))
+    vgs = {pi: _vg_one(pi)[1] for pi in sorted(set(int(p) for p in POI_IDX))}
     if method == "vmap":
-        F, G = jax.vmap(vg)(jnp.asarray(X), jnp.asarray(PV))
-        return np.asarray(F), np.asarray(G)
-    F = np.empty(B); G = np.empty((B, 5))
-    for b in range(B):
-        fb, gb = vg(jnp.asarray(X[b]), jnp.asarray(float(PV[b])))
-        F[b] = float(fb); G[b] = np.asarray(gb)
-    return F, G
+        # group rows by POI so each group shares a vg aval
+        for pi, vg in vgs.items():
+            sel = np.where(POI_IDX == pi)[0]
+            if not len(sel):
+                continue
+            _, g = jax.vmap(vg)(jnp.asarray(X[sel]), jnp.asarray(PV[sel]))
+            G[sel] = np.asarray(g)
+        return G
+    for b in range(N):
+        vg = vgs[int(POI_IDX[b])]
+        _, gb = vg(jnp.asarray(X[b]), jnp.asarray(float(PV[b])))
+        G[b] = np.asarray(gb)
+    return G
 
 
 # ======================================================================
-# vectorised BFGS over the POI grid (lockstep), Armijo line search
+# vectorised BFGS over the ROW set (lockstep), Armijo line search
 # ======================================================================
-def bfgs_profile(poi_idx, PV, x0=None, maxit=MAXIT, gtol=GTOL, log_prefix=""):
-    B = len(PV)
-    _, vg = _vg_one(poi_idx)
-    x = np.zeros((B, 5)) if x0 is None else np.array(x0, float)
-    # CONSISTENCY: all VALUES come from the fast call_batched path (f, line-search
-    # ft, best); the AD gradient (single path) is used ONLY for the descent
-    # direction.  Mixing single-path f with fast-path ft in the Armijo test makes
-    # the ~0.01 batched-vs-single offset stall the line search near the minimum.
-    _, g = iterate_fg(poi_idx, x, PV, vg, GRADMETHOD)     # exact AD gradient
-    f = fast_values(poi_idx, x, PV)                       # value (fast path)
+def bfgs_rows(POI_IDX, PV, x0=None, maxit=MAXIT, gtol=GTOL, fd_step=None,
+              log_prefix=""):
+    """BFGS profile over a flat row set. POI_IDX:(N,), PV:(N,). Returns
+    (best_f (N,), best_x (N,P), gnorm (N,)). Stable batch shapes: inactive rows
+    keep riding the batch (no shrink)."""
+    N = len(PV)
+    x = np.zeros((N, P)) if x0 is None else np.array(x0, float)
+    g = iterate_grad(POI_IDX, x, PV, GRADMETHOD, fd_step=fd_step)
+    f = fast_values_rows(POI_IDX, x, PV)                  # value (fast path)
     best_f = f.copy(); best_x = x.copy()
-    Hinv = np.tile(np.eye(5), (B, 1, 1))
+    Hinv = np.tile(np.eye(P), (N, 1, 1))
     gnorm = np.abs(g).max(1)
     for it in range(maxit):
         active = gnorm > gtol
@@ -285,27 +401,27 @@ def bfgs_profile(poi_idx, PV, x0=None, maxit=MAXIT, gtol=GTOL, log_prefix=""):
         d = -np.einsum('bij,bj->bi', Hinv, g)
         gd = (g * d).sum(1)
         bad = gd >= 0
-        d[bad] = -g[bad]; Hinv[bad] = np.eye(5); gd[bad] = (g[bad] * d[bad]).sum(1)
-        # Armijo backtracking with FAST values, per-point alpha
-        alpha = np.ones(B); accept = ~active
-        x_new = x.copy()
+        d[bad] = -g[bad]; Hinv[bad] = np.eye(P); gd[bad] = (g[bad] * d[bad]).sum(1)
+        # Armijo backtracking with FAST values, per-row alpha
+        alpha = np.ones(N); accept = ~active
+        x_new = x.copy(); f_new = f.copy()
         for _ls in range(MAXLS):
             if accept.all():
                 break
             xt = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)
-            ft = fast_values(poi_idx, xt, PV)
+            ft = fast_values_rows(POI_IDX, xt, PV)
             ok = (ft <= f + C1 * alpha * gd) & ~accept
-            x_new[ok] = xt[ok]; accept |= ok
+            x_new[ok] = xt[ok]; f_new[ok] = ft[ok]; accept |= ok
             alpha[~accept] *= 0.5
         stuck = active & ~accept
         if stuck.any():
-            x_new[stuck] = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)[stuck]
-        # AD gradient at the new iterate (single path); f_new already holds the
-        # fast-path values of the accepted line-search points (consistent profile)
-        _, g_new = iterate_fg(poi_idx, x_new, PV, vg, GRADMETHOD)
+            xt = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)
+            x_new[stuck] = xt[stuck]
+            f_new[stuck] = fast_values_rows(POI_IDX, x_new, PV)[stuck]
+        g_new = iterate_grad(POI_IDX, x_new, PV, GRADMETHOD, fd_step=fd_step)
         s = x_new - x; y = g_new - g; sy = (s * y).sum(1)
         for b in np.where(active & (sy > 1e-12))[0]:
-            rho = 1.0 / sy[b]; I = np.eye(5)
+            rho = 1.0 / sy[b]; I = np.eye(P)
             V = I - rho * np.outer(s[b], y[b])
             Hinv[b] = V @ Hinv[b] @ V.T + rho * np.outer(s[b], s[b])
         x, f, g = x_new, f_new, g_new
@@ -318,11 +434,11 @@ def bfgs_profile(poi_idx, PV, x0=None, maxit=MAXIT, gtol=GTOL, log_prefix=""):
     return best_f, best_x, gnorm
 
 
-# Fisher / nuisance Hessian via central FD of the EXACT AD gradient
+# Fisher / nuisance Hessian via central FD of the EXACT AD gradient (per row)
 def nuisance_hessian(poi_idx, x_opt, poi_val):
     _, vg = _vg_one(poi_idx)
     cols = []
-    for j in range(5):
+    for j in range(P):
         ep = np.array(x_opt); ep[j] += FDH
         em = np.array(x_opt); em[j] -= FDH
         _, gp = vg(jnp.asarray(ep), jnp.asarray(float(poi_val)))
@@ -331,6 +447,96 @@ def nuisance_hessian(poi_idx, x_opt, poi_val):
     H = np.array(cols).T; H = 0.5 * (H + H.T)
     ev = np.linalg.eigvalsh(H)
     return H, ev, bool(np.all(ev > 0))
+
+
+# ======================================================================
+# warm starts from the entry-(a) global best fit
+# ======================================================================
+def _global_best_fit_physical():
+    """Read the entry-(a) profile npz files (scan/results/profile_prod_<poi>.npz),
+    find the single global best-fit (lowest chi2 across ALL POIs' grid points),
+    and return its physical D-vector (in this config's ORDER). The npz stores,
+    per POI: poi_grid (G,), chi2 (G,), xstar (G, P_old) scaled nuisances, nuis
+    (P_old,) the non-POI param NAMES. We pick the min-chi2 (poi_val, xstar) pair
+    and translate it into a full physical vector keyed by name; any ORDER param
+    not present in the old LCDM run (e.g. Neff) defaults to its config fiducial.
+    Returns (theta_phys (D,), provenance str) or (None, reason)."""
+    best = None  # (chi2, poi_name, poi_val, {name: phys_value})
+    used = []
+    # the entry-(a) run was 6-param LCDM; map by NAME
+    old_cen = {"h": 0.6736, "omega_b": 0.02237, "omega_cdm": 0.1200,
+               "n_s": 0.9649, "ln10As": 3.044, "tau_reion": 0.0544}
+    old_sig = {"h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0012,
+               "n_s": 0.0042, "ln10As": 0.014, "tau_reion": 0.0073}
+    for poi in old_cen:
+        f = os.path.join(WARM_DIR, f"profile_prod_{poi}.npz")
+        if not os.path.exists(f):
+            continue
+        try:
+            d = np.load(f, allow_pickle=True)
+            grid = np.asarray(d["poi_grid"]); chi2 = np.asarray(d["chi2"])
+            xstar = np.asarray(d["xstar"]); nuis = [str(s) for s in d["nuis"]]
+            j = int(np.nanargmin(chi2))
+            phys = {poi: float(grid[j])}
+            for k, nm in enumerate(nuis):
+                phys[nm] = old_cen[nm] + old_sig[nm] * float(xstar[j, k])
+            used.append(f"{poi}:{chi2[j]:.2f}")
+            if best is None or chi2[j] < best[0]:
+                best = (float(chi2[j]), poi, float(grid[j]), phys)
+        except Exception as e:
+            print(f"[warm] skip {f}: {e}", flush=True)
+    if best is None:
+        return None, "no entry-(a) npz found"
+    _, poi, _, phys = best
+    theta = CENTER.copy()
+    for i, nm in enumerate(ORDER):
+        if nm in phys:
+            theta[i] = phys[nm]
+    prov = (f"global best chi2={best[0]:.2f} from {poi} profile "
+            f"(npz fields poi_grid/chi2/xstar/nuis; "
+            f"params {sorted(phys)} matched, others=config fiducial)")
+    return theta, prov
+
+
+def _warm_x0_for_rows(POI_IDX, PV, theta_warm):
+    """Translate a physical warm-start vector theta_warm into per-row scaled
+    nuisance starts x0 (N,P). For each row, the warm value of its free dims is
+    (theta_warm[i] - CEN[i]) / SIG[i] (the POI dim itself is fixed at PV)."""
+    N = len(PV); x0 = np.zeros((N, P))
+    for b in range(N):
+        nuis = nuis_idx_of(int(POI_IDX[b]))
+        for k, i in enumerate(nuis):
+            x0[b, k] = (theta_warm[i] - CENTER[i]) / SIGMA[i]
+    return x0
+
+
+# ======================================================================
+# it0 calibration: tune the FD step against the exact AD gradient
+# ======================================================================
+def calibrate_fd_step(POI_IDX, X, PV):
+    """Compare fdbatch vs exact batched-AD gradient on a subsample; halve
+    PA_FD_STEP until max-rel <= FD_CALTOL (<= CAL_RETRIES retries). Returns
+    (step, max_rel, n_sample)."""
+    N = len(PV)
+    n = min(max(FD_CALMIN, 1), N)
+    # evenly-spaced subsample across the row set (covers all POIs/grid extents)
+    sel = np.unique(np.linspace(0, N - 1, n).astype(int))
+    Ps, Xs, Vs = POI_IDX[sel], X[sel], PV[sel]
+    _, G_ad = ad_grad_rows(Ps, Xs, Vs)
+    denom = np.maximum(np.abs(G_ad), np.percentile(np.abs(G_ad), 90) + 1e-30)
+    step = FD_STEP
+    for attempt in range(CAL_RETRIES + 1):
+        G_fd = fdbatch_grad(Ps, Xs, Vs, step=step)
+        rel = np.abs(G_fd - G_ad) / denom
+        max_rel = float(np.nanmax(rel))
+        per_dir = np.nanmax(rel, axis=0)            # (P,) worst per direction
+        print(f"[cal] step={step:.2e} max-rel(fd,ad)={max_rel:.3e} "
+              f"per-dir={np.array2string(per_dir, precision=2)} n={len(sel)}",
+              flush=True)
+        if max_rel <= FD_CALTOL or attempt == CAL_RETRIES:
+            return step, max_rel, len(sel)
+        step *= 0.5
+    return step, max_rel, len(sel)
 
 
 def rss_gb():
@@ -345,59 +551,135 @@ def rss_gb():
 
 
 # ======================================================================
-# drivers
+# lockstep driver across ALL POIs
 # ======================================================================
-def profile_one(poi, outdir):
-    poi_idx = ORDER.index(poi)
-    nuis = [ORDER[i] for i in range(6) if i != poi_idx]
-    c, s = LCDM[poi]
-    poi_grid = np.linspace(c - NSIG * s, c + NSIG * s, NPTS)
-    npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
-    if RESUME and os.path.exists(npz):
-        try:
-            if bool(np.load(npz, allow_pickle=True)["done"]):
-                print(f"[{poi}] resume: done, skip", flush=True); return
-        except Exception:
-            pass
-    print(f"[{poi}] grid {NPTS}pts [{poi_grid[0]:.5f},{poi_grid[-1]:.5f}] nuis={nuis} "
-          f"grad={GRADMETHOD} shard={DO_SHARD} lowEE={USE_LOWEE} lowTT={USE_LOWTT}",
-          flush=True)
+def _grid_for(poi):
+    i = ORDER.index(poi)
+    c, s = CENTER[i], SIGMA[i]
+    return np.linspace(c - NSIG * s, c + NSIG * s, NPTS)
+
+
+def profile_lockstep(pois, outdir):
+    """Build ONE row set (all pois x NPTS grid points), warm-start, run BFGS in
+    lockstep, then certify with the exact AD gradient + Hessian, and write one
+    npz/png per POI."""
+    # ---- assemble the flat row set ----
+    rows_poi = []; rows_pv = []; row_of_poi = {}
+    for poi in pois:
+        idx = ORDER.index(poi)
+        grid = _grid_for(poi)
+        start = len(rows_pv)
+        for v in grid:
+            rows_poi.append(idx); rows_pv.append(float(v))
+        row_of_poi[poi] = (start, start + NPTS, grid)
+    POI_IDX = np.array(rows_poi, int); PV = np.array(rows_pv, float)
+    N = len(PV)
+
+    # ---- optional multi-node: slice the row list across ranks ----
+    if RANK_SLICE and NPROC > 1:
+        mine = np.arange(RANK, N, NPROC)
+    else:
+        mine = np.arange(N)
+    # (we keep the full row_of_poi mapping; rows not in `mine` are NaN-filled)
+
+    # ---- warm starts ----
+    x0 = np.zeros((N, P))
+    prov = "cold (x0=0)"
+    if WARM:
+        theta_warm, prov = _global_best_fit_physical()
+        if theta_warm is not None:
+            x0 = _warm_x0_for_rows(POI_IDX, PV, theta_warm)
+        else:
+            prov = f"cold (x0=0); warm unavailable: {prov}"
+    print(f"[lockstep] N={N} rows ({len(pois)} POIs x {NPTS}) P={P} D={D} "
+          f"grad={GRADMETHOD} shard={DO_SHARD} warm: {prov}", flush=True)
+
+    Ps, Xs, Vs = POI_IDX[mine], x0[mine], PV[mine]
+
+    # ---- it0 calibration (fdbatch only) ----
+    fd_step = FD_STEP; cal_maxrel = float('nan'); cal_n = 0
+    if GRADMETHOD == "fdbatch":
+        fd_step, cal_maxrel, cal_n = calibrate_fd_step(Ps, Xs, Vs)
+        print(f"[cal] FINAL fd_step={fd_step:.2e} max-rel(fd,ad)={cal_maxrel:.3e} "
+              f"(n={cal_n}; target<={FD_CALTOL:.1e})", flush=True)
+
+    # ---- lockstep BFGS over the (sliced) row set ----
     t0 = time.perf_counter()
-    best_f, best_x, gnorm = bfgs_profile(poi_idx, poi_grid, log_prefix=f"[{poi}]")
-    pd = np.zeros(NPTS, bool); cond = np.full(NPTS, np.nan)
+    bf, bx, gn_iter = bfgs_rows(Ps, Vs, x0=Xs, fd_step=fd_step, log_prefix="[lock]")
+
+    # ---- FINAL stationarity certificate: ALWAYS exact AD ----
+    print(f"[cert] AD ||g|| certificate over {len(mine)} rows ...", flush=True)
+    cert_chi2, G_cert = ad_grad_rows(Ps, bx, Vs)
+    gnorm_ad = np.abs(G_cert).max(1)
+    converged = gnorm_ad < GTOL
+
+    # ---- scatter results back into full-length arrays ----
+    best_f = np.full(N, np.nan); best_x = np.full((N, P), np.nan)
+    gnorm_full = np.full(N, np.nan); conv_full = np.zeros(N, bool)
+    best_f[mine] = bf; best_x[mine] = bx
+    gnorm_full[mine] = gnorm_ad; conv_full[mine] = converged
+
+    # ---- Hessian / PD per row (optional) ----
+    pd_full = np.zeros(N, bool); cond_full = np.full(N, np.nan)
     if DO_HESS:
-        for p in range(NPTS):
-            _, ev, is_pd = nuisance_hessian(poi_idx, best_x[p], poi_grid[p])
-            pd[p] = is_pd; cond[p] = ev.max() / max(ev.min(), 1e-30)
-    lo1, mid, hi1 = interval(poi_grid, best_f, 1.0)
-    lo2, _, hi2 = interval(poi_grid, best_f, 4.0)
-    sig_p = sigma_parabola(poi_grid, best_f)
-    np.savez(npz, poi=poi, poi_grid=poi_grid, chi2=best_f, xstar=best_x,
-             gnorm=gnorm, hess_pd=pd, hess_cond=cond, nuis=np.array(nuis),
-             done=True, sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
-             sigma_parab=sig_p, gtol=GTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT)
-    j = int(np.nanargmin(best_f))
-    print(f"[{poi}] DONE ({time.perf_counter()-t0:.0f}s RSS={rss_gb():.1f}GB): "
-          f"minchi2={best_f[j]:.2f} at {poi}={poi_grid[j]:.5f}; "
-          f"1sig=[{lo1:.5f},{hi1:.5f}] (PCHIP +/-{(hi1-lo1)/2:.5f}; parab={sig_p:.5f}); "
-          f"max||g||={gnorm.max():.2e}; PD {int(pd.sum())}/{NPTS} -> {npz}", flush=True)
-    _plot(poi, poi_grid, best_f, npz)
+        for b in mine:
+            _, ev, is_pd = nuisance_hessian(int(POI_IDX[b]), best_x[b], PV[b])
+            pd_full[b] = is_pd; cond_full[b] = ev.max() / max(ev.min(), 1e-30)
+
+    elapsed = time.perf_counter() - t0
+    print(f"[lockstep] BFGS+cert done {elapsed:.0f}s RSS={rss_gb():.1f}GB; "
+          f"converged {int(conv_full[mine].sum())}/{len(mine)} "
+          f"(||g||_AD<{GTOL:.1e}); max||g||_AD={np.nanmax(gnorm_full):.2e}",
+          flush=True)
+
+    # ---- write one npz/png per POI ----
+    for poi in pois:
+        s, e, grid = row_of_poi[poi]
+        sl = slice(s, e)
+        chi2 = best_f[sl]; xstar = best_x[sl]; gnorm = gnorm_full[sl]
+        conv = conv_full[sl]; pd = pd_full[sl]; cond = cond_full[sl]
+        nuis = [ORDER[i] for i in nuis_idx_of(ORDER.index(poi))]
+        lo1, mid, hi1 = interval(grid, chi2, 1.0)
+        lo2, _, hi2 = interval(grid, chi2, 4.0)
+        sig_p = sigma_parabola(grid, chi2)
+        npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
+        np.savez(npz, poi=poi, poi_grid=grid, chi2=chi2, xstar=xstar,
+                 gnorm=gnorm, converged=conv, hess_pd=pd, hess_cond=cond,
+                 nuis=np.array(nuis), done=True,
+                 sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
+                 sigma_parab=sig_p, gtol=GTOL, gradmethod=GRADMETHOD,
+                 fd_step=fd_step, cal_maxrel=cal_maxrel, cal_n=cal_n,
+                 use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS)
+        j = int(np.nanargmin(chi2))
+        nconv = int(np.nansum(conv)); npt_valid = int(np.isfinite(chi2).sum())
+        print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; "
+              f"1sig=[{lo1:.5f},{hi1:.5f}] (PCHIP +/-{(hi1-lo1)/2:.5f}; "
+              f"parab={sig_p:.5f}); converged {nconv}/{npt_valid}; "
+              f"max||g||_AD={np.nanmax(gnorm):.2e}; "
+              f"PD {int(np.nansum(pd))}/{npt_valid} -> {npz}", flush=True)
+        _plot(poi, grid, chi2, npz)
 
 
 def multistart(poi, outdir, K=MS_K):
     poi_idx = ORDER.index(poi)
-    c, s = LCDM[poi]
+    i = poi_idx; c, s = CENTER[i], SIGMA[i]
     test_vals = np.array([c, c + 2 * s])
     rng = np.random.default_rng(1234)
     print(f"[{poi}] MULTISTART K={K} at {poi}={test_vals} grad={GRADMETHOD}", flush=True)
     saved = {}
     for vi, pv in enumerate(test_vals):
-        PV = np.full(K, pv)
-        x0 = rng.uniform(-2.5, 2.5, (K, 5)); x0[0] = 0.0
-        bf, bx, gn = bfgs_profile(poi_idx, PV, x0=x0, log_prefix=f"[{poi}@{pv:.4f}]")
+        PV = np.full(K, pv); POI_IDX = np.full(K, poi_idx, int)
+        x0 = rng.uniform(-2.5, 2.5, (K, P)); x0[0] = 0.0
+        fd_step = FD_STEP
+        if GRADMETHOD == "fdbatch":
+            fd_step, _, _ = calibrate_fd_step(POI_IDX, x0, PV)
+        bf, bx, _ = bfgs_rows(POI_IDX, PV, x0=x0, fd_step=fd_step,
+                              log_prefix=f"[{poi}@{pv:.4f}]")
+        _, G = ad_grad_rows(POI_IDX, bx, PV)
+        gn = np.abs(G).max(1)
         spread = bf.max() - bf.min()
         print(f"[{poi}@{pv:.5f}] converged chi2: min={bf.min():.3f} max={bf.max():.3f} "
-              f"spread={spread:.3f} max||g||={gn.max():.1e} "
+              f"spread={spread:.3f} max||g||_AD={gn.max():.1e} "
               f"(global min if spread<<1)", flush=True)
         saved[f"chi2_{vi}"] = bf; saved[f"gnorm_{vi}"] = gn; saved[f"xstar_{vi}"] = bx
     np.savez(os.path.join(outdir, f"multistart_{poi}{TAG}.npz"),
@@ -412,28 +694,54 @@ def _plot(poi, grid, chi2, npz):
         ax.plot(grid, d, "o-")
         for lv, col in [(1, "g"), (4, "orange"), (9, "r")]:
             ax.axhline(lv, ls="--", lw=0.8, color=col)
-        ax.axvline(LCDM[poi][0], ls=":", color="gray", lw=0.8, label=f"Planck {poi}")
-        ax.set_xlabel(poi); ax.set_ylabel(r"$\Delta\chi^2$ (profiled, AD/BFGS)")
+        i = ORDER.index(poi)
+        ax.axvline(CENTER[i], ls=":", color="gray", lw=0.8, label=f"fiducial {poi}")
+        ax.set_xlabel(poi); ax.set_ylabel(r"$\Delta\chi^2$ (profiled, BFGS)")
         ax.set_ylim(0, max(10, float(np.nanmax(d)) * 1.05)); ax.legend()
-        ax.set_title(f"AD profile of {poi}: plik-lite + lowTT + lowEE")
+        ax.set_title(f"profile of {poi}: plik-lite + lowTT + lowEE")
         fig.tight_layout(); fig.savefig(npz.replace(".npz", ".png"), dpi=120)
     except Exception as e:
         print(f"[{poi}] plot skipped: {e}", flush=True)
 
 
+def _resume_skip(pois, outdir):
+    """drop POIs whose npz is already done (RESUME)."""
+    out = []
+    for poi in pois:
+        npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
+        if RESUME and os.path.exists(npz):
+            try:
+                if bool(np.load(npz, allow_pickle=True)["done"]):
+                    print(f"[{poi}] resume: done, skip", flush=True); continue
+            except Exception:
+                pass
+        out.append(poi)
+    return out
+
+
 def main():
-    outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+    outdir = os.path.join(_HERE, "results")
     os.makedirs(outdir, exist_ok=True)
-    mine = POIS[RANK::NPROC]
-    print(f"rank {RANK}/{NPROC} devices={jax.devices()} POIs={POIS} mine={mine} "
-          f"NPTS={NPTS} GTOL={GTOL} rtol={RTOL} grad={GRADMETHOD} shard={DO_SHARD} "
-          f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} hess={DO_HESS} multistart={MULTISTART}",
-          flush=True)
-    for poi in mine:
-        if MULTISTART:
+    print(f"rank {RANK}/{NPROC} devices={jax.devices()} config={CONFIG_ABS} "
+          f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} rtol={RTOL} "
+          f"grad={GRADMETHOD} shard={DO_SHARD} lowEE={USE_LOWEE} lowTT={USE_LOWTT} "
+          f"hess={DO_HESS} warm={WARM} multistart={MULTISTART} "
+          f"rank_slice={RANK_SLICE}", flush=True)
+    if MULTISTART:
+        # multistart is per-POI; split POIs across ranks (cheap, independent)
+        mine = POIS[RANK::NPROC] if not RANK_SLICE else POIS
+        for poi in mine:
             multistart(poi, outdir)
+    else:
+        # lockstep: ONE batch across all POIs (rank slicing is on the ROW axis)
+        if RANK_SLICE:
+            pois = _resume_skip(POIS, outdir)        # all ranks share the row set
         else:
-            profile_one(poi, outdir)
+            # without row-slicing, one rank does everything; idle the rest to
+            # avoid duplicate work (legacy one-POI-per-rank is gone)
+            pois = _resume_skip(POIS, outdir) if RANK == 0 else []
+        if pois:
+            profile_lockstep(pois, outdir)
     print(f"rank {RANK}: done", flush=True)
 
 
