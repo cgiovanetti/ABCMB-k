@@ -9,6 +9,93 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-12 (e) — WORKSTREAM D: hand-rolled tempered SMC posterior + evidence (the Bayesian anchor); smoke passed, production submitted
+------------------------------------------------------------------------------------------------------------------------------------
+Session: perk-perf (Claude Opus 4.8 subagent; 1 interactive 4xA100-80GB node).
+Implemented TOOL_PLAN Workstream D: an eager-Python tempered Sequential Monte Carlo
+sampler driving the batched ABCMB likelihood, giving the Bayesian posterior + the
+evidence (logZ) on the SAME data model the frequentist profiles use. NOT merged to
+main. NEW files only -- did NOT touch the Workstream-B gate's files (scan/
+profile_prod_ad.py, scan/configs/lcdm.py, scan/plik_lite.py, scan/lowl_like.py,
+scan/batched_grad.py, abcmb/**), which job 54362790 (PENDING) executes from this tree.
+
+CODE (1 logical commit on perk-perf):
+- scan/smc.py: hand-rolled tempered SMC (~430 lines numpy around Model.call_batched).
+  Likelihood MIRRORS profile_prod_ad.py's path -- plik-lite TTTEEE (A_planck
+  ENVELOPE-PROFILED via pl.profile_A(with_prior=True)) + low-ell TT Commander + low-
+  ell EE SRoll2; log L = -chi2/2 -- but does NOT import the driver (its module-level
+  Model/likelihood construction has config/env side effects); the ~30 needed lines
+  (build_dict, _chi2_from_out, the Model(...) construction) are copied per the brief.
+  WHY EAGER: the pipeline is GPU->CPU-HyRex->GPU and is NOT end-to-end jittable (the
+  ~20-min monolith hang, gotcha #1), so NO jax.jit/vmap around the loop; every
+  population likelihood eval is ONE call_batched (shard=auto, 4-GPU). Algorithm:
+    * N=512 particles from a FLAT prior box CEN +- 5*SIG per param (tau_reion floored
+      at 0.01; here 0.0179 > floor so it does not bind). Box recorded in the npz.
+    * adaptive beta ladder: bisection finds delta-beta so ESS of the UPDATED cumulative
+      weights logW + (-db*chi2/2) ~ 0.5N; beta accumulates to EXACTLY 1.0.
+    * CUMULATIVE log-weights logW carried across stages so the schedule + evidence stay
+      correct even when a stage SKIPS resampling (logW non-uniform). logZ += logsumexp(
+      logW+logw_incr) - logsumexp(logW) per stage (reduces to logmeanexp right after a
+      resample). [This is the one deviation from the brief's "logmeanexp(log w_i)"/
+      "ESS of incremental weights" wording -- the cumulative-weight form is the textbook
+      adaptive-SMC correction that keeps logZ unbiased under CONDITIONAL resampling,
+      which the brief explicitly asks for ("resample when ESS<0.5N"). With incremental-
+      only weights the evidence would be biased on any stage that didn't resample.]
+    * systematic resampling when ESS(logW) < 0.5N (then logW back to uniform).
+    * M=3 random-walk Metropolis moves/stage targeting pi_beta; proposal cov =
+      2.38^2/D * weighted particle cov (recomputed each stage; +1e-8 diagonal jitter;
+      Cholesky, diagonal fallback if not PD). Each move = ONE batched chi2 eval of all N
+      proposals, accept/reject per-particle in numpy. Out-of-box proposals REJECTED
+      (chi2=+inf, not clipped) -- chi2_batch short-circuits them (no theory eval) and
+      PADS the in-box rows back to N so the call_batched B aval is FIXED -> ONE compile
+      the whole run. acc rate logged/stage; <0.1 -> halve proposal scale next stage.
+    * state (particles, chi2, logW, beta, logZ, RNG bit-generator state, stage, trace,
+      n_evals) persisted to <OUT>_state.npz EVERY stage -> resumable (SMC_RESUME=path
+      or auto-detect <OUT>_state.npz). Final npz: particles/weights/per-stage
+      [stage,beta,dbeta,ess_pre,ess_post,acc,logZ] trace/logZ/marginal mean+std/
+      n_evals/wall + the prior box + a_planck_profiled=True + final_weights_uniform.
+  A_planck CAVEAT (documented in the module + npz a_planck_profiled=True): A_planck is
+  PROFILED (envelope theorem, stop_gradient -- exactly as the driver), NOT marginalized.
+  Acceptable given its tight N(1,0.0025) prior (profiled==marginalized to O(sigma_A^2)).
+  Env knobs: SMC_N(512) SMC_MOVES(3) SMC_ESS_TARGET(0.5) SMC_LMAX(2508) SMC_SEED(0)
+  SMC_OUT SMC_CONFIG SMC_RTOL(1e-5) SMC_RESUME.
+- scan/smc_lcdm.slurm: 1 node 4 GPUs, regular qos, 12h, --mail-type=ALL --mail-user=
+  cgiovanetti@lbl.gov, JAX_COMPILATION_CACHE_DIR=$SCRATCH/.jax_cache_abcmb, auto-resume
+  from <OUT>_state.npz. l_max=2508, N=512. NO job arrays, NO premium.
+
+SMOKE (interactive l_max=128, N=64, full prior box, SMC_SEED=0; alloc 54363668):
+  Ran END TO END: 5 stages, beta reached EXACTLY 1.0, 1024 chi2-evals, wall 1341s
+  (init+compile 428s; ~228s/stage warm -- each stage is 3 MCMC moves x a 64-cosmo l128
+  solve). logZ = -206686.6 (FINITE; the large magnitude is just l128 chi2~413k, which
+  is physically meaningless -- wrong multipole coverage vs the l2508 data binning -- so
+  the smoke validates ONLY the SMC machinery, as the brief states). Acceptance trace by
+  stage: 0.208, 0.172, 0.177, 0.167, 0.286 -- ALL in the healthy 0.15-0.5 band (no
+  proposal-scale shrink triggered). ESS_pre=32=0.5N at every intermediate stage (the
+  bisection nails the target); resampling fired stages 1-4 (ESS_post=64), the final
+  stage had ESS_pre=46>32 so it did NOT resample -> final_weights_uniform=False and the
+  marginals correctly use the importance weights (normalized_weights(logW)), NOT a wrong
+  uniform assumption. No NaNs (particles finite, logZ finite). Final npz schema verified
+  complete: particles(64,6), weights(sum=1.0), trace(5,7) labeled, prior box, config,
+  done=True. Marginals (l128 -> physically meaningless, plumbing only): tau_reion +0.52,
+  omega_b +1.18, ln10As -1.05 prior-sigma of CEN; h +2.89, n_s +3.08, omega_cdm -3.65
+  (beyond 2 sigma -- expected at l128, the likelihood is not centered on true LCDM).
+  RESUME TEST: ran the same smoke, KILLED it after stage 2 (state saved at beta=0.156,
+  logZ=-32169.0, n_evals=448; GPUs confirmed back to 0%/0MiB after kill -> clean), then
+  resubmitted -- it AUTO-DETECTED smc_resume_state.npz and printed "RESUME from ...:
+  stage=2 beta=0.1556 logZ=-32169.011 n_evals=448", restoring the RNG bit-generator
+  state, and continued from stage 3. [resume run completing in-session; the RESUME line
+  + restored counters confirm the resume path works.]
+
+PRODUCTION SUBMITTED: job 54369057 (regular qos, 1 node 4 GPUs, 12h, mail flags;
+config=lcdm, N=512, l_max=2508 lensed, rtol_large_k_PE=1e-5, full plik-lite+lowTT+
+lowEE, A_planck profiled). A batched N=512 l2508 eval is ~225s; expect ~20-40 stages x
+4 batched evals/stage ~ 3-8 h. Output: scan/results/smc_lcdm.npz (+ _state.npz each
+stage). Marginals should match the frequentist profile best fits / Planck 2018 at the
+~0.1 sigma level for LCDM (the profile-vs-marginal comparison is itself a result).
+  Check:  squeue -j 54369057 ; tail -f logs/abcmb_smc_lcdm_54369057.out
+  Resume: sbatch scan/smc_lcdm.slurm   (auto-resumes from scan/results/smc_lcdm_state.npz)
+
+
 2026-06-12 (d) — WORKSTREAM B: profile_prod_ad -> config-driven lockstep TOOL; fdbatch default + AD certificate; gate submitted
 -------------------------------------------------------------------------------------------------------------------------------
 Session: perk-perf (Claude Opus 4.8 subagent; 1 interactive 4xA100-80GB node).
