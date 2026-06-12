@@ -79,7 +79,7 @@ def _to_float(tree):
 
 
 # ---------- the staged forward-mode push: params_batch -> (Cl, dCl) ----------
-def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
+def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None):
     """full_ps: list[B] of derived param dicts (primal).
     params_dots: list[P] of derived-param-tangent dicts, each stacked over B
         (i.e., params_dots[j] is the dB-stacked tangent of params_batch in
@@ -90,7 +90,18 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
     jvp. It is a GRADIENT-path knob, independent of the primal call_batched (which
     keeps k_chunk=100): under jvp the augmented ForwardMode-Kvaerno5 loop is fused
     over vmap(k_chunk, B), so a SMALLER k_chunk shrinks that fusion and the compile
-    (the cost is more cached chunks at runtime). See bench/grad_compile_findings.md."""
+    (the cost is more cached chunks at runtime). See bench/grad_compile_findings.md.
+
+    shard : bool or None. If True (or None with >1 visible GPU), shard the B
+        axis across all visible GPUs via the SAME GSPMD shardfn call_batched
+        uses (``Model._make_shardfn``). B (and the leading axis of every
+        params_dots tangent) is padded to a multiple of the device count by
+        REPLICATING the last cosmology; the padding is sliced off ALL outputs
+        (primal Cls + every per-direction Cl tangent). The shardfn is applied
+        BEFORE the stages -- to the stacked primal params, to each pdot
+        tangent, and to recomb/recomb_dot after the CPU->GPU device_put
+        (mirroring _build_bgs_batched). Sharding AFTER the setup would build
+        everything on device 0 and OOM at large B."""
     PE = model.PE; SS = model.SS
     cpu = jax.devices('cpu')[0]
     try:
@@ -98,8 +109,28 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
     except Exception:
         gpu = None
 
+    shardfn, n_dev = model._make_shardfn(shard)
+    do_shard = shardfn is not None
+
+    # --- pad B to a multiple of n_dev (replicate last cosmology) so the B axis
+    # divides evenly across the mesh; the padding is sliced off below. Both the
+    # primal list and EACH stacked tangent dict are padded on axis 0. ---
+    B = len(full_ps)
+    full_ps_run = list(full_ps)
+    params_dots_run = list(params_dots)
+    if do_shard and B % n_dev != 0:
+        pad = n_dev - (B % n_dev)
+        full_ps_run = full_ps_run + [full_ps_run[-1]] * pad
+        params_dots_run = [
+            jax.tree.map(lambda x: jnp.concatenate([x, jnp.repeat(x[-1:], pad, axis=0)],
+                                                   axis=0), pdot)
+            for pdot in params_dots_run]
+
     # stack primal params over B, cast int/bool->float (match tangent structure)
-    params_batch = _to_float(jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps))
+    params_batch = _to_float(jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps_run))
+    if do_shard:
+        params_batch = shardfn(params_batch)
+        params_dots_run = [shardfn(pdot) for pdot in params_dots_run]
 
     # ---- stage 1: pre-recomb (GPU) ----
     pre_BG = model._pre_recomb_batched(params_batch)
@@ -109,7 +140,10 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
     p_cpu = jax.device_put(params_batch, cpu)
     hy = _recmodel_cpu(model.RecModel, True)
     recomb = hy((ri_cpu, p_cpu))
-    if gpu is not None:
+    # re-shard the CPU->GPU output (or land on gpu[0] if single-device)
+    if do_shard:
+        recomb = shardfn(recomb)
+    elif gpu is not None:
         recomb = jax.device_put(recomb, gpu)
 
     # ---- stage 3: get_BG (GPU) ----
@@ -123,7 +157,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
 
     # ===== tangents, one nuisance direction at a time =====
     grads = []
-    for pdot in params_dots:               # pdot: dict stacked over B (direction j)
+    for pdot in params_dots_run:           # pdot: dict stacked over B (direction j)
         # stage 1 jvp
         _, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,))
         # stage 2 jvp (HyRex on CPU): inputs (recomb_inputs, params), tangents
@@ -132,7 +166,9 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
         p_dot_cpu = jax.device_put(pdot, cpu)
         _, recomb_dot = jvp_stage(lambda ri, p: hy((ri, p)),
                                   (ri_cpu, p_cpu), (ri_dot_cpu, p_dot_cpu))
-        if gpu is not None:
+        if do_shard:
+            recomb_dot = shardfn(recomb_dot)
+        elif gpu is not None:
             recomb_dot = jax.device_put(recomb_dot, gpu)
         # stage 3 jvp
         _, BG_dot = jvp_stage(model._get_BG_batched,
@@ -146,11 +182,17 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100):
                               (PT_dot, BG_dot, pdot))
         # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE) -> a 3-tuple of arrays
         grads.append(cl_dot)
+
+    # --- slice off the B-padding (if any) on the primal Cls + every tangent ---
+    if len(full_ps_run) != B:
+        ClTT = ClTT[:B]; ClTE = ClTE[:B]; ClEE = ClEE[:B]
+        grads = [tuple(g[:B] for g in cl_dot) for cl_dot in grads]
     return (ClTT, ClTE, ClEE), grads
 
 
 # ---------- chi2-aware variant: contract the Cl tangents through a likelihood ----------
-def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls, k_chunk_size=100):
+def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
+                         k_chunk_size=100, shard=None):
     """Like staged_cl_and_grad but returns (chi2 (B,), grad (B,P)) by contracting
     each Cl tangent through a pure-jnp likelihood closure.
 
@@ -160,9 +202,12 @@ def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls, k_chunk_size=
         jvp the closure (NOT the expensive pipeline) -- one extra jvp per direction.
     params_dots[j] is the B-stacked derived-param tangent in direction j; the
         returned grad column j is d chi2 / d (that direction).
+    shard : forwarded to staged_cl_and_grad (B-axis GSPMD sharding over all
+        visible GPUs; padding is sliced off the Cls before the chi2 contraction,
+        so chi2/grad already have the unpadded length B).
     """
     (ClTT, ClTE, ClEE), cl_grads = staged_cl_and_grad(
-        model, full_ps, params_dots, k_chunk_size=k_chunk_size)
+        model, full_ps, params_dots, k_chunk_size=k_chunk_size, shard=shard)
     chi2 = chi2_of_cls(ClTT, ClTE, ClEE)
     cols = []
     for cl_dot in cl_grads:                       # cl_dot = (dTT, dTE, dEE)

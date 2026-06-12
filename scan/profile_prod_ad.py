@@ -243,7 +243,7 @@ def batched_grad_fg(poi_idx, X, PV):
     params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs),
                                 *[per[b][j] for b in range(B)]) for j in range(5)]
     chi2, grad = staged_chi2_and_grad(model, full_ps, params_dots, _chi2_of_cls,
-                                      k_chunk_size=GRAD_KCHUNK)
+                                      k_chunk_size=GRAD_KCHUNK, shard=DO_SHARD)
     return np.asarray(chi2, float), np.asarray(grad, float)
 
 
