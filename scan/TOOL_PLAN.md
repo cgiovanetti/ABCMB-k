@@ -123,6 +123,20 @@ FD step against the AD gradient and (b) the FINAL stationarity gate ‖g‖<GTOL
 Hessian always from the exact AD gradient.** AD-only stays available via the
 env knob (priced ~3.7 h/iter/node for 400 points vs ~40 min for fdbatch).
 
+**USER DIRECTION (2026-06-12, after the verdict):** the gradient method is a
+**run-config field** (`grad_method`), NOT an env var — it's a per-physics-model
+analysis choice ("for ΛCDM FD is probably fine, but for non-convex new-physics
+parameters I'd worry"). Spec: `grad_method` lives in the tool config alongside
+POIs/NPTS; `configs/lcdm.py` → `"fdbatch"` (hybrid: FD iterations + AD
+certificate); `configs/lcdm_neff.py` and any new-physics config → `"ad"`
+(all-AD iterations; ~9.6–14.3 h on 4 nodes for the Neff run, still under the
+22 h bar). `PA_GRADMETHOD`, if set, is a debug-only override that must log a
+loud warning. fdbatch runs additionally get `ad_polish=True`: points failing
+the final AD ‖g‖ gate are re-polished with AD-gradient BFGS iterations rather
+than just flagged (caps FD's downside at hybrid cost + AD on the few bad
+points). Full-AD-vs-hybrid cost table: ΛCDM gate 4.0–6.0 h vs 1.3–1.7 h;
+ΛCDM+Neff 9.6–14.3 h vs 2.9–3.8 h (4 nodes, 10–15 iters).
+
 ## 3. Workstream B — driver → tool (`scan/profile_prod_ad.py` evolves into it)
 
 Target invocation experience: a config (python dict or small yaml) declaring
