@@ -71,9 +71,13 @@ s/param from B16 -> B64/4-GPU); the gradient is jvp of those identical batched s
 it inherits that amortization, and the 4 GB peak @ B8 leaves room for B64 (~32 GB) on one
 80GB A100. Sharding the gradient (reuse call_batched's shardfn) + B64 is the throughput
 follow-up; this session's deliverable was the COMPILE (tamed) + the correct, wired
-gradient. Driver integration (PA_GRADMETHOD=batched, n_s, NPTS=3) launched end-to-end
-in the real driver (lensing=True l2508); the standalone gradient correctness is the
-8.58e-4 gate above (bench/driver_batched_smoke.log has the BFGS-iter run).
+gradient. Driver integration (PA_GRADMETHOD=batched, n_s, NPTS=3, lensing=True l2508):
+the real driver compiled + RAN the batched gradient with NO error for 40+ min (i.e. it
+traced/compiled cleanly -- no driver-side shape/type bug -- and entered the run phase),
+but the first BFGS iter did not finish in-session because B3/P5 SINGLE-GPU is a
+pessimistic config (same reason as the throughput read above). The correctness gate is
+the standalone 8.58e-4 (validate_chi2_grad.py); a full converged batched profile wants
+NPTS>=13 + sharding (the throughput follow-up).
 
 Artifacts: bench/grad_compile_findings.md (full diagnosis + every lever),
 bench/driver_batched_wiring.md (wiring). Tools in scan/: grad_compile_profile.py,
