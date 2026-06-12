@@ -9,6 +9,72 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-12 (d) — WORKSTREAM B: profile_prod_ad -> config-driven lockstep TOOL; fdbatch default + AD certificate; gate submitted
+-------------------------------------------------------------------------------------------------------------------------------
+Session: perk-perf (Claude Opus 4.8 subagent; 1 interactive 4xA100-80GB node).
+Evolved scan/profile_prod_ad.py from the per-POI BFGS driver into the config-driven
+parameter-estimation TOOL (TOOL_PLAN Workstream B) per the entry-(c) orchestrator
+verdict (fdbatch iterations, AD certificate). NOT merged to main.
+
+CODE (3 logical commits on perk-perf):
+- scan/configs/{lcdm,lcdm_neff}.py: CONFIG dicts (order/cen/sig/pois/fixed/
+  user_species/use_lowtt/use_lowee/npts/nsig) loaded via PA_CONFIG. lcdm.py
+  reproduces the original 6-param module-constant setup EXACTLY; lcdm_neff.py moves
+  Neff FIXED->sampled (CEN=3.044, SIG=0.2) for Workstream C (ships only). A new
+  physics param is now a config edit (add_derived_parameters forwards unknown keys).
+- scan/profile_prod_ad.py: (1) config-driven (D=len(order), P=D-1; build_dict/
+  assemble_phys/the AD objective generic in ORDER, ln10As->A_s the only special
+  case; user_species flows into Model). (2) ONE LOCKSTEP BATCH across ALL POIs x
+  grid x multistart: the unit is a "row" (poi_idx,poi_val), BFGS state per-row, per-
+  row direction j = the j-th free dim of THAT row's POI (nuis_idx_of); single task
+  does the whole set, PA_RANK_SLICE=1 slices rows across ranks for multi-node (no job
+  arrays). Replaces one-POI-per-rank. (3) PA_GRADMETHOD=fdbatch is the DEFAULT:
+  central FD on the batch axis (2*P*N perturbed cosmologies via call_batched in
+  PA_FD_CHUNK=512 PADDED chunks -> stable B avals); VALUES stay on the fast path
+  (consistency rule). it0 calibrate_fd_step compares fdbatch vs exact batched-AD on a
+  >=PA_FD_CALMIN subsample, halves PA_FD_STEP until max-rel<=PA_FD_CALTOL (<=
+  PA_CAL_RETRIES). FINAL certificate ALWAYS exact AD: per-row ||g||<GTOL
+  (ad_grad_rows, B<=64 blocks) + nuisance Hessian (central FD of the AD gradient) +
+  PD check; gate-failing rows FLAGGED (converged=False) in the npz. NPTS default 25;
+  warm starts read the entry-(a) global best fit from scan/results/profile_prod_
+  <poi>.npz (fields poi_grid/chi2/xstar/nuis -> lowest-chi2 grid point across all 6
+  files -> physical vector by name -> projected onto each row's free dims; absent
+  params e.g. Neff default to config fiducial). npz also records converged/
+  gradmethod/fd_step/cal_maxrel/config.
+- scan/profile_prod_ad.slurm: ONE task, --nodes=1 --gpus=4, 12h, mail flags, JAX
+  cache (the lockstep batch shards over the node; was one-POI-per-GPU).
+
+it0 FD-vs-AD CALIBRATION (smoke l_max=128, fdbatch, config=lcdm, 2 POIs n_s/h,
+NPTS=5 -> N=10 rows P=5, sample n=8): at the DEFAULT PA_FD_STEP=1e-2,
+max-rel(fdbatch, exact batched-AD) = 8.28e-3 <= 1e-2 on the FIRST attempt (no
+halving), per-direction [0.01,0.01,0.0,0.0,0.01]. => the batch-axis central-FD
+gradient agrees with the exact AD gradient to <1% at the default step. Warm start
+read the entry-(a) global best (chi2=582.44 from the tau_reion profile, all 6 LCDM
+params matched). The smoke then entered the lockstep BFGS loop and ran cleanly with
+NO shape/type error (config load, warm-start projection, lockstep row assembly,
+4-GPU sharding, fdbatch B=512-padded gradient, and the exact-AD calibration path
+all execute). At l_max=128 the first BFGS iteration is COMPILE-bound (a fresh
+B=512 fdbatch + a fresh B=12 fast_values compile, ~12 min cold) -- a smoke artifact
+of the cold JAX cache + the 6.4x over-padding of the tiny 80-cosmology calibration
+batch to FD_CHUNK=512; the GATE amortizes every one of these compiles via
+JAX_COMPILATION_CACHE_DIR and runs iterations solve-only. The full converged
+profile (it0/cert/npz) was not run to completion in-session because each cold l128
+iteration is ~10-12 min; the it0 calibration number (8.28e-3) is the load-bearing
+correctness check, and the certificate path (ad_grad_rows) is the SAME staged-AD
+push the calibration already exercised.
+
+GATE SUBMITTED: job 54362790 (regular qos, 1 node 4 GPUs, 12h, fdbatch default,
+config=lcdm, NPTS=25, full data model plik-lite+lowTT+lowEE rtol=1e-5 l2508 lensed;
+PA_HESS=1, warm starts on, mail flags). Reproduces the entry-(a) production intervals
+WITH a per-point AD ||g||<GTOL certificate; tau_reion/ln10As intervals may shift
+(now real low-ell data, not the N(0.0544,0.0073) prior) -- report the shift, don't
+fail the gate; min chi2 ~1012 with low-ell is expected.
+  Check:  squeue -j 54362790 ; tail -f logs/abcmb_profile_ad_54362790.out
+  Resume: sbatch scan/profile_prod_ad.slurm   (done POIs skipped; JAX cache makes
+          the staged compiles one-time)
+  Output: scan/results/profile_prod_ad_<poi>.npz (+ .png) per POI.
+
+
 2026-06-12 (c) — WORKSTREAM A: shard the staged batched-AD gradient + measure (TOOL_PLAN section 2)
 --------------------------------------------------------------------------------------------------
 Session: perk-perf (Claude Opus 4.8 subagent; 1 interactive 4xA100-80GB node).
