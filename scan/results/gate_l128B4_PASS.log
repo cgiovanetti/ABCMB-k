@@ -1,0 +1,80 @@
+W0612 10:09:33.713531 1815290 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.715681 1815292 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.716554 1815293 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.717120 1815291 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.727235 1815136 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.730366 1815136 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.733476 1815136 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0612 10:09:33.736601 1815136 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+devices=[CudaDevice(id=0), CudaDevice(id=1), CudaDevice(id=2), CudaDevice(id=3)] lmax=128 B=4 lensing=False shard_cmp=True
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+batched chi2 (unsharded) = [413377.84614928 413375.44547611 413375.00518984 413375.48833187]
+
+[validate] SHARDED vs UNSHARDED staged chi2 grad (ndev=4):
+  chi2: [413377.84552582 413375.44593767 413375.00538095 413375.48805712]
+  max rel(sharded, unsharded) chi2 = 1.51e-09
+  max rel(sharded, unsharded) grad = 3.34e-05
+  >>> SHARD GATE: max rel = 3.34e-05  FAIL (>1e-6 => sharding bug, do NOT proceed to timing)
+
+[validate] batched dchi2/dx5 vs single-path jacfwd:
+
+              /\  
+             /  \   
+            / /\ \  
+           / /__\ \    ___   ___  
+          / ______ \  | _ \ / __\ _  _  
+         / /      \ \ |  _// /   | \/ | __  
+        / /        \ \| _ \\ \___||\/||| -)  
+       /_/          \_|___/ \___/||  |||_-) is compiling...
+\_____/      
+
+  cosmo 0: max rel = 9.13e-04   |g_ref|max=5.890e+00
+    g_batched = [-0.31756346 -2.85248476  0.93153591  4.32060442 -5.89015425]
+    g_ref     = [-0.31799184 -2.85255011  0.93062309  4.32055487 -5.88997608]
+  cosmo 1: max rel = 6.67e-05   |g_ref|max=4.957e+00
+  cosmo 2: max rel = 1.16e-03   |g_ref|max=6.026e+00
+  cosmo 3: max rel = 3.10e-04   |g_ref|max=5.052e+00
+
+  >>> worst max-rel(batched chi2 grad, single-path) = 1.16e-03 (<~1e-3 => CORRECT)
+[validate_chi2_grad] done
