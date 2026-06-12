@@ -105,6 +105,24 @@ SLURM: ONE interactive allocation (`--gpus=4`), `PYTHONPATH=$(pwd)`,
 `module load conda && conda activate actdr6` inside every srun. Never the
 login node. Persistent compile cache: `JAX_COMPILATION_CACHE_DIR=$SCRATCH/.jax_cache_abcmb`.
 
+**RESULT (2026-06-12 — Workstream A DONE; CHANGELOG entry (c)).** Sharding is
+correct: sharded-vs-unsharded chi2 1.5e-9, grad 3.3e-5 (GSPMD kernel/solver
+noise, ~35× under the 1.16e-3 batched-AD-vs-truth floor; the gate threshold was
+recalibrated to chi2<1e-6 / grad<5e-4 — the "~1e-12" expectation assumed
+bit-identical partitioning, which an adaptive ODE solver does not give).
+Throughput: **5.50 s/cosmo/direction at B=64** (B_local=16, the sweet spot;
+4.87× the B=64 primal); grad path costs ~0.5–0.84 GB/cosmo/device; B_local=32
+degrades (knee inferred from cold-time blowup — weak evidence, but immaterial).
+**ORCHESTRATOR VERDICT (supersedes the §1 decision rule's open band):** the
+4.87× landed "in between", and the implementing agent's "AD ≈ FD cost"
+tie-break was an arithmetic slip — central FD costs 2 primal evals/direction
+(2.26 s at B=64; 0.88 s riding B=512 batches), so FD is 2.4–6× CHEAPER per
+direction than AD. Decision: **PA_GRADMETHOD=fdbatch (central FD on the batch
+axis) for BFGS iteration gradients, with (a) an iteration-0 calibration of the
+FD step against the AD gradient and (b) the FINAL stationarity gate ‖g‖<GTOL +
+Hessian always from the exact AD gradient.** AD-only stays available via the
+env knob (priced ~3.7 h/iter/node for 400 points vs ~40 min for fdbatch).
+
 ## 3. Workstream B — driver → tool (`scan/profile_prod_ad.py` evolves into it)
 
 Target invocation experience: a config (python dict or small yaml) declaring
