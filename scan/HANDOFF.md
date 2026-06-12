@@ -1,5 +1,13 @@
 # HANDOFF — frequentist_adversary session (2026-06-11)
 
+> **2026-06-12 UPDATE — direction set; this doc is now background.** The goal was
+> sharpened with the user ("give it a new cosmology, get optimum ±1/2σ in a few
+> hours; must beat CLASS+MH ΛCDM+Neff @ 22 h") and the canonical plan is
+> **`scan/TOOL_PLAN.md`** — read that FIRST. It maps this doc's open threads:
+> thread-A-lever-1 (shard the gradient) = Workstream A (now the blocking first
+> step); threads B/C (convergence demo + production AD profile) fold into
+> Workstream B's gate; thread D gap #2 = Workstream D (SMC), gap #4 = Workstream E.
+
 Branch `perk-perf` (NOT merged to main). This session: (1) adversarially reviewed the
 existing LCDM frequentist profile, (2) fixed 3 of the 5 gaps, (3) made the autodiff
 gradient ride the per-k batched pipeline. Full detail in `CHANGELOG.txt` entries

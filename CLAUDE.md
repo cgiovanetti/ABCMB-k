@@ -154,12 +154,26 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
-### Status & where to resume (updated 2026-05-30, round 4 DONE)
+### Status & where to resume (updated 2026-06-12 — direction set: the PE tool)
 
-The batched pipeline (`Model.call_batched`) is implemented, fast, and SCALES.
-`perk-perf` branch (**current HEAD, NOT merged to main**) holds all perf work.
-FIVE sessions; read `CHANGELOG.txt` (round-4 entry on top) first, then
-`bench/round3_plan.md`, then `bench/round2_plan.md`.
+**THE CANONICAL PLAN IS `scan/TOOL_PLAN.md` — read it first.** The refined goal
+(user, 2026-06-12): a tool that takes a new ABCMB-style cosmology and returns the
+optimum ±1/2σ in a few hours; competitive bar = CLASS+MH does ΛCDM+Neff in ~22 h.
+Deliverables: batched lockstep-BFGS profile likelihoods with AD convergence
+certificates (headline), SMC posterior on the same likelihood (Bayesian anchor,
+review gap #2), coverage mocks on the batch axis (gap #4). The blocking first step
+is sharding the staged batched-AD gradient and measuring its throughput
+(TOOL_PLAN Workstream A). Orientation order: `scan/TOOL_PLAN.md` →
+`CHANGELOG.txt` (top entries) → `scan/HANDOFF.md` (background).
+
+Engine status: the batched pipeline (`Model.call_batched`) is implemented, fast,
+and SCALES. A production 6-POI ΛCDM frequentist profile vs plik-lite(+lowTT/EE)
+has already COMPLETED (2h49m / 3 nodes, intervals within ~1σ of Planck 2018);
+the AD-gradient BFGS driver (`scan/profile_prod_ad.py`) and the correct-but-
+unsharded batched AD gradient (`scan/batched_grad.py`) exist on top of it.
+`perk-perf` branch (**current HEAD, NOT merged to main**) holds all of this.
+Perf-round background below; read `bench/round3_plan.md` / `bench/round2_plan.md`
+only if you need the memory/throughput archaeology.
 
 **ROUND-4 RESULT — n_lna lever: default save grid is now visibility-driven & N=300:**
 `model_specs` defaults changed: `n_lna_PE` 500->300, `lna_grid_mode` "uniform"->
@@ -214,30 +228,21 @@ regime-switching; NO SLURM job arrays (Perlmutter touchy, ≤2 queued jobs get
 priority); k_chunk stays 100 (smaller is slower, no mem benefit); **do NOT lower
 l_max for massive neutrinos**.
 
-**NEXT STEPS:**
-- DONE (round 3): transpose-kill + conformal-time SaveAt fix (committed). aH-tab
-  tried + REVERTED (no-op).
-- DONE (round 4): the Nlna lever. `n_lna_PE` 500->300 on a visibility-driven
-  recomb-dense grid + per-interval LoS weights (1.65× per-call memory; accuracy
-  matches uniform-500 for l>=5, only the l=2-4 quadrupole regresses sub-permille,
-  user-approved). The remaining ∝Nlna memory is now at N=300; going lower hits the
-  l=2 quadrupole floor (needs broad coverage). Massive ν inherits the same grid
-  (visibility shape is Thomson-set, mass-independent).
-- Possible further levers (untried): (a) the visibility-grid knobs
-  (`lna_vis_smooth`/`lna_vis_floor`) could be re-tuned per-likelihood if l<5 is cut;
-  (b) Idea A2 from `bench/round3_memory.md` — stream PT per k-chunk so the full
-  modes tensor never co-exists (bigger refactor; blocked by the spectrum's global
-  cubic spline over PT.k).
-- From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
-  LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
-  ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
-  (the frequentist likelihood layer — the stated end-goal; `scan/` produces
-  per-slice Cls/Pk, the `summarize` hook in `scan_slice.py` is where χ² plugs in).
-- From the ORIGINAL plan.md (A–H), still UNTAKEN: **Phase F.2** (LINX under vmap —
-  LINX still runs per-cosmo in the `add_derived_parameters` python loop; fine at
-  ~ms/cosmo but could bite for large-B `bbn_type="linx"` scans) and **Phase H**
-  (the frequentist likelihood layer — the stated end-goal; `scan/` produces
-  per-slice Cls/Pk, the `summarize` hook in `scan_slice.py` is where χ² plugs in).
+**NEXT STEPS: follow `scan/TOOL_PLAN.md` §8 (order of work).** In short:
+(A) shard the staged AD gradient + measure its throughput at production shape
+[BLOCKING — prices everything; decision rule AD-vs-FD in TOOL_PLAN §1/§2];
+(B) evolve `scan/profile_prod_ad.py` into the config-driven tool (lockstep batch
+across all POIs × ≥25 grid pts × multistarts, warm starts, stable batch shapes);
+(C) the ΛCDM+Neff headline benchmark vs the 22 h bar; (D) hand-rolled tempered
+SMC on `call_batched` for the posterior+evidence (independent of A/B — can run
+in parallel); (E) coverage mocks (later). Phase H of the original plan.md is
+realized by B+C; still-untaken from the original plan: Phase F.2 (LINX under
+vmap — LINX runs per-cosmo in the `add_derived_parameters` python loop; fine at
+~ms/cosmo but could bite for large-B `bbn_type="linx"` scans).
+Perf levers left on the table (only if memory/throughput bites again): visibility-
+grid knobs (`lna_vis_smooth`/`lna_vis_floor`) re-tuned per-likelihood if l<5 is
+cut; Idea A2 from `bench/round3_memory.md` (stream PT per k-chunk; bigger
+refactor, blocked by the spectrum's global cubic spline over PT.k).
 
 Artifacts in `bench/`: `round3_plan.md` + `round3_{memory,massivenu}.md` (this
 round); `round2_plan.md` + `round2_{solver,precision,scaleout,memory}.md` (round 2);

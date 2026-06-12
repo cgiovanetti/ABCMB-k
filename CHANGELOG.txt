@@ -9,6 +9,42 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-12 (b) — DIRECTION SET: the parameter-estimation tool; canonical plan = scan/TOOL_PLAN.md
+------------------------------------------------------------------------------------------------
+Session: perk-perf (strategy + planning; no code, no GPU). The user re-anchored the
+project goal: the refactor exists to make ABCMB useful for cosmological parameter
+estimation, and the concrete spec is "give it a new cosmology ABCMB-style and in a
+few hours I have the optimum +/- 1/2 sigma." Competitive bar: CLASS+MH does
+LCDM+Neff in ~22 h; we must be comparable or faster (node-days is out). Agreed
+strategy after reviewing the 2026-06-10..12 arc:
+
+- HEADLINE: frequentist profile likelihoods via lockstep batched BFGS on
+  call_batched — all POIs x >=25 grid points x multistarts in ONE batch (13 pts
+  judged too coarse by the user; points are ~free on the batch axis). Gradients
+  are for CONVERGENCE (||g||<GTOL certificates, PD check, multistart) and descent,
+  NOT throughput — forward-mode P directions ~ a P-pt FD stencil by construction.
+- BLOCKING MEASUREMENT: shard the staged batched-AD gradient (the one open lever
+  from bench/driver_batched_wiring.md) and measure s/cosmo/direction at production
+  shape. Decision rule: <=4x primal/dir -> AD gradients; >6x -> batch-axis central
+  FD for iteration gradients (measured-zero chi2 noise floor makes FD viable),
+  keeping AD for the final stationarity gate. Either branch prices the LCDM+Neff
+  tool run at ~8-20 h one node / 2-5 h on 4 nodes => under the bar.
+- BAYESIAN ANCHOR (review gap #2): hand-rolled adaptive tempered SMC driving
+  call_batched eagerly (~100-300 batched evals for a full posterior + evidence;
+  the likelihood is NOT end-to-end jittable, so no blackjax jitted loop). Also the
+  answer to "max useful MH chains is ~8": population samplers ARE batch-native.
+- SELLING POINT (gap #4): Feldman-Cousins/Wilks coverage by re-fitting hundreds of
+  mock data vectors ON THE BATCH AXIS — normally cost-prohibitive, natural here.
+- DROPPED: the pretrained-emulator pitch (OLE makes pretraining a weak sell).
+
+Docs: NEW scan/TOOL_PLAN.md (canonical plan: cost model, workstreams A-E with
+recipes/gates/decision rules, consolidated gotchas, session sizing — written to be
+executed by a lighter model). scan/HANDOFF.md got a superseded-pointer header;
+CLAUDE.md "Status & where to resume" + NEXT STEPS rewritten to point at the plan
+(also removed a duplicated paragraph). Memory: tool-goal-and-competitive-bar saved.
+No code changes; next session starts at TOOL_PLAN Workstream A.
+
+
 2026-06-12 (a) — Staged-jvp COMPILE is TRACTABLE (~5 min one-time); PA_GRADMETHOD=batched WIRED
 ------------------------------------------------------------------------------------------------
 Session: perk-perf ("fix_grad_perf"). Entry-(c) landed the batched AD gradient (correct,
