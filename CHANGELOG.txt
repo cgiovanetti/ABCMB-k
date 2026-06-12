@@ -60,10 +60,12 @@ _to_float the DERIVED dict (FIXED's python-int N_nu_massive -> jnp.array int -> 
 mismatches the _to_float'd float primal partition; the existing derived_and_tangents dodges
 this only by casting the RAW input to float first).
 
-THROUGHPUT (scan/grad_prod_shape.py, l2508/B8/P2/lensing=True, single-GPU): COLD
-(compile+run) 748.1s, peak 4.07 GB. HONEST read: at this SMALL-B SINGLE-GPU config the
-batched gradient is NOT yet faster than single-path (~85 s/cosmo P=5) -- the l2508
-perturbation solve doesn't saturate the GPU at B=8 and forward-mode x P directions costs.
+THROUGHPUT (scan/grad_prod_shape.py, l2508/B8/P2/lensing=True, single-GPU): COLD 748.1s,
+WARM 418.6s => 52.3 s/cosmo-grad (P=2), compile 329.5s (CONFIRMS the ~5.5-min one-time
+tax), peak 4.07 GB. HONEST read: at this SMALL-B SINGLE-GPU config the batched gradient is
+NOT yet faster than single-path (~85 s/cosmo P=5; the 52.3 s/cosmo P=2 -> ~130 s/cosmo P=5
+is ~1.5x SLOWER) -- the l2508 perturbation solve doesn't saturate the GPU at B=8 and
+forward-mode x P directions costs.
 The win is the SAME B-scaling + sharding call_batched already shows (primal 3.24 -> 1.13
 s/param from B16 -> B64/4-GPU); the gradient is jvp of those identical batched stages so
 it inherits that amortization, and the 4 GB peak @ B8 leaves room for B64 (~32 GB) on one

@@ -101,9 +101,9 @@ k_chunk=100), i.e. the perturbation compile is NOT the catastrophic super-linear
    single-GPU path validates.
 
 ## THROUGHPUT — honest read (scan/grad_prod_shape.py, l2508/B8/P2/lensing, single-GPU)
-COLD (compile+run) = 748.1s, peak **4.07 GB** (huge headroom -> B can go much larger).
-Compile ~300s (SS 119 + PE ~85 + HyRex 27 + primal compiles), so warm-run ~448s for
-B=8/P=2 => ~56 s/cosmo (P=2). At this SMALL-B SINGLE-GPU config the batched gradient is
+COLD 748.1s, WARM 418.6s => **52.3 s/cosmo-grad (P=2)**, compile **329.5s** (CONFIRMS the
+~5.5-min one-time tax), peak **4.07 GB** (huge headroom -> B can go much larger). At this
+SMALL-B SINGLE-GPU config (52.3 s/cosmo P=2 -> ~130 s/cosmo P=5) the batched gradient is
 NOT yet a win vs single-path (~85 s/cosmo P=5): the l2508 perturbation solve does not
 saturate the GPU at B=8, and forward-mode x P directions costs. The WIN is the SAME
 B-scaling + sharding that call_batched already demonstrates (primal 3.24 s/param @ B16
