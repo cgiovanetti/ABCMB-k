@@ -1,8 +1,13 @@
-# Taming the staged-jvp COMPILE — findings (session fix_grad_perf, 2026-06-11)
+# Taming the staged-jvp COMPILE — findings (session fix_grad_perf, 2026-06-12)
 
-Goal: the batched AD gradient (scan/batched_grad.py) is correct (1.75e-5 vs
-single-path) but its assembled staged-jvp compile is pathologically slow &
-super-linear, blocking production throughput. This file tracks the diagnosis.
+CONCLUSION (read first): the staged-jvp compile was NEVER a wall. Each batched
+stage's jvp compiles ONCE per (B,l_max) aval and is cached on the filter_jit'd
+method, so it is a ~5-min ONE-TIME-PER-JOB tax (lensed-spectrum jvp at l2508 = 119s;
+perturbation jvp l_max-INDEPENDENT). The prior "pathologically super-linear" framing
+was COLD end-to-end measurements (incl the single-path reference) with both B and
+l_max doubled each step. linearize ruled out; gradient wired as PA_GRADMETHOD=batched
+and validated (8.58e-4 vs single-path). The remaining open item is THROUGHPUT (needs
+B-scaling + sharding, like call_batched), not compile. Detail below.
 
 ## Per-stage jvp compile/warm (scan/grad_compile_profile.py, throwaway cache, A100)
 
@@ -94,6 +99,19 @@ k_chunk=100), i.e. the perturbation compile is NOT the catastrophic super-linear
 3. **Sharding** (reuse call_batched shardfn) -> per-device B_local -> smaller
    buffers + parallel compile (free, already designed). Deferred to after the
    single-GPU path validates.
+
+## THROUGHPUT — honest read (scan/grad_prod_shape.py, l2508/B8/P2/lensing, single-GPU)
+COLD (compile+run) = 748.1s, peak **4.07 GB** (huge headroom -> B can go much larger).
+Compile ~300s (SS 119 + PE ~85 + HyRex 27 + primal compiles), so warm-run ~448s for
+B=8/P=2 => ~56 s/cosmo (P=2). At this SMALL-B SINGLE-GPU config the batched gradient is
+NOT yet a win vs single-path (~85 s/cosmo P=5): the l2508 perturbation solve does not
+saturate the GPU at B=8, and forward-mode x P directions costs. The WIN is the SAME
+B-scaling + sharding that call_batched already demonstrates (primal 3.24 s/param @ B16
+-> 1.13 s/param @ B64/4-GPU); the gradient is jvp of those identical batched stages, so
+it inherits that amortization. The 4 GB peak @ B8 means B64 (~32 GB) fits one 80GB A100.
+=> NEXT for throughput: shard the gradient (reuse call_batched shardfn on the stacked
+primal+tangent; bench/driver_batched_wiring.md) + run at B64. NOT done this session --
+the session's goal was the COMPILE, which is tamed.
 
 ## RESULTS — production compile is TRACTABLE; gradient CORRECT (the headline)
 - **Lensed-spectrum jvp at PRODUCTION l2508/lensing=True** (scan/spec_compile_probe.py,

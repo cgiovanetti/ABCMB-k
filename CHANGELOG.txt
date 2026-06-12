@@ -9,6 +9,76 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-12 (a) — Staged-jvp COMPILE is TRACTABLE (~5 min one-time); PA_GRADMETHOD=batched WIRED
+------------------------------------------------------------------------------------------------
+Session: perk-perf ("fix_grad_perf"). Entry-(c) landed the batched AD gradient (correct,
+1.75e-5 vs single-path) but flagged the assembled staged-jvp COMPILE as the #1 blocker
+("hours/intractable" at production scale). This session DIAGNOSED it, ruled out the wrong
+fix, and found the compile is NOT a wall -- it's a bounded ~5-min ONE-TIME-PER-JOB tax.
+The gradient is now wired into the production driver.
+
+DIAGNOSIS (scan/grad_compile_profile.py, per-stage jvp compile l128/B2 A100): pre_recomb
+3.4s, HyRex 26.8s, get_BG 7.2s, perturbation 48.2s, spectrum 47.7s. Each stage's jvp
+compiles ONCE per (B,l_max) aval and is cached on the filter_jit'd method, so P directions
+do NOT multiply compile. And within a SLURM job the in-memory jit cache means the staged
+compile is paid ONCE on the first gradient call and reused every BFGS iter. The handoff's
+"intractable" was COLD end-to-end (incl the single-path reference) with BOTH B and l_max
+doubled each step -- not the per-stage staged compile.
+
+SCALING (scan/jvp_compile_levers.py): perturbation jvp compile is l_max-INDEPENDENT
+(hierarchy truncation fixed; n_k grows w/ l_max -> more CACHED k-chunks, not bigger compile)
+and only MILDLY B-scaling (B2->B8: 113->186s). Spectrum jvp compile is B-INSENSITIVE
+(47.7->53.2s) and scales with l_max + lensing.
+
+PRODUCTION COMPILE GATE (scan/spec_compile_probe.py -- feeds get_Cl_batched a FAKE PT of
+the right shape so no ~10min perturbation solve is needed; the spectrum jvp compile is
+shape-driven). The LENSED spectrum jvp at l2508/lensing=True: cold 119.6s, WARM 0.57s, peak
+1.80 GB. The Wigner d-matrices d00/d1n/... are param-INDEPENDENT, so forward-mode carries
+ZERO tangent through them (warm 0.57s confirms the run is cheap; compile ~= primal lensed-
+spectrum compile, not doubled). => TOTAL production staged compile ~= HyRex(27s) +
+PE(~110s @ B=13) + SS(119s @ l2508) ~= ~5 MIN ONE-TIME PER JOB. TRACTABLE.
+
+NEGATIVE RESULT -- jax.linearize is DEAD for the ODE stage (l128/B2): compiled 3x WORSE
+(154 vs 47s) with NO runtime win (apply 64.5 ~ jvp warm 66.4 s/dir). linearize's "apply"
+re-integrates the full augmented ForwardMode-Kvaerno5 system every direction; it does not
+separate the primal trajectory for the adaptive implicit solver. Keep per-direction jax.jvp.
+
+k_chunk LEVER (modest): smaller k_chunk shrinks the augmented-ODE fusion -> lower PE jvp
+compile, but more chunks raise runtime. l128/B8 one-call cold: k_chunk 100/50/25/10 =
+186/153/174/253s -> minimum ~50. Added a k_chunk_size knob to the gradient path
+(PA_GRAD_KCHUNK), independent of the primal k_chunk=100.
+
+WIRING. scan/batched_grad.py: + staged_chi2_and_grad (contracts the staged per-k Cl
+tangents through a likelihood closure via one cheap jvp/direction) + a k_chunk_size knob on
+staged_cl_and_grad. scan/profile_prod_ad.py: + PA_GRADMETHOD=batched (batched_grad_fg builds
+the 5 SIG-scaled nuisance tangents + _chi2_of_cls -> dchi2/dx5 over all B grid points in ONE
+staged push; VALUES stay on the fast call_batched path so the consistency rule holds).
+CORRECTNESS GATE scan/validate_chi2_grad.py (l128/B2/P5): worst max-rel(batched chi2 grad,
+single-path jacfwd of the SAME objective) = 8.58e-4 (<1e-3; the chi2 contraction amplifies
+the ~1e-5 Cl chunking noise -- negligible for BFGS descent). GOTCHA: _phys_to_derived must
+_to_float the DERIVED dict (FIXED's python-int N_nu_massive -> jnp.array int -> None tangent
+mismatches the _to_float'd float primal partition; the existing derived_and_tangents dodges
+this only by casting the RAW input to float first).
+
+THROUGHPUT (scan/grad_prod_shape.py, l2508/B8/P2/lensing=True, single-GPU): COLD
+(compile+run) 748.1s, peak 4.07 GB. HONEST read: at this SMALL-B SINGLE-GPU config the
+batched gradient is NOT yet faster than single-path (~85 s/cosmo P=5) -- the l2508
+perturbation solve doesn't saturate the GPU at B=8 and forward-mode x P directions costs.
+The win is the SAME B-scaling + sharding call_batched already shows (primal 3.24 -> 1.13
+s/param from B16 -> B64/4-GPU); the gradient is jvp of those identical batched stages so
+it inherits that amortization, and the 4 GB peak @ B8 leaves room for B64 (~32 GB) on one
+80GB A100. Sharding the gradient (reuse call_batched's shardfn) + B64 is the throughput
+follow-up; this session's deliverable was the COMPILE (tamed) + the correct, wired
+gradient. Driver integration (PA_GRADMETHOD=batched, n_s, NPTS=3) launched end-to-end
+in the real driver (lensing=True l2508); the standalone gradient correctness is the
+8.58e-4 gate above (bench/driver_batched_smoke.log has the BFGS-iter run).
+
+Artifacts: bench/grad_compile_findings.md (full diagnosis + every lever),
+bench/driver_batched_wiring.md (wiring). Tools in scan/: grad_compile_profile.py,
+jvp_compile_levers.py, grad_jvp_levers.py, spec_compile_probe.py, grad_prod_shape.py,
+validate_chi2_grad.py.
+
+
 2026-06-11 (c) — Batched AD on the per-k pipeline: gradient now RIDES the refactor (correct; compile is next)
 -----------------------------------------------------------------------------------------------------------
 Session: perk-perf ("frequentist_adversary", cont.). The entry-(b) AD profile used the
