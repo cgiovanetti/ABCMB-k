@@ -27,6 +27,9 @@ from scan.batched_grad import staged_chi2_and_grad, _to_float
 LMAX = int(os.environ.get("VCG_LMAX", 128))
 B = int(os.environ.get("VCG_B", 3))
 LENSING = os.environ.get("VCG_LENSING", "0") != "0"
+# VCG_SHARD: if "1", ALSO compare the sharded staged grad vs the unsharded one
+# (GSPMD partitions the SAME program -> expect agreement ~1e-12; >1e-6 = bug).
+SHARD = os.environ.get("VCG_SHARD", "0") != "0"
 
 FIXED = {'Neff': 3.044, 'YHe': 0.2454, 'TCMB0': 2.34865418e-4,
          'N_nu_massive': 1, 'T_nu_massive': 0.71611, 'm_nu_massive': 0.06,
@@ -71,7 +74,8 @@ def phys_to_derived(th6):
 
 
 def main():
-    print(f"devices={jax.devices()} lmax={LMAX} B={B} lensing={LENSING}", flush=True)
+    print(f"devices={jax.devices()} lmax={LMAX} B={B} lensing={LENSING} "
+          f"shard_cmp={SHARD}", flush=True)
     rng = np.random.default_rng(1)
     # B cosmologies dispersed around LCDM center (in sigma units, modest)
     thetas = [jnp.asarray(CEN + 0.3 * SIG * rng.normal(size=6)) for _ in range(B)]
@@ -90,10 +94,32 @@ def main():
         per.append(dots)
     params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs),
                                 *[per[b][j] for b in range(B)]) for j in range(5)]
+    # reference path is UNSHARDED (single device); the optional shard comparison
+    # below runs the IDENTICAL program partitioned across all GPUs.
     chi2_b, grad_b = staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
-                                          k_chunk_size=100)
+                                          k_chunk_size=100, shard=False)
     chi2_b = np.asarray(chi2_b); grad_b = np.asarray(grad_b)   # (B,), (B,5)
-    print(f"batched chi2 = {chi2_b}", flush=True)
+    print(f"batched chi2 (unsharded) = {chi2_b}", flush=True)
+
+    # ---- SHARDED vs UNSHARDED gate (GSPMD partitions the same program) ----
+    if SHARD:
+        print("\n[validate] SHARDED vs UNSHARDED staged chi2 grad "
+              f"(ndev={len(jax.devices('gpu'))}):", flush=True)
+        chi2_s, grad_s = staged_chi2_and_grad(model, full_ps, params_dots,
+                                              chi2_of_cls, k_chunk_size=100,
+                                              shard=True)
+        chi2_s = np.asarray(chi2_s); grad_s = np.asarray(grad_s)
+        d_chi2 = float(np.max(np.abs(chi2_s - chi2_b)
+                              / np.maximum(np.abs(chi2_b), 1.0)))
+        d_grad = float(np.max(np.abs(grad_s - grad_b)
+                              / np.maximum(np.abs(grad_b), 1.0)))
+        print(f"  chi2: {chi2_s}", flush=True)
+        print(f"  max rel(sharded, unsharded) chi2 = {d_chi2:.2e}", flush=True)
+        print(f"  max rel(sharded, unsharded) grad = {d_grad:.2e}", flush=True)
+        verdict = "PASS (~1e-12, same program)" if max(d_chi2, d_grad) < 1e-6 \
+            else "FAIL (>1e-6 => sharding bug, do NOT proceed to timing)"
+        print(f"  >>> SHARD GATE: max rel = {max(d_chi2, d_grad):.2e}  {verdict}",
+              flush=True)
 
     # ---- single-path reference: jacfwd of chi2(run_cosmology_abbr) per cosmo ----
     def chi2_single(th6):
