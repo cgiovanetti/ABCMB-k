@@ -23,7 +23,8 @@ changes (TOOL_PLAN section 3 + the 2026-06-12 Workstream-A orchestrator verdict)
   3. GRADIENTS: PA_GRADMETHOD=fdbatch is the DEFAULT (Workstream-A verdict).
      Central finite-difference gradients assembled ON THE BATCH AXIS: the
      2*P*N perturbed cosmologies are evaluated through call_batched in chunks
-     of PA_FD_CHUNK (~512, padded to keep shapes stable). VALUES for the Armijo
+     of PA_FD_CHUNK (128 -> B_local=32 ~12 GB/dev on a 4-GPU node; padded to keep
+     shapes stable). The value path is chunked at the same size. VALUES for the Armijo
      line search + the recorded profile ALWAYS come from the fast call_batched
      path (the consistency rule, commit 76127ca -- never mix value sources).
      it0 CALIBRATION compares fdbatch against the exact batched-AD gradient and
@@ -36,7 +37,7 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
   PA_NPTS(config) PA_NSIG(config) PA_MAXIT(40) PA_GTOL(3e-2)
   PA_LMAX(2508) PA_RTOL(1e-5) PA_TAG('') PA_RESUME(1)
-  PA_GRADMETHOD(fdbatch|ad|batched|loop|vmap) PA_FD_STEP(1e-2) PA_FD_CHUNK(512)
+  PA_GRADMETHOD(fdbatch|ad|batched|loop|vmap) PA_FD_STEP(1e-2) PA_FD_CHUNK(128)
   PA_FD_CALTOL(1e-2) PA_FD_CALMIN(32) PA_CAL_RETRIES(3)
   PA_HESS(1) PA_SHARD(auto|0|1) PA_WARM(1) PA_WARM_DIR(scan/results)
   PA_MULTISTART(0) PA_MS_K(6) PA_USE_LOWTT(cfg) PA_USE_LOWEE(cfg)
@@ -101,7 +102,7 @@ RESUME = os.environ.get("PA_RESUME", "1") != "0"
 GRADMETHOD = os.environ.get("PA_GRADMETHOD", "fdbatch").lower()
 GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for batched AD grad
 FD_STEP = float(os.environ.get("PA_FD_STEP", "1e-2"))        # central FD step (scaled coords)
-FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "512"))        # cosmologies per call_batched call
+FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "128"))        # cosmologies per primal call_batched (B_local=FD_CHUNK/n_dev)
 FD_CALTOL = float(os.environ.get("PA_FD_CALTOL", "1e-2"))   # it0 fd-vs-ad max-rel target
 FD_CALMIN = int(os.environ.get("PA_FD_CALMIN", "32"))       # min rows in the it0 calibration sample
 CAL_RETRIES = int(os.environ.get("PA_CAL_RETRIES", "3"))
@@ -187,10 +188,11 @@ def _chi2_from_out(out):
 
 def fast_values_rows(POI_IDX, X, PV):
     """POI_IDX:(N,) int, X:(N,P), PV:(N,) -> (N,) total chi^2 (profiled + low-ell).
-    One call_batched over all N rows (shard auto)."""
+    Evaluated through call_batched in FD_CHUNK-sized chunks (memory-safe: per-device
+    working set is set by FD_CHUNK/n_dev, NOT by N -- an unchunked call over all N
+    rows OOMs once N is large, the same root cause as job 54369057/54362790)."""
     batch = [build_dict(assemble_phys(int(POI_IDX[b]), X[b], PV[b])) for b in range(len(PV))]
-    out = model.call_batched(batch, shard=DO_SHARD)
-    return _chi2_from_out(out)
+    return _chunked_call_batched(batch, FD_CHUNK)
 
 
 def _chunked_call_batched(batch, chunk):

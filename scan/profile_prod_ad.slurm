@@ -57,7 +57,7 @@ export PA_GTOL=${PA_GTOL:-3e-2}
 export PA_RTOL=${PA_RTOL:-1e-5}
 export PA_GRADMETHOD=${PA_GRADMETHOD:-fdbatch}
 export PA_FD_STEP=${PA_FD_STEP:-1e-2}
-export PA_FD_CHUNK=${PA_FD_CHUNK:-512}
+export PA_FD_CHUNK=${PA_FD_CHUNK:-128}   # cosmologies per primal call_batched (B_local=CHUNK/n_dev); 512 OOM'd job 54362790 on 40GB nodes
 export PA_HESS=${PA_HESS:-1}
 export PA_SHARD=${PA_SHARD:-auto}
 export PA_WARM=${PA_WARM:-1}
