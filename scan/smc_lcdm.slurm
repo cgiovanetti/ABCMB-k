@@ -18,9 +18,13 @@
 # + low-ell TT Commander + low-ell EE SRoll2, rtol_large_k_PE=1e-5, l_max=2508 lensed.
 #
 # EAGER PYTHON loop around Model.call_batched: the pipeline is GPU->CPU-HyRex->GPU and
-# is NOT end-to-end jittable, so the SMC tempering loop is hand-rolled numpy; each
-# likelihood eval of the N-particle population is ONE batched (4-GPU sharded) call.
-# Batch shape stays (N,) the whole run -> ONE compile of the call_batched B aval.
+# is NOT end-to-end jittable, so the SMC tempering loop is hand-rolled numpy. Each
+# likelihood eval of the N-particle population is done in SMC_EVAL_CHUNK-sized
+# (4-GPU sharded) call_batched chunks: per-device memory is set by EVAL_CHUNK/n_dev,
+# NOT by N, so the population can grow without OOM. Each chunk is padded to
+# EVAL_CHUNK -> ONE compile of the call_batched B aval, reused across chunks/stages.
+# (Default EVAL_CHUNK=128 -> B_local=32 ~12 GB/dev, safe on 40 GB A100s; the prior
+# N=512 single-call run 54369057 OOM'd at B_local=128 ~49 GB on regular-queue nodes.)
 #
 # RESUMABLE: state persisted to <SMC_OUT>_state.npz every tempering stage. A resubmit
 # auto-detects that file (SMC_RESUME also accepts an explicit path) and continues from
@@ -43,6 +47,7 @@ mkdir -p logs scan/results
 
 export SMC_CONFIG=${SMC_CONFIG:-scan/configs/lcdm.py}
 export SMC_N=${SMC_N:-512}
+export SMC_EVAL_CHUNK=${SMC_EVAL_CHUNK:-128}   # cosmologies per call_batched (B_local=CHUNK/n_dev)
 export SMC_MOVES=${SMC_MOVES:-3}
 export SMC_ESS_TARGET=${SMC_ESS_TARGET:-0.5}
 export SMC_LMAX=${SMC_LMAX:-2508}

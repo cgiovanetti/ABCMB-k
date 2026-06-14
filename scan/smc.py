@@ -90,6 +90,15 @@ USER_SPECIES = CFG.get("user_species", None)
 
 # ---------------- env config ----------------
 N = int(os.environ.get("SMC_N", 512))
+# Per-call_batched evaluation chunk (cosmologies across ALL devices). The full
+# population N is evaluated EVAL_CHUNK at a time so the per-device working set
+# (~0.36 GB/cosmo-local peak at l2508+lensing, MEASURED from the 54369057 OOM)
+# stays well under device memory. Default 128 -> B_local=32 on a 4-GPU node
+# (~12 GB/device), safe on the 40 GB A100s the regular queue lands on (the
+# "B~512/node" guidance in CLAUDE.md was measured on 80 GB nodes). Memory per
+# call is set by EVAL_CHUNK/n_dev, NOT by N, so this is decoupled from the
+# particle count. Each chunk is padded to EVAL_CHUNK -> ONE compile, reused.
+EVAL_CHUNK = int(os.environ.get("SMC_EVAL_CHUNK", 128))
 MOVES = int(os.environ.get("SMC_MOVES", 3))
 ESS_TARGET = float(os.environ.get("SMC_ESS_TARGET", 0.5))
 LMAX = int(os.environ.get("SMC_LMAX", 2508))
@@ -172,11 +181,39 @@ def _chi2_from_out(out):
     return np.where(np.isfinite(chi2), chi2, CHI2_INF)
 
 
+def peak_gb():
+    """Max per-device GPU peak (GB) since reset; nan on CPU-only."""
+    try:
+        return max(d.memory_stats()["peak_bytes_in_use"]
+                   for d in jax.devices('gpu')) / 1e9
+    except Exception:
+        return float('nan')
+
+
+def _eval_chunked(dicts):
+    """Evaluate a list of param dicts through call_batched in fixed-size,
+    memory-safe chunks. Returns a (len(dicts),) chi2 array.
+
+    The per-device memory of one call_batched is set by (chunk size / n_dev),
+    so chunking caps the working set independent of how many particles N we
+    carry. Each chunk is PADDED to EVAL_CHUNK before the call so the B aval is
+    constant -> ONE compile, reused across chunks AND across SMC stages."""
+    n = len(dicts)
+    out_chi2 = np.empty(n)
+    for s in range(0, n, EVAL_CHUNK):
+        blk = dicts[s:s + EVAL_CHUNK]
+        nb = len(blk)
+        if nb < EVAL_CHUNK:                       # pad last chunk -> fixed aval
+            blk = blk + [blk[-1]] * (EVAL_CHUNK - nb)
+        out = model.call_batched(blk, shard=DO_SHARD)
+        out_chi2[s:s + nb] = _chi2_from_out(out)[:nb]
+    return out_chi2
+
+
 def chi2_batch(thetas):
     """thetas (M,D) physical -> (M,) total chi^2. Particles OUTSIDE the prior box
-    are short-circuited to +inf (no theory eval); only in-box rows are evaluated via
-    ONE call_batched. The evaluated batch is PADDED to N (replicate last in-box row,
-    or a center fallback) so the call_batched B aval stays fixed -> ONE compile."""
+    are short-circuited to +inf (no theory eval); in-box rows are evaluated via
+    call_batched in EVAL_CHUNK-sized chunks (memory-safe; see _eval_chunked)."""
     thetas = np.asarray(thetas, float)
     M = thetas.shape[0]
     chi2 = np.full(M, np.inf)
@@ -185,24 +222,7 @@ def chi2_batch(thetas):
     if len(idx) == 0:
         return chi2
     sub = [build_dict(thetas[b]) for b in idx]
-    # pad to N so the batch aval matches the persistent compile (replicate last)
-    nsub = len(sub)
-    if nsub < N:
-        sub = sub + [sub[-1]] * (N - nsub)
-    elif nsub > N:
-        # should not happen (M<=N by construction) but guard anyway: chunk
-        c = np.empty(nsub)
-        for s in range(0, nsub, N):
-            blk = sub[s:s + N]
-            nb = len(blk)
-            if nb < N:
-                blk = blk + [blk[-1]] * (N - nb)
-            out = model.call_batched(blk, shard=DO_SHARD)
-            c[s:s + nb] = _chi2_from_out(out)[:nb]
-        chi2[idx] = c
-        return chi2
-    out = model.call_batched(sub, shard=DO_SHARD)
-    chi2[idx] = _chi2_from_out(out)[:nsub]
+    chi2[idx] = _eval_chunked(sub)
     return chi2
 
 
@@ -358,6 +378,9 @@ def run_smc():
             chi2 = np.where(np.isfinite(chi2), chi2, CHI2_INF)
         print(f"[smc] init chi2: min={chi2.min():.2f} med={np.median(chi2):.2f} "
               f"max={chi2.max():.2f}", flush=True)
+        print(f"[smc] per-device GPU peak after init eval: {peak_gb():.2f} GB "
+              f"(EVAL_CHUNK={EVAL_CHUNK}, B_local={-(-EVAL_CHUNK // max(NDEV,1))})",
+              flush=True)
         save_state(STATE_NPZ, particles, chi2, logW, beta, logZ, rng, stage, trace,
                    n_evals, wall_start)
 
@@ -486,9 +509,9 @@ def run_smc():
 
 def main():
     print(f"[smc] devices={jax.devices()} config={CONFIG_ABS} N={N} D={D} "
-          f"MOVES={MOVES} ESS_TARGET={ESS_TARGET} LMAX={LMAX} rtol={RTOL} "
-          f"shard={DO_SHARD} lowTT={USE_LOWTT} lowEE={USE_LOWEE} seed={SEED}",
-          flush=True)
+          f"EVAL_CHUNK={EVAL_CHUNK} MOVES={MOVES} ESS_TARGET={ESS_TARGET} "
+          f"LMAX={LMAX} rtol={RTOL} shard={DO_SHARD} lowTT={USE_LOWTT} "
+          f"lowEE={USE_LOWEE} seed={SEED}", flush=True)
     print(f"[smc] prior box (CEN +- {PRIOR_NSIG} sigma):", flush=True)
     for i, name in enumerate(ORDER):
         print(f"    {name:12s} [{LO[i]:.6g}, {HI[i]:.6g}]", flush=True)
