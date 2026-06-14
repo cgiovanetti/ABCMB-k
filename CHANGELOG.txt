@@ -9,6 +9,44 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-14 — OOM FIX: both production jobs died at B_local=128 on 40 GB nodes; cap the primal call_batched batch
+-------------------------------------------------------------------------------------------------------------
+Session: perk-perf (orchestrator). Both production jobs submitted 2026-06-12 FAILED
+after long queue waits, from the SAME root cause: an OOM at the spectrum stage
+(get_Cl_batched, RESOURCE_EXHAUSTED, 13.79 GiB).
+  - SMC 54369057: FAILED at the INIT chi2 eval. chi2_batch padded the in-box
+    particles up to N=512 and called call_batched ONCE -> B_local=128.
+  - Gate 54362790: FAILED at it0 fd calibration. PA_FD_CHUNK=512 -> B_local=128.
+DIAGNOSIS: the regular queue placed the jobs on 40 GB A100s (the SMC log printed
+"estimated GPU peak ~49 GB/device (Ny=46, B_local=128) approaches the ~32 GB limit"
+and ran anyway). The "B~512/node" memory guidance in CLAUDE.md was MEASURED on the
+80 GB nodes the interactive agents got; regular-queue batch jobs are NOT guaranteed
+80 GB. Per-call_batched memory is set by B_local = batch/n_dev, so a 512-cosmology
+single call over 4 GPUs is B_local=128 either way.
+FIX (commits 3eb7c55 SMC, 21b17f4 gate):
+  - smc.py: new SMC_EVAL_CHUNK (default 128); chi2_batch evaluates the in-box rows
+    through call_batched in fixed-size, shard-aligned, padded chunks (_eval_chunked).
+    Memory now set by EVAL_CHUNK/n_dev, decoupled from N; each chunk pads to
+    EVAL_CHUNK -> ONE compile reused across chunks/stages. + peak-GB print after init.
+  - profile_prod_ad.py: PA_FD_CHUNK default 512 -> 128 (code AND slurm; the slurm's
+    :-512 would have overridden the code); fast_values_rows (was an UNCHUNKED call
+    over all ~150 rows -> a second latent OOM) now routes through _chunked_call_batched.
+    The AD certificate path (AD_BCHUNK=64 -> B_local=16 ~8 GB) was already safe.
+DEBUG GATE (job 54442123, gpu_debug, l2508+lensing, chunk=128, N=128): COMPLETED
+clean. Per-device peak 5.28 GB at B_local=32 (FAR under 32 GB; the 13.79 GiB
+spectrum transient at B_local=128 scales super-linearly, so the measured-safe point
+is kept, NOT extrapolated up). Physics sane: init chi2 min 1048 -> stage-2 chi2min
+1011 (= the expected ~1012 low-ell floor); ESS bisection hits 0.5N; acceptance
+0.26/0.22; logZ finite; resampling fires; resume-safe machinery exercised.
+RESUBMITTED (regular qos, chunk=128): SMC 54442537, gate 54442539. SMC may need one
+auto-resume if it exceeds 12 h (resumable per-stage; bit-identical resume validated).
+STILL PENDING (unchanged): grad_method-as-config-kwarg flip (TOOL_PLAN section 2 USER
+DIRECTION) — does NOT affect this gate run (lcdm already defaults fdbatch); apply
+after the gate succeeds. Workstream C (Neff, all-AD) after the gate reproduces entry-(a).
+NOTE for future batch sizing: size B_local for 40 GB nodes (~0.17 GB/cosmo-local at
+B_local=32 MEASURED; super-linear above), not the 80 GB interactive nodes.
+
+
 2026-06-12 (e) — WORKSTREAM D: hand-rolled tempered SMC posterior + evidence (the Bayesian anchor); smoke passed, production submitted
 ------------------------------------------------------------------------------------------------------------------------------------
 Session: perk-perf (Claude Opus 4.8 subagent; 1 interactive 4xA100-80GB node).
