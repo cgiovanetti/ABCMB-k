@@ -392,6 +392,23 @@ def run_smc():
         #      ~ ESS_TARGET*N). logW carries pre-stage cumulative importance weights
         #      (uniform whenever the previous stage resampled). ----
         db = find_delta_beta(chi2, beta, logW, ESS_TARGET)
+        # PRE-EMPTIVE RESAMPLE: when the cumulative weights logW are already
+        # degenerate (ESS <= target), the bisection returns db ~ 0 (at mid=0 the ESS
+        # is already <= target, so it shrinks toward zero) and beta cannot advance --
+        # which is exactly the signal to resample. Reset logW to uniform and re-find a
+        # real positive step. WITHOUT this, the schedule advanced beta by numerical-
+        # noise db ~1e-16 and burned ~half its stages hovering at a fixed beta until
+        # FP drift finally tripped the STRICT post-step resample test (ess_pre < target
+        # never fires while ESS sits exactly at target). Efficiency only -- the old
+        # runs were correct (db~0 stages add 0 to logZ), just ~2x too slow.
+        if db < 1e-8 and ess_of_logw(logW) < N - 1e-9:
+            anc = systematic_resample(normalized_weights(logW), rng)
+            particles = particles[anc].copy()
+            chi2 = chi2[anc].copy()
+            logW = np.zeros(N)
+            db = find_delta_beta(chi2, beta, logW, ESS_TARGET)
+            print(f"[smc] stage {stage}: pre-emptive resample (degenerate logW); "
+                  f"re-found dbeta={db:.4e}", flush=True)
         if db <= 0:
             print(f"[smc] stage {stage}: delta-beta collapsed to 0 at beta={beta}; "
                   f"forcing beta->1", flush=True)

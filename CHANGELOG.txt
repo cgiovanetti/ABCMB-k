@@ -9,6 +9,42 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-16 — SMC RESULT (ΛCDM posterior validated) + adaptive-schedule stall fix
+---------------------------------------------------------------------------------
+Session: perk-perf (orchestrator). SMC production 54442537 (the chunk=128 resubmit)
+COMPLETED clean in 6h26m: 13 stages, beta->1, logZ=-509.92, 20480 chi2-evals.
+
+RESULT — the Bayesian anchor (review gap #2) validates. Marginals (mean+-std) vs the
+frequentist profile entry-(a) best-fit and Planck 2018 TT,TE,EE+lowE:
+  h        0.6789+-0.0062  (profile 0.6763; Planck 0.6736+-0.0054; +1.0 sigma)
+  omega_b  0.022385+-0.000155 (0.02230; 0.02237+-0.00015; +0.1 sigma)
+  omega_cdm 0.11992+-0.00137 (0.1206; 0.1200+-0.0012; -0.1 sigma)
+  n_s      0.96479+-0.00446 (0.9628; 0.9649+-0.0042; ~0)
+  ln10As   3.0511+-0.0126  (3.0510; 3.044+-0.014; +0.5 sigma)
+  tau      0.05887+-0.00597 (0.0581; 0.0544+-0.0073; +0.6 sigma)
+SMC and the profile agree to within ~0.5 sigma on the SAME likelihood; both within
+~1 sigma of Planck; posterior widths match Planck to ~10-20%. logZ=-509.92 is the
+LCDM evidence baseline for future Bayes factors. (h ~1 sigma high with tau/ln10As
+mildly high is a coherent degeneracy direction, consistent between both methods.)
+
+BUG FOUND + FIXED (efficiency only; the above result is VALID) — adaptive tempering
+stalled: 6 of 13 stages made NO beta progress (dbeta~1e-16), ~46% wasted wall. Root
+cause: when the cumulative weights logW are already degenerate (ESS <= target),
+find_delta_beta's bisection returns db~0 (at mid=0 ESS is already <= target so it
+shrinks), and the STRICT post-step resample test (ess_pre < target) never fires while
+ESS hovers exactly AT target -- so beta crawls by FP-noise db until drift trips the
+test several stages later. The stalled stages add exactly 0 to logZ and only do extra
+MCMC moves (harmless), so completed runs were CORRECT, just ~2x too slow.
+FIX (smc.py): when db < 1e-8 and logW is non-uniform, PRE-EMPTIVELY resample to
+uniform and re-find a real positive step (standard adaptive SMC), instead of waiting
+for the strict test. VALIDATION (debug 54577615, l128): stages advanced every time;
+stage 3 exercised the new pre-emptive-resample path ("re-found dbeta=4.15e-01"); ZERO
+residual dbeta~0 stalls. (TIMED OUT before beta=1 -- l128 was a poor 30-min choice at
+~10min/stage -- but beta->1 TERMINATION is an UNCHANGED code path already proven by
+54442537, and the edit only touches the degenerate mid-run case the test exercised.)
+Expect ~2x fewer stages on the next SMC run (the LCDM+Neff posterior).
+
+
 2026-06-14 — OOM FIX: both production jobs died at B_local=128 on 40 GB nodes; cap the primal call_batched batch
 -------------------------------------------------------------------------------------------------------------
 Session: perk-perf (orchestrator). Both production jobs submitted 2026-06-12 FAILED
