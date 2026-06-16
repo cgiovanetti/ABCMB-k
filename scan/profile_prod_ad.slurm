@@ -23,10 +23,11 @@
 # with 4 GPUs -- NOT one-POI-per-GPU. (Multi-node = PA_RANK_SLICE=1 + ntasks=nodes,
 # one task/node, each task shards its row slice over its 4 GPUs.)
 #
-# GRADIENTS: PA_GRADMETHOD=fdbatch (DEFAULT, Workstream-A verdict): central FD on
-# the batch axis for BFGS iterations (it0 calibrated against exact AD), AD for the
-# final ||g||<GTOL stationarity certificate + nuisance Hessian. VALUES always on the
-# fast call_batched path (consistency rule).
+# GRADIENTS: the CONFIG's grad_method picks the BFGS iteration gradient (lcdm->fdbatch
+# central-FD on the batch axis, Workstream-A verdict; lcdm_neff->ad exact batched-AD for
+# the possibly non-convex Neff direction). it0 calibrates fdbatch against exact AD; the
+# final ||g||<GTOL stationarity certificate + nuisance Hessian are ALWAYS exact AD.
+# VALUES always on the fast call_batched path (consistency rule).
 #
 # RESUMABLE: a POI whose results/profile_prod_ad_<poi>.npz has done=True is skipped
 # (PA_RESUME=1). The JAX compile cache ($SCRATCH/.jax_cache_abcmb) makes the ~5-min
@@ -55,7 +56,9 @@ export PA_NSIG=${PA_NSIG:-3.0}
 export PA_MAXIT=${PA_MAXIT:-40}
 export PA_GTOL=${PA_GTOL:-3e-2}
 export PA_RTOL=${PA_RTOL:-1e-5}
-export PA_GRADMETHOD=${PA_GRADMETHOD:-fdbatch}
+# grad_method comes from the CONFIG file (lcdm->fdbatch, lcdm_neff->ad), NOT here.
+# PA_GRADMETHOD is a DEBUG-ONLY override (warns + shadows config) -- do not set it
+# for production; leave it unset so the per-physics config choice governs.
 export PA_FD_STEP=${PA_FD_STEP:-1e-2}
 export PA_FD_CHUNK=${PA_FD_CHUNK:-128}   # cosmologies per primal call_batched (B_local=CHUNK/n_dev); 512 OOM'd job 54362790 on 40GB nodes
 export PA_HESS=${PA_HESS:-1}

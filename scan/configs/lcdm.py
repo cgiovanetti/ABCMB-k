@@ -23,6 +23,14 @@ loads it via PA_CONFIG=<path-to-this-file>. Declared fields:
   use_lowee    : bool        include the low-ell EE (SRoll2) likelihood.
   npts         : int         POI grid points (PA_NPTS overrides).
   nsig         : float       POI grid half-extent in sigma (PA_NSIG overrides).
+  grad_method  : str         BFGS iteration-gradient method, a PER-PHYSICS-MODEL
+                             analysis choice (NOT an env var): "fdbatch" (central
+                             FD on the batch axis -- ~2.4-6x cheaper/dir, fine for
+                             LCDM) or "ad" (exact batched-AD iterations -- use for
+                             non-convex new-physics params where FD truncation is
+                             risky). The final stationarity certificate is ALWAYS
+                             exact AD regardless. PA_GRADMETHOD is a DEBUG-ONLY
+                             override and warns when set.
 """
 
 CONFIG = {
@@ -47,4 +55,5 @@ CONFIG = {
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
+    "grad_method": "fdbatch",   # LCDM is well-behaved -> FD iterations (AD certificate)
 }

@@ -20,7 +20,9 @@ changes (TOOL_PLAN section 3 + the 2026-06-12 Workstream-A orchestrator verdict)
      (P = D-1 is uniform). Today's one-POI-per-rank stays as an OPTION
      (PA_RANK_SLICE) for multi-node; single-task handles the full set.
 
-  3. GRADIENTS: PA_GRADMETHOD=fdbatch is the DEFAULT (Workstream-A verdict).
+  3. GRADIENTS: the config's grad_method selects the BFGS iteration gradient
+     (a per-physics choice; PA_GRADMETHOD is a DEBUG-ONLY override that warns).
+     "fdbatch" (LCDM default, Workstream-A verdict).
      Central finite-difference gradients assembled ON THE BATCH AXIS: the
      2*P*N perturbed cosmologies are evaluated through call_batched in chunks
      of PA_FD_CHUNK (128 -> B_local=32 ~12 GB/dev on a 4-GPU node; padded to keep
@@ -31,13 +33,15 @@ changes (TOOL_PLAN section 3 + the 2026-06-12 Workstream-A orchestrator verdict)
      halves PA_FD_STEP until they agree (max-rel <= PA_FD_CALTOL). The FINAL
      stationarity CERTIFICATE is ALWAYS the exact AD gradient: ||g||_inf < GTOL
      per row + the nuisance Hessian (central FD of the AD gradient) + PD check.
-     PA_GRADMETHOD=ad / batched / loop / vmap remain available.
+     grad_method=ad / batched / loop / vmap remain available (config or, for
+     debugging, the PA_GRADMETHOD override).
 
 Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
   PA_NPTS(config) PA_NSIG(config) PA_MAXIT(40) PA_GTOL(3e-2)
   PA_LMAX(2508) PA_RTOL(1e-5) PA_TAG('') PA_RESUME(1)
-  PA_GRADMETHOD(fdbatch|ad|batched|loop|vmap) PA_FD_STEP(1e-2) PA_FD_CHUNK(128)
+  grad_method in config (fdbatch|ad|batched|loop|vmap); PA_GRADMETHOD = debug override
+  PA_FD_STEP(1e-2) PA_FD_CHUNK(128)
   PA_FD_CALTOL(1e-2) PA_FD_CALMIN(32) PA_CAL_RETRIES(3)
   PA_HESS(1) PA_SHARD(auto|0|1) PA_WARM(1) PA_WARM_DIR(scan/results)
   PA_MULTISTART(0) PA_MS_K(6) PA_USE_LOWTT(cfg) PA_USE_LOWEE(cfg)
@@ -99,7 +103,18 @@ GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||grad||_inf gate (scaled
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
-GRADMETHOD = os.environ.get("PA_GRADMETHOD", "fdbatch").lower()
+# grad_method is a RUN-CONFIG field (a per-physics-model analysis choice: FD
+# iterations are fine for LCDM but risky for non-convex new-physics params), NOT an
+# env var. PA_GRADMETHOD remains as a DEBUG-ONLY override and WARNS loudly when set
+# (user direction 2026-06-12; see scan/configs/*.py grad_method + TOOL_PLAN section 2).
+_CFG_GRADMETHOD = str(CFG.get("grad_method", "fdbatch")).lower()
+if "PA_GRADMETHOD" in os.environ:
+    GRADMETHOD = os.environ["PA_GRADMETHOD"].lower()
+    print(f"[profile] WARNING: PA_GRADMETHOD={GRADMETHOD} is a DEBUG-ONLY env override "
+          f"and SHADOWS the config grad_method='{_CFG_GRADMETHOD}'. Production runs "
+          f"should set grad_method in the config file, not the environment.", flush=True)
+else:
+    GRADMETHOD = _CFG_GRADMETHOD
 GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for batched AD grad
 FD_STEP = float(os.environ.get("PA_FD_STEP", "1e-2"))        # central FD step (scaled coords)
 FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "128"))        # cosmologies per primal call_batched (B_local=FD_CHUNK/n_dev)
