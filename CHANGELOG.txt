@@ -9,6 +9,64 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-16 — GATE FIX: calibration / preconditioner / checkpoint (profile_prod_ad.py)
+-------------------------------------------------------------------------------------
+Session: perk-perf. The ΛCDM frequentist gate (job 54442539) TIMED OUT at 12h without
+converging. Diagnosed THREE compounding root causes and fixed all three.
+
+DIAGNOSIS (from logs/abcmb_profile_ad_54442539.out):
+  1. calibrate_fd_step returned the WORST step. The FD-vs-AD ladder was 1e-2->1.2%,
+     5e-3->1.25%, 2.5e-3->2.6%, 1.25e-3->8.1% (central FD error is ~1/step in the
+     roundoff/solver-noise regime), but the code only HALVED and returned the LAST
+     (smallest=worst) step -> BFGS iterated on an 8%-noise gradient.
+  2. BFGS stalled: ||g||_inf 160->143->122->73->90->51 over 5 iters (non-monotonic),
+     chi2 dead flat (996.68->996.10). Identity-Hinv init is steepest-descent on the
+     ill-conditioned CMB likelihood; with the noisy gradient it never moved. ~1.7h/iter
+     on 1 node -> only 5 iters in 12h.
+  3. No mid-run checkpoint: per-POI npz writes done=True only at the very END (after
+     ALL rows finish), so the 12h timeout lost everything.
+
+FIXES (scan/profile_prod_ad.py):
+  1. calibrate_fd_step sweeps a STEP LADDER (PA_FD_STEP x [0.5,1,2,4,8]) and returns
+     the BEST (lowest max-rel), warning if the floor exceeds PA_FD_CALTOL.
+  2. Inverse-Fisher PRECONDITIONER (PA_PRECOND=1): init Hinv per-POI from the nuisance
+     submatrix of the full D x D chi2 Hessian at the warm-start global best fit
+     (_warm_precond_hessian via central FD of the AD gradient; _hinv0_for_poi inverts
+     the PD-regularised submatrix). Near-Newton first step.
+  3. Mid-BFGS CHECKPOINT: bfgs_rows writes (x,Hinv,f,g,best_*,it,fd_step) to
+     results/profile_prod_ad_STATE.npz after every iter (atomic os.replace);
+     profile_lockstep reloads a matching checkpoint (same POI_IDX/PV/gtol), skips
+     calibration+precond, and continues. Deleted on clean completion.
+  Plus: RELATIVE BFGS curvature guard (sy > 1e-8*|s||y| vs the old absolute 1e-12,
+  which was a no-op near convergence and let noisy (s,y) pairs corrupt Hinv).
+
+VALIDATION (GPU; a contended borrowed node then debug job 54599678):
+  - Calibration: ladder [5e-3..8e-2] correctly returned best=5e-3 @ max-rel 2.57e-3
+    (vs the prod bug's 1.25e-3 @ 8.1e-2).
+  - Preconditioner: nuis-Hessian cond h=32.1, omega_cdm=46.5; ||g|| START = 7.02 vs
+    prod identity-init 160 (23x better), ->2.02 by it1. (The kappa~2500 was the full
+    POI-coupled problem; the nuisance block we precondition is only kappa~40.)
+  - Checkpoint/resume: STATE written each iter; debug job reloaded "@ it3" and printed
+    "RESUME from it3 min=997.19 ||g||max=1.03e+01" -- exact restore, calibration+precond
+    skipped. (Small-batch single-GPU iters are 8-24min incl. per-node recompile, so the
+    debug 30min window could not show a full ||g||->GTOL trajectory; that is the gate's
+    own job -- 150 rows x 4 GPUs amortizes far better and is checkpointed.)
+
+SLURM (scan/profile_prod_ad.slurm): PA_HESS default 1->0. The per-row PD-Hessian is
+central-FD of the AD gradient over ALL 150 rows (~7500 single-cosmo jvps, MULTI-HOUR);
+the exact-AD ||g||<GTOL certificate (always run) is the convergence proof, PD is
+supplementary and near-certain for a smooth LCDM profile -- run it post-hoc on the
+per-POI argmin rows if wanted. PA_RANK_SLICE stays 0: multi-node is BROKEN for the
+final per-POI npz write (every rank clobbers it with NaN-filled rows; needs an MPI
+gather). Gate runs 1 node + checkpoint/resume.
+
+NEXT: resubmit the gate (sbatch scan/profile_prod_ad.slurm); expect ~1-2 jobs to
+converge (preconditioner cuts iteration count; per-iter ~1.5h on 1 node is unchanged).
+Then review the gate npz vs entry-(a), and Workstream C (LCDM+Neff, grad_method='ad').
+Throughput lever for the competitive "few hours" bar = fix multi-node clobber (MPI
+gather) so the headline benchmark uses 4 nodes (~0.4h/iter).
+
+
 2026-06-16 — SMC RESULT (ΛCDM posterior validated) + adaptive-schedule stall fix
 ---------------------------------------------------------------------------------
 Session: perk-perf (orchestrator). SMC production 54442537 (the chunk=128 resubmit)

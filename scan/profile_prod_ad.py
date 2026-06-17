@@ -136,6 +136,11 @@ RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
 XBOX = 5.0                                            # nuisance box (sigma units)
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
 FDH = 0.05                                            # FD step (sigma) for the AD Fisher Hessian
+# Inverse-Fisher BFGS preconditioner: init Hinv from the (per-POI) nuisance
+# Hessian at the warm-start global best fit. Turns the early steepest-descent
+# steps into near-Newton steps -> converges in a few iters on the ill-conditioned
+# CMB likelihood (kappa~1e3) instead of stalling. PA_PRECOND=0 reverts to eye.
+PRECOND = os.environ.get("PA_PRECOND", "1") != "0"
 
 POIS = os.environ.get("PA_POIS", ",".join(CFG.get("pois", ORDER))).split(",")
 POIS = [p.strip() for p in POIS if p.strip() in ORDER]
@@ -399,19 +404,38 @@ def iterate_grad(POI_IDX, X, PV, method, fd_step=None):
 # ======================================================================
 # vectorised BFGS over the ROW set (lockstep), Armijo line search
 # ======================================================================
-def bfgs_rows(POI_IDX, PV, x0=None, maxit=MAXIT, gtol=GTOL, fd_step=None,
-              log_prefix=""):
+def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
+              fd_step=None, log_prefix="", ckpt_path=None, resume_state=None):
     """BFGS profile over a flat row set. POI_IDX:(N,), PV:(N,). Returns
     (best_f (N,), best_x (N,P), gnorm (N,)). Stable batch shapes: inactive rows
-    keep riding the batch (no shrink)."""
+    keep riding the batch (no shrink).
+
+    Hinv0 (N,P,P) seeds the per-row inverse-Hessian (inverse-Fisher preconditioner);
+    None => identity. If ckpt_path is given the full BFGS state is written there
+    after every iteration; resume_state (a dict from a prior ckpt) restarts from it
+    so a walltime timeout loses at most one iteration."""
     N = len(PV)
-    x = np.zeros((N, P)) if x0 is None else np.array(x0, float)
-    g = iterate_grad(POI_IDX, x, PV, GRADMETHOD, fd_step=fd_step)
-    f = fast_values_rows(POI_IDX, x, PV)                  # value (fast path)
-    best_f = f.copy(); best_x = x.copy()
-    Hinv = np.tile(np.eye(P), (N, 1, 1))
-    gnorm = np.abs(g).max(1)
-    for it in range(maxit):
+    if resume_state is not None:
+        x = np.array(resume_state["x"], float)
+        Hinv = np.array(resume_state["Hinv"], float)
+        f = np.array(resume_state["f"], float)
+        g = np.array(resume_state["g"], float)
+        best_f = np.array(resume_state["best_f"], float)
+        best_x = np.array(resume_state["best_x"], float)
+        start_it = int(resume_state["it"])
+        gnorm = np.abs(g).max(1)
+        print(f"  {log_prefix} RESUME from it{start_it}: min={best_f.min():.2f} "
+              f"||g||max={gnorm.max():.2e}", flush=True)
+    else:
+        x = np.zeros((N, P)) if x0 is None else np.array(x0, float)
+        g = iterate_grad(POI_IDX, x, PV, GRADMETHOD, fd_step=fd_step)
+        f = fast_values_rows(POI_IDX, x, PV)              # value (fast path)
+        best_f = f.copy(); best_x = x.copy()
+        Hinv = np.tile(np.eye(P), (N, 1, 1)) if Hinv0 is None \
+            else np.array(Hinv0, float)
+        gnorm = np.abs(g).max(1)
+        start_it = 0
+    for it in range(start_it, maxit):
         active = gnorm > gtol
         if not active.any():
             break
@@ -437,7 +461,13 @@ def bfgs_rows(POI_IDX, PV, x0=None, maxit=MAXIT, gtol=GTOL, fd_step=None,
             f_new[stuck] = fast_values_rows(POI_IDX, x_new, PV)[stuck]
         g_new = iterate_grad(POI_IDX, x_new, PV, GRADMETHOD, fd_step=fd_step)
         s = x_new - x; y = g_new - g; sy = (s * y).sum(1)
-        for b in np.where(active & (sy > 1e-12))[0]:
+        # RELATIVE curvature condition (standard BFGS safeguard): only update when
+        # the (s,y) pair is meaningfully positive-curvature. The old absolute
+        # sy>1e-12 was effectively a no-op near convergence, where s,y -> 0 and a
+        # noisy pair corrupts Hinv (the it2 ||g|| bounce seen in validation).
+        snorm = np.linalg.norm(s, axis=1); ynorm = np.linalg.norm(y, axis=1)
+        curv_ok = sy > 1e-8 * snorm * ynorm
+        for b in np.where(active & curv_ok)[0]:
             rho = 1.0 / sy[b]; I = np.eye(P)
             V = I - rho * np.outer(s[b], y[b])
             Hinv[b] = V @ Hinv[b] @ V.T + rho * np.outer(s[b], s[b])
@@ -448,6 +478,12 @@ def bfgs_rows(POI_IDX, PV, x0=None, maxit=MAXIT, gtol=GTOL, fd_step=None,
             print(f"  {log_prefix} it{it}: min={best_f.min():.2f} "
                   f"||g||max={gnorm.max():.2e} active={int(active.sum())} "
                   f"({time.strftime('%H:%M:%S')})", flush=True)
+        if ckpt_path:                                    # resumable BFGS state
+            tmp = ckpt_path + ".tmp.npz"
+            np.savez(tmp, POI_IDX=POI_IDX, PV=PV, x=x, Hinv=Hinv, f=f, g=g,
+                     best_f=best_f, best_x=best_x, it=it + 1, gnorm=gnorm,
+                     fd_step=(FD_STEP if fd_step is None else fd_step), gtol=gtol)
+            os.replace(tmp, ckpt_path)                    # atomic
     return best_f, best_x, gnorm
 
 
@@ -464,6 +500,68 @@ def nuisance_hessian(poi_idx, x_opt, poi_val):
     H = np.array(cols).T; H = 0.5 * (H + H.T)
     ev = np.linalg.eigvalsh(H)
     return H, ev, bool(np.all(ev > 0))
+
+
+# ======================================================================
+# inverse-Fisher BFGS preconditioner (Hinv0 from the warm-start Hessian)
+# ======================================================================
+def _chi2_full_scaled(xs_full, theta0):
+    """chi^2 at the physical point theta0 + SIG*xs_full (ALL D dims free, scaled).
+    AD-able in xs_full. Mirrors chi2_scaled_single but with no fixed POI dim."""
+    theta = jnp.asarray(theta0) + SIG * xs_full
+    p = dict(FIXED)
+    for i, name in enumerate(ORDER):
+        if name == "ln10As":
+            p["A_s"] = jnp.exp(theta[i]) / 1e10
+        else:
+            p[name] = theta[i]
+    out = model.run_cosmology_abbr(model.add_derived_parameters(p))
+    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
+    Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
+    Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
+    m0 = pl.bin_model(Dtt, Dte, Dee)
+    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
+    diff = pl.X_data - m0 / (A_star ** 2)
+    c2 = diff @ pl.invcov @ diff + ((A_star - 1.0) / 0.0025) ** 2
+    if lowee is not None:
+        c2 = c2 + lowee.chi2(Dee)
+    if lowtt is not None:
+        c2 = c2 + lowtt.chi2(Dtt)
+    return c2
+
+
+def _full_grad_scaled(theta0, xs):
+    """AD gradient of chi^2 w.r.t. ALL D scaled coords, at offset xs from theta0."""
+    e = jnp.eye(D)
+    fs, g = jax.vmap(lambda v: jax.jvp(lambda z: _chi2_full_scaled(z, theta0),
+                                       (xs,), (v,)))(e)
+    return fs[0], g
+
+
+def _warm_precond_hessian(theta_warm, h=FDH):
+    """Full D x D chi^2 Hessian in SCALED coords at theta_warm, via central FD of
+    the exact AD gradient (2D AD-grad evals; one-time, single cosmology). Returns
+    H (D,D) symmetric."""
+    x0 = jnp.zeros(D)
+    cols = []
+    for j in range(D):
+        _, gp = _full_grad_scaled(theta_warm, x0.at[j].add(h))
+        _, gm = _full_grad_scaled(theta_warm, x0.at[j].add(-h))
+        cols.append(np.asarray((gp - gm) / (2.0 * h), float))
+    H = np.array(cols).T
+    return 0.5 * (H + H.T)
+
+
+def _hinv0_for_poi(H, poi_idx):
+    """Per-POI initial inverse-Hessian (P,P): invert the nuisance submatrix of the
+    full warm Hessian (drop the POI row/col), regularised to PD."""
+    nuis = nuis_idx_of(poi_idx)
+    sub = 0.5 * (H[np.ix_(nuis, nuis)] + H[np.ix_(nuis, nuis)].T)
+    ev = np.linalg.eigvalsh(sub)
+    lo = float(ev.min())
+    if lo <= 1e-6:                                   # floor to PD
+        sub = sub + (abs(min(lo, 0.0)) + 1e-3) * np.eye(P)
+    return np.linalg.inv(sub)
 
 
 # ======================================================================
@@ -531,9 +629,13 @@ def _warm_x0_for_rows(POI_IDX, PV, theta_warm):
 # it0 calibration: tune the FD step against the exact AD gradient
 # ======================================================================
 def calibrate_fd_step(POI_IDX, X, PV):
-    """Compare fdbatch vs exact batched-AD gradient on a subsample; halve
-    PA_FD_STEP until max-rel <= FD_CALTOL (<= CAL_RETRIES retries). Returns
-    (step, max_rel, n_sample)."""
+    """Pick the central-FD step that best matches the exact batched-AD gradient on
+    a subsample. Central FD has a U-shaped error vs step: truncation ~step^2 for
+    LARGE steps, roundoff/solver-noise ~1/step for SMALL steps. The old code only
+    halved and returned the LAST (smallest) step -> it walked straight into the
+    noise floor (job 54442539 returned step=1.25e-3 at 8% error when step=1e-2 gave
+    1.2%). Now we sweep a LADDER spanning both sides of PA_FD_STEP and return the
+    BEST (lowest max-rel). Returns (step, max_rel, n_sample)."""
     N = len(PV)
     n = min(max(FD_CALMIN, 1), N)
     # evenly-spaced subsample across the row set (covers all POIs/grid extents)
@@ -541,19 +643,29 @@ def calibrate_fd_step(POI_IDX, X, PV):
     Ps, Xs, Vs = POI_IDX[sel], X[sel], PV[sel]
     _, G_ad = ad_grad_rows(Ps, Xs, Vs)
     denom = np.maximum(np.abs(G_ad), np.percentile(np.abs(G_ad), 90) + 1e-30)
-    step = FD_STEP
-    for attempt in range(CAL_RETRIES + 1):
+    # ladder centred on PA_FD_STEP, biased upward (the noise floor is on the small
+    # side, so probe larger steps too). CAL_RETRIES controls how far up we go.
+    mults = sorted(set([0.5, 1.0] + [2.0 ** k for k in range(1, CAL_RETRIES + 1)]))
+    ladder = [FD_STEP * m for m in mults]
+    best_step, best_rel = ladder[0], np.inf
+    for step in ladder:
         G_fd = fdbatch_grad(Ps, Xs, Vs, step=step)
         rel = np.abs(G_fd - G_ad) / denom
         max_rel = float(np.nanmax(rel))
         per_dir = np.nanmax(rel, axis=0)            # (P,) worst per direction
+        flag = " *" if max_rel < best_rel else ""
         print(f"[cal] step={step:.2e} max-rel(fd,ad)={max_rel:.3e} "
-              f"per-dir={np.array2string(per_dir, precision=2)} n={len(sel)}",
+              f"per-dir={np.array2string(per_dir, precision=2)} n={len(sel)}{flag}",
               flush=True)
-        if max_rel <= FD_CALTOL or attempt == CAL_RETRIES:
-            return step, max_rel, len(sel)
-        step *= 0.5
-    return step, max_rel, len(sel)
+        if max_rel < best_rel:
+            best_step, best_rel = step, max_rel
+    if best_rel > FD_CALTOL:
+        print(f"[cal] WARNING: best max-rel {best_rel:.3e} (@step={best_step:.2e}) "
+              f"exceeds target {FD_CALTOL:.1e} -- FD gradient is at its noise floor. "
+              f"BFGS will use it for iterations (the certificate is exact AD); if "
+              f"||g||_AD stalls above GTOL, switch this config to grad_method='ad'.",
+              flush=True)
+    return best_step, best_rel, len(sel)
 
 
 def rss_gb():
@@ -613,16 +725,62 @@ def profile_lockstep(pois, outdir):
 
     Ps, Xs, Vs = POI_IDX[mine], x0[mine], PV[mine]
 
-    # ---- it0 calibration (fdbatch only) ----
+    # ---- resumable BFGS state: reload if a matching checkpoint exists ----
+    ckpt = os.path.join(outdir, f"profile_prod_ad_STATE{TAG}"
+                        f"{'_r%d' % RANK if RANK_SLICE else ''}.npz")
+    resume_state = None
+    if RESUME and os.path.exists(ckpt):
+        try:
+            st = np.load(ckpt, allow_pickle=True)
+            ok = (len(st["PV"]) == len(Vs) and np.array_equal(st["POI_IDX"], Ps)
+                  and np.allclose(st["PV"], Vs) and float(st["gtol"]) == GTOL)
+            if ok:
+                resume_state = {k: st[k] for k in
+                                ("x", "Hinv", "f", "g", "best_f", "best_x", "it")}
+                resume_state["fd_step"] = float(st["fd_step"]) \
+                    if "fd_step" in st.files else FD_STEP
+                print(f"[resume] BFGS checkpoint @ it{int(st['it'])} matches; "
+                      f"continuing ({ckpt})", flush=True)
+            else:
+                print(f"[resume] checkpoint shape/grid/gtol mismatch -> fresh start",
+                      flush=True)
+        except Exception as ex:
+            print(f"[resume] could not load checkpoint ({ex}) -> fresh start",
+                  flush=True)
+
+    # ---- it0 calibration (fdbatch only; skipped on resume) ----
     fd_step = FD_STEP; cal_maxrel = float('nan'); cal_n = 0
-    if GRADMETHOD == "fdbatch":
+    if resume_state is not None:
+        fd_step = resume_state.pop("fd_step", FD_STEP)
+        print(f"[cal] resumed fd_step={fd_step:.2e} (calibration skipped)", flush=True)
+    elif GRADMETHOD == "fdbatch":
         fd_step, cal_maxrel, cal_n = calibrate_fd_step(Ps, Xs, Vs)
         print(f"[cal] FINAL fd_step={fd_step:.2e} max-rel(fd,ad)={cal_maxrel:.3e} "
               f"(n={cal_n}; target<={FD_CALTOL:.1e})", flush=True)
 
+    # ---- inverse-Fisher preconditioner: Hinv0 from the warm-start Hessian ----
+    Hinv0 = None
+    if PRECOND and resume_state is None and WARM and theta_warm is not None:
+        try:
+            tH = time.perf_counter()
+            Hwarm = _warm_precond_hessian(theta_warm)
+            by_poi = {ORDER.index(p): _hinv0_for_poi(Hwarm, ORDER.index(p))
+                      for p in pois}
+            Hinv0 = np.stack([by_poi[int(Ps[b])] for b in range(len(Ps))])
+            conds = {p: float(np.linalg.cond(np.linalg.inv(by_poi[ORDER.index(p)])))
+                     for p in pois}
+            print(f"[precond] inverse-Fisher Hinv0 from warm Hessian "
+                  f"({time.perf_counter()-tH:.0f}s); nuis-Hessian cond per POI: "
+                  f"{ {k: round(v,1) for k,v in conds.items()} }", flush=True)
+        except Exception as ex:
+            print(f"[precond] failed ({ex}) -> identity Hinv0", flush=True)
+            Hinv0 = None
+
     # ---- lockstep BFGS over the (sliced) row set ----
     t0 = time.perf_counter()
-    bf, bx, gn_iter = bfgs_rows(Ps, Vs, x0=Xs, fd_step=fd_step, log_prefix="[lock]")
+    bf, bx, gn_iter = bfgs_rows(Ps, Vs, x0=Xs, Hinv0=Hinv0, fd_step=fd_step,
+                                log_prefix="[lock]", ckpt_path=ckpt,
+                                resume_state=resume_state)
 
     # ---- FINAL stationarity certificate: ALWAYS exact AD ----
     print(f"[cert] AD ||g|| certificate over {len(mine)} rows ...", flush=True)
@@ -675,6 +833,13 @@ def profile_lockstep(pois, outdir):
               f"max||g||_AD={np.nanmax(gnorm):.2e}; "
               f"PD {int(np.nansum(pd))}/{npt_valid} -> {npz}", flush=True)
         _plot(poi, grid, chi2, npz)
+
+    # run finished cleanly -> drop the resumable BFGS checkpoint
+    try:
+        if os.path.exists(ckpt):
+            os.remove(ckpt)
+    except Exception:
+        pass
 
 
 def multistart(poi, outdir, K=MS_K):
