@@ -55,5 +55,11 @@ CONFIG = {
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    "grad_method": "fdbatch",   # LCDM is well-behaved -> FD iterations (AD certificate)
+    "grad_method": "ad",        # was "fdbatch"; the full-l (l=2508) + low-ell 6-POI gate
+                                # STALLED on FD: it0 calibration hit the FD noise floor
+                                # (best max-rel 1.20e-2 > 1e-2 target) and BFGS plateaued
+                                # at ||g||~20 >> GTOL=0.03 with chi2 dead-flat (job
+                                # 54600444). Exact batched-AD has no truncation floor and
+                                # is actually CHEAPER here (3 staged jvp blocks vs FD's
+                                # 12 chunks of 2*P*N evals). See CHANGELOG 2026-06-19.
 }

@@ -9,6 +9,37 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-19 — GATE: switch lcdm config to grad_method='ad' (FD stalled at its noise floor)
+-----------------------------------------------------------------------------------------
+Session: perk-perf. The 06-16-fixed gate (job 54600444) RAN this time (precond + checkpoint
+both worked) but did NOT converge -- it stalled exactly as the it0 calibration warned.
+
+EVIDENCE (logs/abcmb_profile_ad_54600444.out):
+  - it0 calibration: best FD step max-rel(fd,ad)=1.197e-2 @ step=1e-2, EXCEEDING the 1e-2
+    target -> "FD gradient is at its noise floor ... if ||g||_AD stalls above GTOL, switch
+    this config to grad_method='ad'."
+  - preconditioner worked (nuis-Hessian cond 32-159; ||g||max 151 -> 29 by it1), but then
+    BFGS PLATEAUED: ||g||max it1..it4 = 29.2, 28.1, 21.0, 20.9 (>> GTOL=0.03) with chi2
+    DEAD FLAT (996.13 -> 996.10). Classic FD-noise-floor stall: the ~20 residual gradient
+    is mostly FD truncation/solver noise, not true stationarity error.
+  - (also an ~8h hang after it4 before the 22:00 walltime kill, no it5 written -- likely a
+    transient node/GPU-fabric stall, not reproducible from logs; checkpoint loses <=1 iter.)
+
+FIX (scan/configs/lcdm.py): grad_method "fdbatch" -> "ad". Exact batched-AD has no
+truncation floor, so ||g|| can actually be driven to GTOL, AND it is CHEAPER here: one AD
+gradient = 3 staged-jvp blocks (B=64/64/22) sharing the modes solve, vs FD's 12 chunks of
+2*P*N=1500 perturbed cosmologies (~1.9h/iter). The original "FD is fine for LCDM" rationale
+is empirically false at l=2508 + full low-ell + 6 POIs + GTOL=0.03.
+
+RESUME: the it5 checkpoint (results/profile_prod_ad_STATE.npz, written 06-18 13:55) MATCHES
+(grid/PV/gtol unchanged by the edit) -> the resubmit reloads it, skips calibration+precond,
+keeps the inverse-Fisher Hinv, and continues BFGS with AD gradients. One slightly-off BFGS
+update where old g (FD) meets new g_new (AD); self-corrects. Final certificate is exact AD
+either way. Submitted: gate 54721220 (regular, 12h); diagnostic 54721291 (debug, 30min) =
+exact AD ||g|| at the stalled x for the 32-row calibration subsample (bench/diag_ad_at_ckpt
+.py) to confirm the FD-noise hypothesis (||g||_AD << ||g||_FD) before the gate burns walltime.
+
+
 2026-06-16 — GATE FIX: calibration / preconditioner / checkpoint (profile_prod_ad.py)
 -------------------------------------------------------------------------------------
 Session: perk-perf. The ΛCDM frequentist gate (job 54442539) TIMED OUT at 12h without
