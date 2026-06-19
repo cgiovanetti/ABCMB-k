@@ -39,6 +39,22 @@ either way. Submitted: gate 54721220 (regular, 12h); diagnostic 54721291 (debug,
 exact AD ||g|| at the stalled x for the 32-row calibration subsample (bench/diag_ad_at_ckpt
 .py) to confirm the FD-noise hypothesis (||g||_AD << ||g||_FD) before the gate burns walltime.
 
+DIAGNOSTIC RESULT (debug job 54721291, 32-row calibration subsample, exact AD grad at the
+stalled x): NUANCED -- it vindicates the AD switch but shows convergence is NOT a one-step
+win. FD was wrong in BOTH directions:
+  - The ||g||~20 SPIKES that made BFGS look stuck are FD NOISE -- AD collapses them: n_s
+    row91 FD 20.9 -> AD 0.50 (41x); ln10As row115 FD 14.3 -> AD 1.14; tau row134 FD 9.2 ->
+    AD 0.59; omega_cdm row62 FD 1.87 -> AD 0.26.
+  - But FD also UNDERESTIMATED the gradient on many INTERIOR rows (noise cancellation made
+    unconverged rows look done): omega_b row38 FD 0.020 -> AD 0.28; n_s row96 FD 0.015 ->
+    AD 0.19; h row14 FD 0.036 -> AD 0.26. This is why "FD is fine for LCDM" failed -- FD
+    both faked stalls AND faked convergence.
+  - Bottom line: AD ||g|| median 0.23, max 1.80, only 1/32 rows < GTOL=0.03. The true
+    gradient is real and ~7-10x above GTOL -> the gate needs several genuine AD BFGS iters
+    (not a quick fix), but with the TRUE gradient + inverse-Fisher precond it can actually
+    descend (FD could not). AD grad for B=32 (B_local=8 on 4 GPUs) took 1422s incl. compile.
+  - No OOM risk on 40GB regular nodes: AD uses AD_BCHUNK=64 -> B_local=16 (< FD's 32).
+
 
 2026-06-16 — GATE FIX: calibration / preconditioner / checkpoint (profile_prod_ad.py)
 -------------------------------------------------------------------------------------
