@@ -1587,3 +1587,17 @@ NOTE ON THE PLAN FILE:
   are now in place (with the spectrum-perf caveat above). F is the
   HyRex/LINX vmap and H is the frequentist likelihood layer; both
   remain TODO.
+
+2026-06-22 (addendum) — f-scan verdict: chi2 roughness is rtol-INDEPENDENT
+--------------------------------------------------------------------------
+diag_fscan.py (debug 54843938) scanned f along -g at 3 rows, rtol=1e-5 vs 1e-6:
+roughness (2nd-diff std) 0.077 vs 0.076 (omega_b), 0.104 vs 0.105 (n_s), 0.062 vs 0.063
+(ln10As) -- a 10x tighter ODE tolerance does NOT reduce it. So the ~0.1-chi2 / ~0.1-||g||
+floor is NOT from rtol; it's a DISCRETIZATION (k_chunk and/or the round-4 visibility-driven
+lna grid, N=300). DECISION: do NOT relaunch production at PA_RTOL=1e-6 (2x slower, no gain).
+IMPLICATION: GTOL=0.03 will not be met for most rows (floor ~0.1), but the chi2 PROFILE is
+accurate to ~0.1/pt and that noise AVERAGES OUT in the 11-pt spline -> intervals good to
+~0.02-0.03 sigma. Production 54845799 stays as-is; the ||g|| certificate honestly reports
+the floor. Precompute (54846123) confirmed: warm-Hessian cache works (production skips the
+~18-min precond) and l=2508 conditioning is good (cond 32-159). FUTURE roughness fix (for a
+tighter cert): test lna_grid_mode='uniform' (revert round-4) and/or k_chunk -- not rtol.
