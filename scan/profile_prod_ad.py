@@ -145,6 +145,13 @@ FDH = 0.05                                            # FD step (sigma) for the 
 # steps into near-Newton steps -> converges in a few iters on the ill-conditioned
 # CMB likelihood (kappa~1e3) instead of stalling. PA_PRECOND=0 reverts to eye.
 PRECOND = os.environ.get("PA_PRECOND", "1") != "0"
+HESS_CACHE = os.environ.get("PA_HESS_CACHE", "1") != "0"   # cache the warm Hessian to disk
+# The warm-start D x D Hessian is a FLAT ~18-min cost (2D single-cosmo AD-grad evals) that
+# depends ONLY on (theta_warm, l_max, likelihood) -- not on NPTS/POI/grid. Caching it to
+# disk lets a precomputed Hessian be LOADED instantly (and shared across the POI_SLICE
+# ranks, which otherwise each recompute it redundantly), removing ~18 min from the run's
+# critical path. Load-if-present-else-compute, so an absent/mismatched cache just falls
+# back to the original compute -- cannot break the run.
 
 POIS = os.environ.get("PA_POIS", ",".join(CFG.get("pois", ORDER))).split(",")
 POIS = [p.strip() for p in POIS if p.strip() in ORDER]
@@ -542,10 +549,31 @@ def _full_grad_scaled(theta0, xs):
     return fs[0], g
 
 
+def _warm_hessian_cache_path():
+    cfg = os.path.splitext(os.path.basename(CONFIG_ABS))[0]
+    return os.path.join(WARM_DIR, f"warm_hessian_{cfg}_l{LMAX}"
+                        f"_tt{int(USE_LOWTT)}_ee{int(USE_LOWEE)}.npz")
+
+
 def _warm_precond_hessian(theta_warm, h=FDH):
     """Full D x D chi^2 Hessian in SCALED coords at theta_warm, via central FD of
     the exact AD gradient (2D AD-grad evals; one-time, single cosmology). Returns
-    H (D,D) symmetric."""
+    H (D,D) symmetric. Cached to disk (PA_HESS_CACHE) keyed by config/l_max/likelihood
+    + theta_warm -- a precomputed cache loads instantly and is shared across POI_SLICE
+    ranks; an absent/mismatched cache just recomputes (the original behaviour)."""
+    theta_w = np.asarray(theta_warm, float)
+    cache = _warm_hessian_cache_path()
+    if HESS_CACHE and os.path.exists(cache):
+        try:
+            d = np.load(cache)
+            if (d["H"].shape == (D, D) and np.allclose(d["theta_warm"], theta_w, atol=1e-9)
+                    and int(d["lmax"]) == LMAX and bool(d["lowtt"]) == USE_LOWTT
+                    and bool(d["lowee"]) == USE_LOWEE):
+                print(f"[precond] loaded cached warm Hessian ({cache})", flush=True)
+                return np.array(d["H"], float)
+            print(f"[precond] cache present but mismatched -> recompute", flush=True)
+        except Exception as ex:
+            print(f"[precond] cache load failed ({ex}) -> recompute", flush=True)
     x0 = jnp.zeros(D)
     cols = []
     for j in range(D):
@@ -553,7 +581,17 @@ def _warm_precond_hessian(theta_warm, h=FDH):
         _, gm = _full_grad_scaled(theta_warm, x0.at[j].add(-h))
         cols.append(np.asarray((gp - gm) / (2.0 * h), float))
     H = np.array(cols).T
-    return 0.5 * (H + H.T)
+    H = 0.5 * (H + H.T)
+    if HESS_CACHE:
+        try:
+            tmp = cache + f".tmp.r{RANK}.npz"                # per-rank tmp -> safe atomic
+            np.savez(tmp, H=H, theta_warm=theta_w, lmax=LMAX,
+                     lowtt=USE_LOWTT, lowee=USE_LOWEE)
+            os.replace(tmp, cache)
+            print(f"[precond] saved warm Hessian cache ({cache})", flush=True)
+        except Exception as ex:
+            print(f"[precond] cache save failed ({ex})", flush=True)
+    return H
 
 
 def _hinv0_for_poi(H, poi_idx):
