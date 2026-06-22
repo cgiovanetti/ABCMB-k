@@ -133,6 +133,10 @@ USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ 
 WARM = os.environ.get("PA_WARM", "1") != "0"
 WARM_DIR = os.environ.get("PA_WARM_DIR", os.path.join(_HERE, "results"))
 RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
+POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out: each
+# rank owns a DISJOINT subset of POIs (POIS[RANK::NPROC]) and runs its own lockstep,
+# writing only its own per-POI npz -> no shared-file clobber, no MPI gather. This is
+# the node-scaling lever for few-hours wall-clock (the embarrassingly-parallel POI axis).
 XBOX = 5.0                                            # nuisance box (sigma units)
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
 FDH = 0.05                                            # FD step (sigma) for the AD Fisher Hessian
@@ -727,7 +731,7 @@ def profile_lockstep(pois, outdir):
 
     # ---- resumable BFGS state: reload if a matching checkpoint exists ----
     ckpt = os.path.join(outdir, f"profile_prod_ad_STATE{TAG}"
-                        f"{'_r%d' % RANK if RANK_SLICE else ''}.npz")
+                        f"{'_r%d' % RANK if (RANK_SLICE or POI_SLICE) else ''}.npz")
     resume_state = None
     if RESUME and os.path.exists(ckpt):
         try:
@@ -908,19 +912,27 @@ def main():
           f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} rtol={RTOL} "
           f"grad={GRADMETHOD} shard={DO_SHARD} lowEE={USE_LOWEE} lowTT={USE_LOWTT} "
           f"hess={DO_HESS} warm={WARM} multistart={MULTISTART} "
-          f"rank_slice={RANK_SLICE}", flush=True)
+          f"rank_slice={RANK_SLICE} poi_slice={POI_SLICE} nproc={NPROC}", flush=True)
     if MULTISTART:
         # multistart is per-POI; split POIs across ranks (cheap, independent)
         mine = POIS[RANK::NPROC] if not RANK_SLICE else POIS
         for poi in mine:
             multistart(poi, outdir)
     else:
-        # lockstep: ONE batch across all POIs (rank slicing is on the ROW axis)
-        if RANK_SLICE:
-            pois = _resume_skip(POIS, outdir)        # all ranks share the row set
+        # lockstep: ONE batch across all POIs (or this rank's POI slice).
+        if POI_SLICE and NPROC > 1:
+            # MULTI-NODE scale-out: each rank runs its own lockstep over a DISJOINT
+            # POI subset and writes only those POIs' npz (distinct filenames -> no
+            # clobber, no MPI). Per-rank STATE checkpoint. This is the node-scaling
+            # path for few-hours wall-clock; supersedes the broken RANK_SLICE.
+            pois = _resume_skip(POIS[RANK::NPROC], outdir)
+        elif RANK_SLICE:
+            # row-slice across ranks: BROKEN for the per-POI npz write (every rank
+            # clobbers it with NaN-filled rows). Use POI_SLICE instead.
+            pois = _resume_skip(POIS, outdir)
         else:
-            # without row-slicing, one rank does everything; idle the rest to
-            # avoid duplicate work (legacy one-POI-per-rank is gone)
+            # single node: one rank does everything; idle the rest to avoid
+            # duplicate work (legacy one-POI-per-rank is gone)
             pois = _resume_skip(POIS, outdir) if RANK == 0 else []
         if pois:
             profile_lockstep(pois, outdir)
