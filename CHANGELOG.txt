@@ -9,6 +9,50 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-22 — MULTI-NODE POI-slice + AD-stall diagnosis; 6-node production launched
+------------------------------------------------------------------------------------
+Session: perk-perf. The AD gate (54721220) timed out AGAIN: it RESUMED from it5 and AD
+dropped ||g||max 20.9->4.3 (AD is the right gradient), but then STALLED at ||g||~4.5
+(it5..it8 4.29/4.24/4.61/4.98, rising) with chi2 flat at 996.09, at ~2.4h/iter (12h = 4
+iters). User reframed the goal: it must run in a FEW HOURS (the competitive bar), so
+scale GPUs/NODES, not walltime.
+
+DIAGNOSIS (3 cheap GPU probes -- debug + one short interactive, all in bench/):
+  - diag_ad_stall.py: stall is SYSTEMATIC (84/150 rows incl. interior, median ||g||=0.135,
+    max 4.98), NOT box-pinned. Worst row (25) descends smoothly along -g but -Hinv@g ~= 0
+    -> the carried Hinv (built from 5 FD-noise iters) is CONTAMINATED. A FRESH start (clean
+    inverse-Fisher Hinv0) is the dominant fix.
+  - diag_consistency.py: f_callbatched == f_AD to <1e-4 at every row -> the value path and
+    the staged-AD gradient path are the SAME function; the stall is NOT a value/grad
+    mismatch (hypothesis refuted).
+  - SECONDARY: a minority of rows (high-ln10As, e.g. row 121) INCREASE f even for tiny -g
+    steps -> diffrax adaptive-stepping ROUGHNESS in chi2 at ~0.3 (the exact AD gradient is
+    right infinitesimally, but finite steps cross PID step-pattern jumps). diag_fscan.py
+    (rtol 1e-5 vs 1e-6) was meant to test if tightening smooths it, but debug was too
+    contended to land it; deferred -- roughness affects a MINORITY, so it does not block a
+    first result (rough rows get flagged, the interval comes from the converged bulk).
+
+MULTI-NODE FIX (committed, VALIDATED): PA_POI_SLICE=1 -- each rank runs its own lockstep
+over a DISJOINT POI subset (POIS[RANK::NPROC]) and writes only its own per-POI npz (no
+shared-file clobber, no MPI gather; per-rank STATE checkpoint). This replaces the broken
+RANK_SLICE row-slice. 2-node debug (54840068) CONFIRMED the split (rank0=[h,omega_cdm,
+ln10As] rank1=[omega_b,n_s,tau_reion], 15 rows each); it only timed out on my 25-min cap
+during the warm-Hessian precond (a FLAT ~18-min/1093-1264s cost, NOT l-bound -- it's a 6x6
+FD-of-AD Hessian; each rank pays it in parallel).
+
+PRODUCTION LAUNCHED: 54845799 = 6 nodes, 1 POI/node (POI_SLICE), NPTS=11, l=2508, fresh
+start (TAG=_mn6 -> clean Hinv), MAXIT=18, GTOL=0.03, regular 8h. Est ~6-7.5h compute (one
+queue cycle), few-hours target, under the 22h CLASS+MH bar. Watch the log: each rank's
+[lock] it lines should show ||g|| DROPPING (clean Hinv) -- if it stalls in the first 3-4
+iters it's roughness-broad -> cancel + rerun at PA_RTOL=1e-6. Per-row certs in
+profile_prod_ad_<poi>_mn6.npz; rough rows flagged (interval from the converged bulk).
+
+NEXT LEVERS if needed: (a) precompute the warm Hessian once + broadcast (kills 6x redundant
+18-min precond); (b) PA_RTOL=1e-6 if roughness is broad; (c) intra-POI row-slice for >6-way
+parallelism (needs the MPI gather). Reduced grid 25->11 is a deliberate speed/resolution
+trade (scale back up once the fast pipeline is proven).
+
+
 2026-06-19 — GATE: switch lcdm config to grad_method='ad' (FD stalled at its noise floor)
 -----------------------------------------------------------------------------------------
 Session: perk-perf. The 06-16-fixed gate (job 54600444) RAN this time (precond + checkpoint
