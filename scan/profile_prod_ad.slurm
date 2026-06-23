@@ -63,6 +63,11 @@ export PA_NSIG=${PA_NSIG:-3.0}
 export PA_MAXIT=${PA_MAXIT:-40}
 export PA_GTOL=${PA_GTOL:-3e-2}
 export PA_RTOL=${PA_RTOL:-1e-5}
+# Per-iter best_f trace (rank-aware -> bf_trace_prod_r<rank>.npz). FTOL early-stop stays
+# OFF by default (full, safe run), but this captures the REAL full-l per-iter chi2
+# trajectory so bench/analyze_estop.py can TUNE the early-stop FTOL above the ~0.1 chi2
+# roughness floor (the smooth low-l proxy can't tune that). Tiny npz; gated/no overhead.
+export PA_BF_TRACE=${PA_BF_TRACE:-scan/results/bf_trace_prod.npz}
 # grad_method comes from the CONFIG file (lcdm->fdbatch, lcdm_neff->ad), NOT here.
 # PA_GRADMETHOD is a DEBUG-ONLY override (warns + shadows config) -- do not set it
 # for production; leave it unset so the per-physics config choice governs.

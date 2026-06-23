@@ -108,6 +108,18 @@ def main(path):
     print(f"\nFINAL (it{n_hist-1}): sigma1_parab={sp_final:.5f}  "
           f"sigma1_interval={si_final:.5f}")
 
+    # ---- per-row chi2 vs iteration: shows WHICH rows lag (edge rows settle later
+    #      than center, the gotcha). dchi2_to_final = how far each row is from its
+    #      final value at each iter. The trigger must wait for the slowest row. ----
+    o = np.argsort(PV); cen = o[len(o) // 2]
+    print("\n  per-row dchi2-to-final (row order = POI grid; center row marked *):")
+    hdr = "   iter " + " ".join(f"{('*' if r == cen else ' ')}r{r}" for r in o)
+    print(hdr)
+    for k in range(n_hist):
+        cells = " ".join(f"{bf[k][r]-bf[-1][r]:5.2f}" for r in o)
+        print(f"   it{k-1 if k else 'X':>2}  {cells}")
+    print("   (row 'itX' = initial best_f; large late-iter values = a still-descending row)")
+
     # ---- sweep candidate (FTOL, PATIENCE) ----
     print("\n=== early-stop trigger sweep (vs FINAL) ===")
     print(" FTOL    PAT  stop@it  iters_saved  sig1_par   d/sig_par   sig1_int   d/sig_int  verdict")

@@ -475,21 +475,27 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         gnorm = np.abs(g).max(1)
         start_it = 0
     bf_hist = [best_f.copy()]            # chi2-plateau history (fresh on resume; rebuilds)
+    # rank-aware trace path: under POI_SLICE/RANK_SLICE each rank owns a disjoint POI
+    # set, so a single shared path would clobber -- insert _r{RANK} (mirrors the ckpt).
+    bf_trace_path = BF_TRACE
+    if BF_TRACE and (POI_SLICE or RANK_SLICE):
+        root, ext = os.path.splitext(BF_TRACE)
+        bf_trace_path = f"{root}_r{RANK}{ext}"
     trace_prefix = None                  # debug-only: prior-job trace to prepend on resume
-    if BF_TRACE and resume_state is not None and os.path.exists(BF_TRACE):
+    if bf_trace_path and resume_state is not None and os.path.exists(bf_trace_path):
         try:
-            trace_prefix = np.load(BF_TRACE)["bf_hist"]
+            trace_prefix = np.load(bf_trace_path)["bf_hist"]
         except Exception:
             trace_prefix = None
     def _write_trace():                  # cheap; called every iter so a walltime kill
-        if not BF_TRACE:                 # mid-BFGS still leaves a valid partial trace
+        if not bf_trace_path:            # mid-BFGS still leaves a valid partial trace
             return
         hist = np.array(bf_hist)
         if trace_prefix is not None:     # drop the duplicated resumed state, then extend
             hist = np.concatenate([trace_prefix, hist[1:]], axis=0)
-        tmp = BF_TRACE + ".tmp.npz"
+        tmp = bf_trace_path + ".tmp.npz"
         np.savez(tmp, bf_hist=hist, PV=PV, POI_IDX=POI_IDX, start_it=start_it)
-        os.replace(tmp, BF_TRACE)
+        os.replace(tmp, bf_trace_path)
     for it in range(start_it, maxit):
         active = gnorm > gtol
         if not active.any():
