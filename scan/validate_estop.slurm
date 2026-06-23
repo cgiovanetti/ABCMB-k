@@ -44,9 +44,13 @@ export PA_POIS=${PA_POIS:-tau_reion}
 export PA_LMAX=${PA_LMAX:-100}                     # lowTT/lowEE need only l<=29
 export PA_NPTS=${PA_NPTS:-7}
 export PA_NSIG=${PA_NSIG:-3.0}
-export PA_MAXIT=${PA_MAXIT:-20}
-export PA_GTOL=${PA_GTOL:-3e-2}
-export PA_FTOL=0                                   # reference: NO early stop
+export PA_MAXIT=${PA_MAXIT:-12}
+# GTOL unreachably small: the 2-param proxy is cond=1.0 and would hit GTOL=3e-2 in ONE
+# iter (gtol break), leaving no grind for the early-stop to engage. 1e-8 forces the loop
+# to run to MAXIT while chi2 plateaus -- reproducing the production regime (||g|| grinds
+# below GTOL is impossible, chi2 settles early) that the early-stop is designed for.
+export PA_GTOL=${PA_GTOL:-1e-8}
+export PA_FTOL=0                                   # reference: NO early stop (full trace)
 export PA_HESS=0
 export PA_SHARD=auto
 export PA_WARM=1
