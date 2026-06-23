@@ -231,6 +231,13 @@ def _chunked_call_batched(batch, chunk):
     (last chunk PADDED to `chunk` to keep batch avals stable -> no recompile per
     new B). Returns concatenated chi^2 of length len(batch)."""
     N = len(batch)
+    # Cap the chunk at the actual batch size: never pad a SMALL batch up to a large
+    # `chunk`. This only SHRINKS the chunk (memory stays bounded by the caller's
+    # `chunk`), and it kills the POI_SLICE line-search waste -- an 11-row fast_values
+    # call was paying for 128 cosmologies (FD_CHUNK), ~12x/iter, which made small
+    # per-rank batches line-search-bound (~30 min/iter at l=2508). N is constant within
+    # a run (the full row set every call), so the B=N aval is stable -> one compile.
+    chunk = min(chunk, N)
     out_chi2 = np.empty(N)
     for s in range(0, N, chunk):
         sub = batch[s:s + chunk]
