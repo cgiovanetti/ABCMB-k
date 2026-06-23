@@ -15,8 +15,44 @@ Usage (inside an srun; pure CPU numpy/scipy):
 import sys, os
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scan.profile_prod import interval, sigma_parabola   # SAME math as the driver
+# Standalone (pure numpy/scipy) copies of the driver's interval/sigma_parabola so this
+# analysis needs no heavy scan.profile_prod import. Kept BYTE-FAITHFUL to
+# scan/profile_prod.py:interval / sigma_parabola -- if those change, update here.
+
+
+def interval(x, y, level):
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    if m.sum() < 4:
+        return np.nan, np.nan, np.nan
+    x, y = x[m], y[m]; o = np.argsort(x); x, y = x[o], y[o]
+    try:
+        from scipy.interpolate import PchipInterpolator
+        p = PchipInterpolator(x, y - y.min())
+        xs = np.linspace(x[0], x[-1], 40001); ys = p(xs)
+    except Exception:
+        xs = np.linspace(x[0], x[-1], 40001); ys = np.interp(xs, x, y - y.min())
+    i = int(np.argmin(ys)); x0 = xs[i]; t = ys[i] + level
+
+    def cross(side):
+        seg, vs = (xs[:i + 1][::-1], ys[:i + 1][::-1]) if side < 0 else (xs[i:], ys[i:])
+        k = np.where(vs >= t)[0]
+        if len(k) == 0 or k[0] == 0:
+            return np.nan
+        j = k[0]; a, b, fa, fb = seg[j - 1], seg[j], vs[j - 1], vs[j]
+        return a + (t - fa) * (b - a) / (fb - fa + 1e-30)
+    return cross(-1), x0, cross(+1)
+
+
+def sigma_parabola(x, y):
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    x, y = x[m], y[m]
+    if len(x) < 3:
+        return np.nan
+    d = y - y.min(); sel = d <= 4.0
+    if sel.sum() < 3:
+        sel = np.argsort(d)[:max(3, len(x) // 2)]
+    a = np.polyfit(x[sel], y[sel], 2)[0]
+    return np.nan if a <= 0 else 1.0 / np.sqrt(2.0 * a)
 
 
 def sig1_halfwidth(grid, chi2):
