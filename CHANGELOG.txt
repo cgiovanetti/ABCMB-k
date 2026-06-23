@@ -9,7 +9,48 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
-2026-06-23 — chi2-plateau EARLY-STOP implemented + mechanically validated (default OFF)
+2026-06-23 (pm) — sigma1-STABILITY early-stop DEMONSTRATED at full l + ENABLED (~2.6x)
+--------------------------------------------------------------------------------------
+Session "frequentist_3" (perk-perf), continued. The chi2-plateau trigger (am entry below)
+had a flaw the user flagged: its threshold is tied to the SOLVER roughness floor (needs a
+one-time calibration) and "subsequent runs get the speedup" is useless -- you optimize a
+NEW cosmology once. REPLACED it with a sigma1-STABILITY trigger (the preferred path):
+
+  bfgs_rows stops once EVERY POI's dchi2=1 interval half-width has moved < PA_SIGTOL *
+  sigma(POI) over PA_SIGTOL_PATIENCE iters -- i.e. the DELIVERABLE (the interval) has
+  converged to PA_SIGTOL sigmas. Tolerance in SIGMA-UNITS => MODEL-AGNOSTIC: applies to
+  any new cosmology on its FIRST run, no per-model tuning. Robust to the ~0.1 chi2
+  roughness (sigma1 = the PCHIP crossing) and edge-row lag (tail rows at dchi2~9, off the
+  dchi2=1 crossings).
+
+DEMONSTRATED on an interactive 4-GPU node (job 54905567, scan/calib_estop.sh): full
+likelihood, l=2508, ln10As (the worst-conditioned POI = stress test), NPTS=7, PA_SIGTOL=0
+(full reference + per-iter trace). Result (bench/calib_result_ln10As_l2508.txt, trace
+bench/calib_trace_ln10As_l2508.npz):
+  - it0-it8, ~30-min compile + ~22 min/iter. ||g|| 153->16->10.6->5.7->2.1 then FLOORS at
+    ~2.1-2.6 (never reaches GTOL=0.03 -- the predicted roughness floor; chi2 dead-flat at
+    996.64 throughout). Exactly the production grind.
+  - sigma1 (interval) settles to 0.01463 by it4-5 and freezes. Edge-row lag IS present (tail
+    row still 0.70 above final at it3) -- and the trigger correctly waits past it.
+  - PA_SIGTOL=1e-2/PAT=3 FIRES at it5, sigma1 matched the converged interval to 0.0001 sigma
+    (200x inside the 0.02sigma bar). vs production MAXIT=18 (||g|| never converges) = 6 iters
+    vs 18 -> ~2.6x wall-clock (counting the fixed ~30-min compile). Beats the ~2x target.
+  - The LEGACY chi2-plateau trigger NEVER fired here (per-row improve still 4e-3 at it8 >
+    FTOL=1e-3) -- it sits below the roughness/edge-lag floor. Vindicates the switch.
+
+ENABLED: flipped the PA_SIGTOL default 0 -> 1e-2 (commit 02a0aad). User-approved "include
+everywhere": the queued headline 54845799 reads the .py at runtime, so it gets the speedup
+too (validated on its own ln10As POI; AD ||g|| cert + full profile still saved as backstop).
+analyze_estop.py now splits per-POI + reports the GLOBAL trigger (stop when EVERY POI is
+stable). Commits: e73455e (sigma1 trigger + calib harness) · 02a0aad (default 1e-2 + multi-POI).
+
+NEXT (user: "continue to validate other POIs while production queues"): full-l calibration
+of h, omega_b, omega_cdm, n_s, tau_reion (run scan/calib_estop.sh with PA_POIS=... PA_SIGTOL=0
+PA_BF_TRACE=...; analyze_estop confirms each POI's sigma1 settles before the global trigger).
+ln10As is the worst-conditioned, so the others should fire >= as early/safely.
+
+
+2026-06-23 (am) — chi2-plateau EARLY-STOP implemented + mechanically validated (default OFF)
 ----------------------------------------------------------------------------------------
 Session "frequentist_3" (perk-perf). Implemented the ~2x speedup the prior session
 identified: a chi2-plateau EARLY-STOP in profile_prod_ad.py:bfgs_rows. The AD ||g||

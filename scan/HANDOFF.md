@@ -8,47 +8,42 @@ is in git history — superseded.)
 
 ────────────────────────────────────────────────────────────────────────
 ## TL;DR — where we are
-The frequentist profile tool **works and is queued to deliver**. **One job is queued
-(54845799)** that produces the result in ~6.7 h. The **chi2-plateau early-stop** (the ~2×
-idea) is now **IMPLEMENTED and mechanically validated** (default OFF, safe) — see
-§"EARLY-STOP STATUS (2026-06-23)" below. What remains is **tuning FTOL on a real full-l
-trace** (the smooth low-l proxy can't), then flipping the default to land the ~2× on every
-run after the headline.
+The frequentist profile tool **works and is queued to deliver** (54845799). The ~2× idea is
+**DONE and DEMONSTRATED at full l**: a model-agnostic **σ1-stability early-stop**, now ON by
+default (`PA_SIGTOL=1e-2`) — see §"EARLY-STOP STATUS" below. ~2.6× wall-clock, σ1 exact to
+0.0001σ. The only remaining work is **confirming it on the other 5 POIs** while production
+queues.
 
 ────────────────────────────────────────────────────────────────────────
-## EARLY-STOP STATUS (2026-06-23, session "frequentist_3")
-**DONE — implemented + mechanically validated, default OFF.**
-- `profile_prod_ad.py:bfgs_rows` stops a POI's lockstep once the **MAX-over-rows** per-row
-  best-chi2 improvement over `PA_FTOL_PATIENCE` (3) iters drops below `PA_FTOL`. MAX (not
-  min-row) so lagging edge ±3σ rows aren't cut early. Post-loop AD ‖g‖ cert unchanged.
-- **DEFAULT OFF (`PA_FTOL=0`)** — a premature stop biases the interval and the queued
-  54845799 reads this `.py` at runtime; full-MAXIT is already ~6.7 h (< 22 h bar), so the
-  early-stop is a pure speedup, not a correctness need. Ship OFF, enable once tuned.
-- **Validated on a FAST proxy** (debug full-l is too slow: ~9–22 min/iter + a ~17-min
-  staged-AD compile that does NOT persist across jobs). `PA_USE_PLIK=0` (new toggle,
-  default ON) drops high-ell plik-lite (it needs l~2508; LMAX=900 gave chi2~185000
-  garbage) → lowTT+lowEE only. `scan/configs/lowl_proxy.py` profiles tau over ln10As
-  (2-param, seconds/iter at LMAX=100). `PA_BF_TRACE` dumps per-iter best_f;
-  `bench/analyze_estop.py` replays the trigger. **Result: σ1 freezes by it1, Δσ1=+0.0000
-  for all (FTOL 3e-4..5e-3, PATIENCE 3-5)** — mechanics sound.
-- **What the proxy CANNOT do** → the real remaining task: the cond=1.0 proxy converges
-  uniformly (no edge-lag) and is SMOOTH (no ~0.1 roughness floor), so it can't tune FTOL
-  for the rough full problem. `FTOL=1e-3` is likely BELOW the roughness floor → would
-  never fire → no speedup; the right FTOL is ~the roughness scale (**~0.05–0.1**), giving
-  σ1 good to the ~0.02–0.03σ floor the result already lives with.
+## EARLY-STOP STATUS (2026-06-23, session "frequentist_3") — DONE + ENABLED
+**The trigger is σ1-STABILITY (not chi2-plateau).** Why: the chi2 threshold is tied to the
+solver roughness floor (needs per-problem tuning) and a "speedup only on repeats" is useless
+— you optimize a NEW cosmology once. The σ1 trigger fixes both.
+- `profile_prod_ad.py:bfgs_rows` stops once **EVERY POI's dχ²=1 interval half-width** has
+  moved < `PA_SIGTOL`·σ(POI) over `PA_SIGTOL_PATIENCE` (3) iters — the **deliverable (the
+  interval) has converged to PA_SIGTOL σ**. Tolerance in **σ-units → MODEL-AGNOSTIC**:
+  applies to any new cosmology on its FIRST run, no tuning. Post-loop AD ‖g‖ cert unchanged.
+- **DEFAULT ON: `PA_SIGTOL=1e-2`, PATIENCE=3** (commit 02a0aad). The chi2-plateau trigger
+  (`PA_FTOL`, default 0) is kept only as a legacy alternative.
+- **DEMONSTRATED at full l** (interactive job 54905567, `scan/calib_estop.sh`): real
+  likelihood, l=2508, ln10As (worst-conditioned POI). σ1 settles to 0.01463 by it4–5 while
+  ‖g‖ floors at ~2.1 (never reaches GTOL — the predicted grind). **SIGTOL=1e-2/PAT=3 fires
+  at it5, σ1 matched converged to 0.0001σ** (200× inside the 0.02σ bar) → **6 iters vs
+  MAXIT=18 ≈ 2.6× wall-clock**. The legacy chi2-plateau trigger never fired (below the
+  roughness floor) — vindicating the switch. Artifacts: `bench/calib_{trace,result}_ln10As_l2508.*`.
+- 54845799 reads the `.py` at runtime → **it gets the speedup too** (user-approved; validated
+  on its own ln10As POI; AD ‖g‖ cert + full profile saved as backstop).
 
-### REMAINING (to land the ~2×)
-1. **Capture a real full-l per-iter trace.** `PA_BF_TRACE` is now rank-aware
-   (POI_SLICE → `_r<rank>`) and wired into `profile_prod_ad.slurm` (FTOL stays 0 = full
-   safe run). So the NEXT production submit (resubmit the headline OR run lcdm_neff)
-   auto-captures `scan/results/bf_trace_prod_r<rank>.npz`. (54845799 itself won't — its env
-   froze at submit; it runs full, no trace.)
-2. **Tune:** `python bench/analyze_estop.py scan/results/bf_trace_prod_r0.npz` → pick the
-   smallest FTOL whose Δσ1 « 0.02σ AND that actually fires above the roughness floor.
-3. **Flip the default** `PA_FTOL` in `profile_prod_ad.py` to the tuned value; commit. The
-   ~2× then applies to every subsequent run. **Keep the headline full** (precision bar).
-   (The original 2026-06-22 diff + gotchas are in §"NEXT TASK (priority 1)" below — now
-   IMPLEMENTED; kept for the rationale.)
+### REMAINING — validate the other 5 POIs (user: "while production queues")
+Full-l calibration of **h, omega_b, omega_cdm, n_s, tau_reion** (ln10As done). Each is a
+`scan/calib_estop.sh` run with `PA_POIS=<poi>`/list, `PA_SIGTOL=0` (full reference),
+`PA_BF_TRACE=scan/results/bf_trace_<tag>.npz`, then `python bench/analyze_estop.py <trace>`
+(now per-POI + a GLOBAL trigger row). Confirm each POI's σ1 settles ≥ PATIENCE iters before
+the global trigger fires. ~22 min/iter at l=2508, so ~2 POIs (NPTS≈5–7) per 4-h interactive
+node. ln10As is the worst-conditioned, so the others should fire ≥ as early/safely; if any
+fires while still moving, tighten `PA_SIGTOL` (5e-3 also fired it5 on ln10As).
+Tools: `bench/analyze_estop.{py,slurm}` · `scan/calib_estop.sh` · the rank-aware `PA_BF_TRACE`
+is also wired into `profile_prod_ad.slurm` for full multi-node trace capture.
 
 **DO NOT cancel the pending regular job 54845799** (user instruction). It reads the `.py`
 files at runtime, so any committed `.py` change applies to it automatically — no resubmit
