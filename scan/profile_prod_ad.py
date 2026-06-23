@@ -140,6 +140,11 @@ USE_LOWTT = (os.environ["PA_USE_LOWTT"] != "0") if "PA_USE_LOWTT" in os.environ 
     else bool(CFG.get("use_lowtt", True))
 USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ \
     else bool(CFG.get("use_lowee", True))
+# Include the plik-lite high-ell TTTEEE likelihood. DEFAULT ON. Set PA_USE_PLIK=0 ONLY for
+# fast low-ell-only DEBUG runs (plik-lite needs theory Cls to l~2508, so it is meaningless
+# at truncated LMAX) -- e.g. validating l-independent machinery like the chi2 early-stop.
+USE_PLIK = (os.environ["PA_USE_PLIK"] != "0") if "PA_USE_PLIK" in os.environ \
+    else bool(CFG.get("use_plik", True))
 WARM = os.environ.get("PA_WARM", "1") != "0"
 WARM_DIR = os.environ.get("PA_WARM_DIR", os.path.join(_HERE, "results"))
 RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
@@ -218,8 +223,11 @@ def _chi2_from_out(out):
     Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
     Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
     Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
-    m0 = pl.bin_model(Dtt, Dte, Dee)
-    chi2 = np.asarray(pl.profile_A(m0, with_prior=True)[0], dtype=float)
+    if USE_PLIK:
+        m0 = pl.bin_model(Dtt, Dte, Dee)
+        chi2 = np.asarray(pl.profile_A(m0, with_prior=True)[0], dtype=float)
+    else:                                  # low-ell-only DEBUG path (no high-ell plik-lite)
+        chi2 = np.zeros(np.shape(Dee)[:-1], dtype=float)
     if lowee is not None:
         chi2 = chi2 + np.asarray(lowee.chi2(Dee), dtype=float)
     if lowtt is not None:
@@ -293,11 +301,14 @@ def _chi2_of_cls(ClTT, ClTE, ClEE):
     lvec = model.SS.ells
     Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
     Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
-    m0 = pl.bin_model(Dtt, Dte, Dee)
-    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
-    diff = pl.X_data - m0 / (A_star[..., None] ** 2)
-    c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
-        + ((A_star - 1.0) / 0.0025) ** 2
+    if USE_PLIK:
+        m0 = pl.bin_model(Dtt, Dte, Dee)
+        A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
+        diff = pl.X_data - m0 / (A_star[..., None] ** 2)
+        c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
+            + ((A_star - 1.0) / 0.0025) ** 2
+    else:                                  # low-ell-only DEBUG path (no high-ell plik-lite)
+        c2 = jnp.zeros(jnp.shape(Dee)[:-1])
     if lowee is not None:
         c2 = c2 + lowee.chi2(Dee)
     if lowtt is not None:
@@ -597,7 +608,8 @@ def _full_grad_scaled(theta0, xs):
 def _warm_hessian_cache_path():
     cfg = os.path.splitext(os.path.basename(CONFIG_ABS))[0]
     return os.path.join(WARM_DIR, f"warm_hessian_{cfg}_l{LMAX}"
-                        f"_tt{int(USE_LOWTT)}_ee{int(USE_LOWEE)}.npz")
+                        f"_tt{int(USE_LOWTT)}_ee{int(USE_LOWEE)}"
+                        f"{'' if USE_PLIK else '_noplik'}.npz")
 
 
 def _warm_precond_hessian(theta_warm, h=FDH):
