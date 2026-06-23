@@ -1,111 +1,135 @@
-# HANDOFF — frequentist_adversary session (2026-06-11)
+# HANDOFF — frequentist tool, 2026-06-22 (night)
 
-> **2026-06-12 UPDATE — direction set; this doc is now background.** The goal was
-> sharpened with the user ("give it a new cosmology, get optimum ±1/2σ in a few
-> hours; must beat CLASS+MH ΛCDM+Neff @ 22 h") and the canonical plan is
-> **`scan/TOOL_PLAN.md`** — read that FIRST. It maps this doc's open threads:
-> thread-A-lever-1 (shard the gradient) = Workstream A (now the blocking first
-> step); threads B/C (convergence demo + production AD profile) fold into
-> Workstream B's gate; thread D gap #2 = Workstream D (SMC), gap #4 = Workstream E.
+Branch `perk-perf` (NOT merged to main). Canonical goal: **give a new ABCMB cosmology →
+profile-likelihood optimum ±½σ in a FEW HOURS of compute** (must beat CLASS+MH ΛCDM+Neff
+@ 22 h). Plan lineage: `scan/TOOL_PLAN.md` (strategy) → this doc (current state) →
+`CHANGELOG.txt` top entries (detail). Read this FIRST. (Prior `HANDOFF` content, 2026-06-11,
+is in git history — superseded.)
 
-Branch `perk-perf` (NOT merged to main). This session: (1) adversarially reviewed the
-existing LCDM frequentist profile, (2) fixed 3 of the 5 gaps, (3) made the autodiff
-gradient ride the per-k batched pipeline. Full detail in `CHANGELOG.txt` entries
-2026-06-11 (b) and (c), and `bench/batched_ad_design.md`. This file is the fast orientation.
+────────────────────────────────────────────────────────────────────────
+## TL;DR — where we are
+The frequentist profile tool **works and is queued to deliver**. Tonight's session
+diagnosed why it kept stalling, fixed it, parallelized it across nodes, and validated
+convergence end-to-end on an interactive node. **One job is queued (54845799)** that will
+produce the result in ~6.7 h. **The next task is a chi2-plateau early-stop** that cuts that
+to ~3 h (the "few hours" bar). The diff + validation plan are in §"NEXT TASK" below.
 
-## TL;DR state
-- **Data model (#3): DONE + validated.** Real Planck low-ell TT+EE replace the circular tau prior.
-- **Autodiff (#5): DONE.** Exact AD gradients, proven, wired into the driver.
-- **Convergence (#1): implemented + demonstrated; a stall bug found & fixed.** Full converged
-  run + multistart not yet executed (throughput-gated).
-- **Batched AD on the per-k pipeline: CORRECT (1.75e-5 dCl; 8.58e-4 chi2 grad vs single-path)
-  and the COMPILE is TAMED — see 2026-06-12 (a).** It was never a wall: each batched stage's
-  jvp compiles ONCE per (B,l_max) aval and is cached on the filter_jit'd method, so the staged
-  compile is a ~5-min ONE-TIME-PER-JOB tax (lensed-spectrum jvp at l2508 = 119s, warm 0.57s;
-  perturbation jvp l_max-INDEPENDENT). linearize ruled out (3x worse compile, no runtime win).
-  WIRED into the driver as PA_GRADMETHOD=batched (scan/profile_prod_ad.py).
-- **GPU: released. Working tree: clean except pre-existing entry-(a) result binaries (untracked).**
+**DO NOT cancel the pending regular job 54845799** (user instruction). It reads the `.py`
+files at runtime, so any committed `.py` change applies to it automatically — no resubmit
+needed. It won't start for ~2 days (deep regular queue).
 
-## The 5 review gaps (from the assessment at session start)
-1. Optimizer global-min / convergence not demonstrated  -> **addressed** (gate+BFGS+stall fix; multistart coded, not run)
-2. Theory-vs-CLASS parameter-bias not validated         -> NOT addressed
-3. Data model limited + circular tau prior              -> **DONE** (low-ell TT+EE)
-4. Coverage (Wilks vs Feldman-Cousins) assumed          -> NOT addressed
-5. Finite differences instead of autodiff               -> **DONE** (exact AD; + batched-AD now correct)
+────────────────────────────────────────────────────────────────────────
+## Jobs / state
+- **54845799** `abcmb_prof_mn6` — PENDING, regular, 6 nodes, 8 h walltime. The production
+  run: `PA_POI_SLICE=1 PA_NPTS=11 PA_MAXIT=18 PA_TAG=_mn6 PA_GTOL=0.03 PA_HESS=0`, l=2508.
+  Each rank does 1 POI × 11 grid pts. Writes `scan/results/profile_prod_ad_<poi>_mn6.npz`.
+  Emails on start/end. Mid-BFGS + done-POI resumable. **Leave it queued.**
+- No other jobs of ours. The interactive node from tonight (54853342) was released.
 
-## Key files (this session)
-- `scan/plik_lite.py`        — (pre-existing) high-ell plik-lite TTTEEE chi2.
-- `scan/lowl_like.py`        — NEW. AD-able low-ell EE (SRoll2) + TT (Commander). Splines
-                               precomputed at init (compile fix). Validated vs cobaya native.
-- `scan/validate_lowl.py`    — NEW. CPU validation of lowl_like vs cobaya (EE 0.052, TT 0.000).
-- `scan/profile_prod_ad.py`  — NEW. AD-gradient BFGS driver: ||g||<GTOL gate, PD check,
-                               multistart mode, hybrid eval (fast call_batched VALUES + AD grad).
-                               PA_GRADMETHOD=loop (default, robust) | vmap (slow compile).
-- `scan/profile_prod_ad.slurm` — NEW. Production submit (one POI per GPU-task, resumable).
-- `scan/derisk_ad.py`        — NEW. Proved AD grad exact vs FD; Hessian OOMs (=> BFGS).
-- `scan/derisk_batched_ad.py`— NEW. Risk-#1 de-risk: jvp through full_evolution_batched is
-                               staged (1.55x) + correct (5e-4 vs FD).
-- `scan/batched_grad.py`     — NEW. **The batched AD gradient** (staged forward-mode, no
-                               core-code edits). Validated end-to-end vs single-path jacfwd: 1.75e-5.
-- `scan/batched_grad_timing.py` — NEW. Throughput probe (compile-blocked; see below).
-- `bench/batched_ad_design.md`  — NEW. Design + all de-risk/result records. READ THIS for the refactor.
-- `scan/profile_prod.py`     — OLD (entry-a) FD-stencil driver. Superseded by profile_prod_ad.py.
+────────────────────────────────────────────────────────────────────────
+## What was diagnosed + fixed tonight (all committed on perk-perf)
+The AD gate kept timing out. Root causes, in order of discovery:
+1. **Contaminated Hinv (dominant).** The resumed BFGS carried a preconditioner built from
+   FD-noise (s,y) pairs → near-zero search steps. **Fix = fresh start** (clean inverse-Fisher
+   Hinv0, computed/loaded automatically when there's no matching checkpoint). DEMO PROVED it:
+   ln10As l=2508 fresh start drove ‖g‖ **153→16→10.5→5.6→3.06→2.47**, chi2 settled to 996.49
+   by it2 (the contaminated run was stuck rising at ~4.5).
+2. **value == gradient** (refuted a red herring): `f_callbatched == f_AD` to <1e-4. Not a
+   mismatch.
+3. **Roughness floor ~0.1 in chi2 (~0.1 in ‖g‖), rtol-INDEPENDENT.** `diag_fscan.py` showed
+   rtol 1e-5 vs 1e-6 give identical roughness (0.077 vs 0.076). So GTOL=0.03 is BELOW the
+   achievable floor and won't be met; the source is a DISCRETIZATION (k_chunk and/or the
+   round-4 visibility lna grid), NOT the ODE tol. **Do NOT chase this with PA_RTOL=1e-6.**
+   It does NOT hurt the deliverable: chi2 per grid pt is good to ~0.1 and that AVERAGES OUT
+   in the 11-pt spline → intervals good to ~0.02–0.03σ.
 
-## How to resume each open thread (all need a GPU: salloc ... --gpus=N ...)
+Commits (newest first): `daec127` chunk-cap fix · `b632821` f-scan verdict ·
+`034a922` collect_profiles.py · `2a19a74` warm-Hessian cache · `e1a5603` diagnosis +
+POI-slice + prod launch · `aa1f6bb` lcdm grad_method=ad.
 
-### A. Tame the staged-jvp COMPILE — DONE (2026-06-12 (a); see CHANGELOG + bench/grad_compile_findings.md)
-It was NOT a wall. Each batched stage's jvp compiles ONCE per (B,l_max) aval, cached on the
-filter_jit'd method -> the staged compile is a ~5-min ONE-TIME-PER-JOB tax (lensed-spectrum
-jvp at l2508 = 119s; perturbation jvp l_max-INDEPENDENT). The handoff's "super-linear" numbers
-were COLD end-to-end incl the single-path reference with both axes doubled. linearize ruled out
-(3x worse compile, no runtime win). WIRED as PA_GRADMETHOD=batched in profile_prod_ad.py
-(validated 8.58e-4 vs single-path, scan/validate_chi2_grad.py).
-Remaining (optional) levers, only if the one-time compile or runtime needs more:
-  1. Multi-GPU shard the gradient: reuse call_batched's shardfn on the stacked primal+tangent
-     before the stages (pad B to n_dev). See bench/driver_batched_wiring.md.
-  2. Precompute the param-INDEPENDENT Wigner d-matrices (d00/d1n/...) at SpectrumSolver init so
-     they leave every jvp graph (the lowl_like spline-coeff trick) — core-code change, write a
-     diff first. Only if the 119s SS compile becomes the bottleneck.
-  3. PA_GRAD_KCHUNK (~50) trades a bit of runtime for lower PE jvp compile if compile dominates.
+### Performance levers landed
+- **Multi-node POI-slice** (`PA_POI_SLICE=1`): each rank owns disjoint POIs, writes its own
+  npz → no clobber, no MPI. Validated on 2-node debug. This is the node-scaling path.
+- **Warm-Hessian cache** (`PA_HESS_CACHE`, default on): precomputed to
+  `scan/results/warm_hessian_lcdm_l2508_tt1_ee1.npz`. Loads in **0 s** (was ~18 min). l=2508
+  conditioning confirmed good: cond 32–159 per POI.
+- **Chunk cap** (`_chunked_call_batched: chunk=min(chunk,N)`): killed the POI-slice
+  line-search waste (11-row call was paying for 128 cosmos). Per-iter 30→22 min → production
+  fits 8 h (was ~9 h timeout risk).
 
-### B. Finish the #1 demonstration (convergence + global min)
-Stall bug is FIXED (commit 76127ca) but not re-confirmed at scale.
-  - Confirm no-stall + reach the gate: `PA_POIS=n_s PA_NPTS=3 PA_MAXIT=20 PA_GRADMETHOD=loop \
-    python scan/profile_prod_ad.py` (loop AD ~85s/grad/pt; ~20min compile-to-first-iter; cached).
-  - Global-min: `PA_MULTISTART=1 PA_MS_K=4 PA_POIS=n_s python scan/profile_prod_ad.py`.
-  - NOTE these are SLOW via the loop path -> ideally do them AFTER thread A makes the gradient fast.
+### Tools / artifacts (all in `bench/` unless noted)
+- `diag_ad_stall.py` — per-row ‖g‖ map + box-pinning + two-direction (−g and −Hinv·g) descent
+  probe at a checkpoint.
+- `diag_consistency.py` — f_callbatched vs f_AD at given rows.
+- `diag_fscan.py` (+`.slurm`) — 1-D f-scan along −g at two rtols (roughness test).
+- `precompute_hessian.py` (+`.slurm`) — compute+cache the warm Hessian, print conditioning.
+- `scan/collect_profiles.py` — combine per-POI npz → table (vs Planck18 + SMC) + overlay
+  plot. Usage: `python scan/collect_profiles.py _mn6` (run inside an srun). Dry-tested on the
+  entry-(a) FD profiles: all 6 POIs within ±0.5σ of Planck AND the SMC posterior.
 
-### C. Production AD profile (after A)
-`sbatch scan/profile_prod_ad.slurm` (defaults: 6 POIs, NPTS=9, loop, one POI/GPU, regular qos).
-Once thread A lands, switch PA_GRADMETHOD=batched + raise NPTS=13.
+────────────────────────────────────────────────────────────────────────
+## NEXT TASK (priority 1) — chi2-plateau early-stop → ~3 h
+**Why:** the demo showed chi2/intervals settle by ~it5 while ‖g‖ grinds slowly toward its
+~0.1 roughness floor and never reaches GTOL=0.03 — so iters ~6–18 are wasted chasing an
+unreachable certificate. Stopping when chi2 plateaus cuts the production ~6.7 h → ~3 h. The
+AD ‖g‖ certificate still runs after the loop and reports the honest floor.
 
-### D. Untaken review gaps
-- #2: run an MCMC on the SAME likelihood (plik-lite+lowTT+lowEE, no tau prior) and an
-  ABCMB-vs-CLASS profile cross-check; quantify the parameter-bias floor.
-- #4: justify Wilks for LCDM; plan Feldman-Cousins / MC coverage for extension params.
+**The change** (in `scan/profile_prod_ad.py`, function `bfgs_rows`). Add near the env block:
+```python
+FTOL = float(os.environ.get("PA_FTOL", "1e-3"))        # chi2-plateau early-stop threshold
+FTOL_PATIENCE = int(os.environ.get("PA_FTOL_PATIENCE", "3"))
+```
+In `bfgs_rows`, initialise `bf_hist = [best_f.copy()]` right before the `for it in range(...)`
+loop (both the resume and fresh branches share `best_f` by then). Inside the loop, AFTER the
+`upd = f < best_f; best_f[upd]=...; best_x[upd]=...` line and the ckpt write, add:
+```python
+    bf_hist.append(best_f.copy())
+    if FTOL > 0 and len(bf_hist) > FTOL_PATIENCE:
+        improve = float((bf_hist[-1 - FTOL_PATIENCE] - best_f).max())  # max per-row chi2 drop over window
+        if improve < FTOL:
+            print(f"  {log_prefix} chi2 plateau: max per-row improve {improve:.2e} "
+                  f"< FTOL {FTOL:.0e} over {FTOL_PATIENCE} iters -> stop at it{it}", flush=True)
+            break
+```
+Per-rank/POI independent; the post-loop cert + npz write are unchanged.
 
-## Gotchas (will bite the next person)
-- NEVER `jax.jit`/`vmap`/`jacfwd` the WHOLE cross-device pipeline as one fn -> ~20min monolith /
-  hang (the GPU->CPU-HyRex->GPU `device_put` fuses). Always stage (jvp per already-jitted stage).
-- AD Hessian (forward-over-forward) OOMs at l_max=2508 (~35 GB/cosmo). Use BFGS + FD-of-AD-grad.
-- Batched-AD: `_to_float` the derived params before jvp (int N_nu_massive -> None under
-  inexact-partition mismatches its float tangent).
-- BFGS hybrid eval: keep ALL values on ONE path (the fast call_batched one); mixing single-path
-  reference f with fast-path line-search ft stalls Armijo (the bug fixed in 76127ca).
-- Low-ell EE/TT chi2 carry a large additive constant (cancels in Delta-chi2); min chi2 ~1012 with
-  low-ell vs ~607 plik-only is expected, not a bug.
-- PYTHONPATH=$(pwd) inside every srun (else `import abcmb` hits the sibling ../ABCMB checkout).
+**Gotchas to respect:**
+- Use MAX per-row improvement (the slowest row), NOT the min-row chi2 — edge (±3σ) rows settle
+  later. The demo only logged min-row chi2, so the right PATIENCE/FTOL is UNVERIFIED → must
+  validate before trusting.
+- A premature stop = biased intervals. Default FTOL=1e-3 is conservative; do not loosen
+  without the validation below.
+- On resume, `bf_hist` starts fresh (history not checkpointed) — fine, it rebuilds; worst case
+  it runs PATIENCE extra iters after a resume. Acceptable.
 
-## Commits (this session, on perk-perf; latest first)
-93237c8 batched AD throughput finding (compile is the bottleneck)
-1d74214 batched AD gradient WORKS end-to-end (1.75e-5 vs single-path)
-794caf7 de-risk batched AD risk #1 cleared (1.55x staged)
-6976771 design memo: batched AD on the per-k pipeline
-0b11134 CHANGELOG: stall diagnosis + fix
-76127ca fix BFGS line-search stall (consistent fast-path values)
-0aee3b3 AD profile: precompute low-ell splines + production slurm
-8645b53 frequentist hardening: AD-grad BFGS driver + low-ell TT/EE
+**Validation plan (do this BEFORE relying on it for the production):**
+1. Debug job, low l for speed but enough to settle: e.g. `PA_POIS=ln10As PA_NPTS=7 PA_LMAX=900
+   PA_MAXIT=20 PA_TAG=_estop PA_FTOL=1e-3` on 1 node. Confirm it STOPS only after the chi2
+   profile is visibly flat, and that the resulting `sigma1` interval matches a no-early-stop
+   reference run (`PA_FTOL=0`) to «0.05σ. (Low-l is fine — the plateau LOGIC is l-independent;
+   you're testing the trigger, not the science.)
+2. If the interval matches → the early-stop is safe; the queued 54845799 picks it up at runtime
+   (it reads the patched `.py`). Expect it to stop ~it6–8 → ~3 h.
+3. If it stops too early (interval shifts) → raise FTOL_PATIENCE to 4–5 and/or lower FTOL to
+   3e-4, re-test.
 
-## Untracked (not committed — decide later)
-`scan/results/profile_prod_*.png|npz`, `scan/results/tol_sweep_*.npz` — the PREVIOUS session's
-entry-(a) 6-POI production profile deliverables (binaries; left untracked by that session).
+Project rule: write the diff to a file for review first, then apply.
+
+────────────────────────────────────────────────────────────────────────
+## After the early-stop lands (in order)
+1. **Let 54845799 run** (or resubmit `sbatch scan/profile_prod_ad.slurm` with the same
+   POI_SLICE/NPTS/TAG env — it auto-resumes per-rank). Then `python scan/collect_profiles.py
+   _mn6` → the headline ΛCDM table + plot. Compare to Planck18, SMC (`smc_lcdm.npz`), and the
+   entry-(a) FD profiles.
+2. **Workstream C:** ΛCDM+Neff via `scan/configs/lcdm_neff.py` (grad_method already "ad") on
+   the same POI-slice harness — the competitive headline vs 22 h.
+3. **Tighter certificate (optional):** find the roughness source — test `lna_grid_mode=
+   "uniform"` (revert round-4) and/or larger `k_chunk`; NOT rtol (proven null).
+4. Coverage mocks (Workstream E); intra-POI row-slice (needs the MPI gather) for >6-way scale.
+
+────────────────────────────────────────────────────────────────────────
+## Hard constraints (user)
+Stay near permille (no tol-loosening / fp32). No TCA / diffrax regime-switching. k_chunk
+stays 100. Don't lower l_max for massive ν. **Prefer debug queue; ≤1 self-initiated
+interactive session and only if <2 already running, release fast; NEVER scancel other
+sessions' jobs.** Scale GPUs (nodes), not walltime. **Do not cancel 54845799.**

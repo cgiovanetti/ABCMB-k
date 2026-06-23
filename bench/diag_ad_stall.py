@@ -47,28 +47,40 @@ for pi in range(P.D):
     print(f"   {P.ORDER[pi]:11s} stuck {len(stuck):2d}/{len(sel)}  maxg={gsel.max():.2e}  "
           f"stuck_gridpos={gidx}  boxpinned={sum(boxed)}/{len(stuck)}")
 
-# (3) line-search probe at the worst few stuck rows: does -alpha*(Hinv@g) reduce f?
+# (3) line-search probe at the worst few stuck rows along BOTH directions:
+#   d_bfgs = -Hinv@g  (the BFGS step -- bad if the carried Hinv is contaminated)
+#   d_sd   = -g/||g|| (steepest descent -- the TRUE gradient direction)
+# If d_sd descends but d_bfgs does not -> Hinv is the problem (fresh start fixes).
+# If NEITHER descends -> g is not a descent direction for f (gradient/value
+# inconsistency -> a restart would NOT help; deeper bug).
 probe = np.argsort(gn)[::-1][:4]                              # 4 worst rows
 print(f"\n[probe] worst rows {list(probe)} (||g||={[round(float(gn[b]),2) for b in probe]}):")
-alphas = [1.0, 0.5, 0.1, 0.03, 0.01]
-# build one batch: for each probe row, base point + 5 trial steps along -Hinv@g
-rows_b, Xtrial = [], []
+alphas = [1.0, 0.3, 0.1, 0.03, 0.01]
+rows_b, Xtrial = [], []                                       # one big batch
 for b in probe:
-    d = -(Hinv[b] @ g[b])
-    rows_b.append((b, None)); Xtrial.append(x[b])             # base
+    d_bfgs = -(Hinv[b] @ g[b])
+    d_sd = -g[b] / max(np.linalg.norm(g[b]), 1e-30)
+    rows_b.append((b, "base", 0)); Xtrial.append(x[b])
     for a in alphas:
-        rows_b.append((b, a)); Xtrial.append(np.clip(x[b] + a * d, -P.XBOX, P.XBOX))
-POI_b = np.array([POI_IDX[b] for (b, _) in rows_b])
-PV_b = np.array([PV[b] for (b, _) in rows_b])
+        rows_b.append((b, "bfgs", a)); Xtrial.append(np.clip(x[b] + a * d_bfgs, -P.XBOX, P.XBOX))
+    for a in alphas:
+        rows_b.append((b, "sd", a)); Xtrial.append(np.clip(x[b] + a * d_sd, -P.XBOX, P.XBOX))
+POI_b = np.array([POI_IDX[b] for (b, _, _) in rows_b])
+PV_b = np.array([PV[b] for (b, _, _) in rows_b])
 fvals = P.fast_values_rows(POI_b, np.array(Xtrial), PV_b)
 k = 0
 for b in probe:
     f0 = fvals[k]; k += 1
-    line = f"   row {b:3d} ({P.ORDER[int(POI_IDX[b])]:9s}) f0={f0:.3f}:"
-    best = f0
-    for a in alphas:
-        fa = fvals[k]; k += 1
-        line += f"  a={a}:{fa-f0:+.3f}"
-        best = min(best, fa)
-    verdict = "DESCENT EXISTS (Hinv/LS issue)" if best < f0 - 1e-3 else "NO DESCENT (g vs f inconsistent?)"
-    print(line + f"   -> {verdict}")
+    bfgs_d = [fvals[k + i] - f0 for i in range(len(alphas))]; k += len(alphas)
+    sd_d = [fvals[k + i] - f0 for i in range(len(alphas))]; k += len(alphas)
+    best_bfgs = min(bfgs_d); best_sd = min(sd_d)
+    print(f"   row {b:3d} ({P.ORDER[int(POI_IDX[b])]:9s}) f0={f0:.3f} |x|max={np.max(np.abs(x[b])):.2f}")
+    print(f"       -Hinv@g dfs: {[round(v,3) for v in bfgs_d]}  best={best_bfgs:+.3f}")
+    print(f"       -g      dfs: {[round(v,3) for v in sd_d]}  best={best_sd:+.3f}")
+    if best_sd < -1e-3 and best_bfgs >= -1e-3:
+        v = "Hinv BAD (steepest-descent works, BFGS dir does not) -> FRESH START fixes"
+    elif best_sd < -1e-3:
+        v = "both descend -> just needs more/cleaner iters"
+    else:
+        v = "NO DESCENT either dir -> g vs f INCONSISTENT (deeper bug)"
+    print(f"       -> {v}")
