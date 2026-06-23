@@ -77,6 +77,24 @@ def replay_trigger(bf_hist, ftol, patience):
     return n - 1
 
 
+def sig1_series(bf, PV):
+    """Per-iteration dchi2=1 interval half-width (single POI; PV is the grid)."""
+    return np.array([sig1_halfwidth(PV, bf[k]) for k in range(len(bf))])
+
+
+def replay_sigtol(s1, sigma_poi, sigtol, patience):
+    """Replay the sigma1-STABILITY trigger (bfgs_rows): stop at history index k once the
+    interval half-width has moved < sigtol*sigma_poi over the PATIENCE window (both ends
+    finite). Returns k (= iters executed); len-1 if it never fires."""
+    n = len(s1)
+    for k in range(1, n):
+        if sigtol > 0 and (k + 1) > patience:
+            a, b = s1[k - patience], s1[k]
+            if np.isfinite(a) and np.isfinite(b) and abs(b - a) / sigma_poi < sigtol:
+                return k
+    return n - 1
+
+
 def main(path):
     d = np.load(path)
     bf = np.asarray(d["bf_hist"], float)       # (n_hist, N)
@@ -120,8 +138,30 @@ def main(path):
         print(f"   it{k-1 if k else 'X':>2}  {cells}")
     print("   (row 'itX' = initial best_f; large late-iter values = a still-descending row)")
 
-    # ---- sweep candidate (FTOL, PATIENCE) ----
-    print("\n=== early-stop trigger sweep (vs FINAL) ===")
+    # ---- sigma1-STABILITY trigger sweep (the PREFERRED, model-agnostic trigger) ----
+    sigma_poi = None
+    if "sigma_order" in d.files:
+        sigma_poi = float(np.asarray(d["sigma_order"], float)[int(POI_IDX[0])])
+    if sigma_poi is None:
+        sigma_poi = si_final if np.isfinite(si_final) else float("nan")
+        print(f"\n(NOTE: trace has no sigma_order; normalizing d(sigma1) by sig1_final="
+              f"{sigma_poi:.5f} instead of the config sigma)")
+    s1 = sig1_series(bf, PV)
+    print(f"\n=== sigma1-stability trigger sweep (vs FINAL; sigma(POI)={sigma_poi:.5f}) ===")
+    print(" SIGTOL  PAT  stop@it  iters_saved  sig1_int   d(sig1)/sigma_to_final  verdict")
+    for sigtol in (3e-3, 5e-3, 1e-2, 2e-2, 5e-2):
+        for pat in (3, 4, 5):
+            k = replay_sigtol(s1, sigma_poi, sigtol, pat)
+            si = s1[k]
+            dsig = abs(si - si_final) / sigma_poi if np.isfinite(sigma_poi) else np.nan
+            saved = (n_hist - 1) - k
+            fired = "fired" if k < n_hist - 1 else " end "
+            verdict = "OK" if dsig < 0.02 else ("marginal" if dsig < 0.05 else "BIAS")
+            print(f" {sigtol:.0e}  {pat:3d}  {k:6d}  {saved:11d}   {si:8.5f}   "
+                  f"{dsig:18.4f}   {fired} {verdict}")
+
+    # ---- chi2-plateau (legacy) trigger sweep (FTOL, PATIENCE) ----
+    print("\n=== chi2-plateau (legacy) trigger sweep (vs FINAL) ===")
     print(" FTOL    PAT  stop@it  iters_saved  sig1_par   d/sig_par   sig1_int   d/sig_int  verdict")
     for ftol in (3e-4, 5e-4, 1e-3, 2e-3, 5e-3):
         for pat in (3, 4, 5):

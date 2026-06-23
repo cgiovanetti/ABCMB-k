@@ -108,6 +108,17 @@ GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||grad||_inf gate (scaled
 # -- a premature stop = biased interval; once validated, flip this default to the chosen FTOL.
 FTOL = float(os.environ.get("PA_FTOL", "0"))         # max per-row chi2 improvement over window
 FTOL_PATIENCE = int(os.environ.get("PA_FTOL_PATIENCE", "3"))
+# sigma1-STABILITY EARLY-STOP (the PREFERRED trigger: model-agnostic, no per-model tuning).
+# Stop once EVERY POI's 1-sigma interval half-width has changed by < PA_SIGTOL * sigma(POI)
+# over PA_SIGTOL_PATIENCE iters -- i.e. the DELIVERABLE (the interval) has converged to
+# PA_SIGTOL sigmas. The tolerance is in sigma-units, so it transfers to any new cosmology on
+# its FIRST run (unlike the chi2 FTOL, whose scale is the solver roughness floor). Robust to
+# the ~0.1 chi2 roughness (sigma1 is the PCHIP-smoothed crossing) and to edge-row lag (tail
+# rows sit at dchi2~9, away from the dchi2=1 crossings). The post-loop AD ||g|| cert still
+# runs. SIGTOL<=0 disables. DEFAULT OFF until DEMONSTRATED on a full-l calibration run; then
+# flip this default (~0.01 expected). See bench/analyze_estop.py (replays this trigger).
+SIGTOL = float(os.environ.get("PA_SIGTOL", "0"))     # interval half-width stability, in sigma units
+SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter best_f history
 #   to this npz path for post-hoc early-stop validation. OFF by default (no prod impact).
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
@@ -440,6 +451,14 @@ def iterate_grad(POI_IDX, X, PV, method, fd_step=None):
     return G
 
 
+def _interval_halfwidth(x, chi2):
+    """1-sigma (dchi2=1) interval half-width of a single POI's profile, via the SAME
+    PCHIP `interval` the final result uses. NaN if no clean dchi2=1 crossing yet (early
+    iters, min at an edge) -- the sigma1-stability trigger holds until it is finite."""
+    lo, _, hi = interval(x, chi2, 1.0)
+    return 0.5 * (hi - lo) if (np.isfinite(lo) and np.isfinite(hi)) else np.nan
+
+
 # ======================================================================
 # vectorised BFGS over the ROW set (lockstep), Armijo line search
 # ======================================================================
@@ -475,6 +494,12 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         gnorm = np.abs(g).max(1)
         start_it = 0
     bf_hist = [best_f.copy()]            # chi2-plateau history (fresh on resume; rebuilds)
+    # per-POI row grouping + sigma1 history for the sigma1-stability early-stop (the rows
+    # of one POI share its POI_IDX; their PV values ARE that POI's grid).
+    poi_rows = {int(p): np.where(POI_IDX == p)[0] for p in np.unique(POI_IDX)}
+    def _cur_sig1():                     # {poi_idx: dchi2=1 interval half-width}
+        return {p: _interval_halfwidth(PV[r], best_f[r]) for p, r in poi_rows.items()}
+    sig1_hist = [_cur_sig1()]            # fresh on resume (rebuilds; worst case +PATIENCE iters)
     # rank-aware trace path: under POI_SLICE/RANK_SLICE each rank owns a disjoint POI
     # set, so a single shared path would clobber -- insert _r{RANK} (mirrors the ckpt).
     bf_trace_path = BF_TRACE
@@ -494,7 +519,8 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         if trace_prefix is not None:     # drop the duplicated resumed state, then extend
             hist = np.concatenate([trace_prefix, hist[1:]], axis=0)
         tmp = bf_trace_path + ".tmp.npz"
-        np.savez(tmp, bf_hist=hist, PV=PV, POI_IDX=POI_IDX, start_it=start_it)
+        np.savez(tmp, bf_hist=hist, PV=PV, POI_IDX=POI_IDX, start_it=start_it,
+                 sigma_order=SIGMA, order=np.array(ORDER))  # sigma per ORDER idx for sigma1 replay
         os.replace(tmp, bf_trace_path)
     for it in range(start_it, maxit):
         active = gnorm > gtol
@@ -549,6 +575,25 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         # over the window) has plateaued below FTOL, every row has, so stop this POI.
         bf_hist.append(best_f.copy())
         _write_trace()
+        # ---- sigma1-STABILITY early-stop (preferred): stop when EVERY POI's interval
+        # half-width has moved < SIGTOL*sigma(POI) over the window (the interval has
+        # converged to SIGTOL sigmas). Model-agnostic; no per-model tuning. ----
+        sig1_hist.append(_cur_sig1())
+        if SIGTOL > 0 and len(sig1_hist) > SIGTOL_PATIENCE:
+            prev = sig1_hist[-1 - SIGTOL_PATIENCE]; cur = sig1_hist[-1]
+            worst = 0.0; ready = True
+            for p in poi_rows:
+                a, b = prev[p], cur[p]
+                if not (np.isfinite(a) and np.isfinite(b)):
+                    ready = False; break              # this POI's interval not formed yet
+                worst = max(worst, abs(b - a) / SIGMA[p])
+            if ready and worst < SIGTOL:
+                if log_prefix:
+                    print(f"  {log_prefix} sigma1 stable: worst d(sigma1)/sigma "
+                          f"{worst:.2e} < SIGTOL {SIGTOL:.0e} over {SIGTOL_PATIENCE} iters "
+                          f"-> stop at it{it}", flush=True)
+                break
+        # ---- chi2-plateau early-stop (legacy alternative; needs solver-floor tuning) ----
         if FTOL > 0 and len(bf_hist) > FTOL_PATIENCE:
             improve = float((bf_hist[-1 - FTOL_PATIENCE] - best_f).max())
             if improve < FTOL:
