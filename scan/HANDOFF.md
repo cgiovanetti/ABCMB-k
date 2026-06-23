@@ -8,11 +8,47 @@ is in git history — superseded.)
 
 ────────────────────────────────────────────────────────────────────────
 ## TL;DR — where we are
-The frequentist profile tool **works and is queued to deliver**. Tonight's session
-diagnosed why it kept stalling, fixed it, parallelized it across nodes, and validated
-convergence end-to-end on an interactive node. **One job is queued (54845799)** that will
-produce the result in ~6.7 h. **The next task is a chi2-plateau early-stop** that cuts that
-to ~3 h (the "few hours" bar). The diff + validation plan are in §"NEXT TASK" below.
+The frequentist profile tool **works and is queued to deliver**. **One job is queued
+(54845799)** that produces the result in ~6.7 h. The **chi2-plateau early-stop** (the ~2×
+idea) is now **IMPLEMENTED and mechanically validated** (default OFF, safe) — see
+§"EARLY-STOP STATUS (2026-06-23)" below. What remains is **tuning FTOL on a real full-l
+trace** (the smooth low-l proxy can't), then flipping the default to land the ~2× on every
+run after the headline.
+
+────────────────────────────────────────────────────────────────────────
+## EARLY-STOP STATUS (2026-06-23, session "frequentist_3")
+**DONE — implemented + mechanically validated, default OFF.**
+- `profile_prod_ad.py:bfgs_rows` stops a POI's lockstep once the **MAX-over-rows** per-row
+  best-chi2 improvement over `PA_FTOL_PATIENCE` (3) iters drops below `PA_FTOL`. MAX (not
+  min-row) so lagging edge ±3σ rows aren't cut early. Post-loop AD ‖g‖ cert unchanged.
+- **DEFAULT OFF (`PA_FTOL=0`)** — a premature stop biases the interval and the queued
+  54845799 reads this `.py` at runtime; full-MAXIT is already ~6.7 h (< 22 h bar), so the
+  early-stop is a pure speedup, not a correctness need. Ship OFF, enable once tuned.
+- **Validated on a FAST proxy** (debug full-l is too slow: ~9–22 min/iter + a ~17-min
+  staged-AD compile that does NOT persist across jobs). `PA_USE_PLIK=0` (new toggle,
+  default ON) drops high-ell plik-lite (it needs l~2508; LMAX=900 gave chi2~185000
+  garbage) → lowTT+lowEE only. `scan/configs/lowl_proxy.py` profiles tau over ln10As
+  (2-param, seconds/iter at LMAX=100). `PA_BF_TRACE` dumps per-iter best_f;
+  `bench/analyze_estop.py` replays the trigger. **Result: σ1 freezes by it1, Δσ1=+0.0000
+  for all (FTOL 3e-4..5e-3, PATIENCE 3-5)** — mechanics sound.
+- **What the proxy CANNOT do** → the real remaining task: the cond=1.0 proxy converges
+  uniformly (no edge-lag) and is SMOOTH (no ~0.1 roughness floor), so it can't tune FTOL
+  for the rough full problem. `FTOL=1e-3` is likely BELOW the roughness floor → would
+  never fire → no speedup; the right FTOL is ~the roughness scale (**~0.05–0.1**), giving
+  σ1 good to the ~0.02–0.03σ floor the result already lives with.
+
+### REMAINING (to land the ~2×)
+1. **Capture a real full-l per-iter trace.** `PA_BF_TRACE` is now rank-aware
+   (POI_SLICE → `_r<rank>`) and wired into `profile_prod_ad.slurm` (FTOL stays 0 = full
+   safe run). So the NEXT production submit (resubmit the headline OR run lcdm_neff)
+   auto-captures `scan/results/bf_trace_prod_r<rank>.npz`. (54845799 itself won't — its env
+   froze at submit; it runs full, no trace.)
+2. **Tune:** `python bench/analyze_estop.py scan/results/bf_trace_prod_r0.npz` → pick the
+   smallest FTOL whose Δσ1 « 0.02σ AND that actually fires above the roughness floor.
+3. **Flip the default** `PA_FTOL` in `profile_prod_ad.py` to the tuned value; commit. The
+   ~2× then applies to every subsequent run. **Keep the headline full** (precision bar).
+   (The original 2026-06-22 diff + gotchas are in §"NEXT TASK (priority 1)" below — now
+   IMPLEMENTED; kept for the rationale.)
 
 **DO NOT cancel the pending regular job 54845799** (user instruction). It reads the `.py`
 files at runtime, so any committed `.py` change applies to it automatically — no resubmit
@@ -68,7 +104,7 @@ POI-slice + prod launch · `aa1f6bb` lcdm grad_method=ad.
   entry-(a) FD profiles: all 6 POIs within ±0.5σ of Planck AND the SMC posterior.
 
 ────────────────────────────────────────────────────────────────────────
-## NEXT TASK (priority 1) — chi2-plateau early-stop → ~3 h
+## NEXT TASK (priority 1) — chi2-plateau early-stop → ~3 h  [IMPLEMENTED 2026-06-23 — historical]
 **Why:** the demo showed chi2/intervals settle by ~it5 while ‖g‖ grinds slowly toward its
 ~0.1 roughness floor and never reaches GTOL=0.03 — so iters ~6–18 are wasted chasing an
 unreachable certificate. Stopping when chi2 plateaus cuts the production ~6.7 h → ~3 h. The

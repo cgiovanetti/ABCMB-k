@@ -9,6 +9,55 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-23 — chi2-plateau EARLY-STOP implemented + mechanically validated (default OFF)
+----------------------------------------------------------------------------------------
+Session "frequentist_3" (perk-perf). Implemented the ~2x speedup the prior session
+identified: a chi2-plateau EARLY-STOP in profile_prod_ad.py:bfgs_rows. The AD ||g||
+grinds toward an unreachable ~0.1 roughness floor (so GTOL=0.03 is never met) while
+chi2/intervals settle by ~it5 -- iters 6-18 are wasted. The early-stop stops a POI's
+lockstep once the SLOWEST-converging row's best-chi2 improves < PA_FTOL over
+PA_FTOL_PATIENCE iters (MAX over rows, so lagging edge +/-3sigma rows aren't cut early).
+The post-loop AD ||g|| certificate still runs. Targets production ~6.7h -> ~3h.
+
+DEFAULT OFF (PA_FTOL=0). A premature stop biases the interval, and the queued
+production 54845799 reads this .py at runtime, so an unvalidated default could corrupt
+the headline. Full-MAXIT is already ~6.7h (under the 22h bar), so the early-stop is a
+pure speedup, not a correctness requirement -- safe to ship OFF and enable once tuned.
+
+VALIDATION (debug; the full-l path is too slow for debug's 30-min cap -- ~9-22 min/iter
++ a ~17-min staged-AD compile that does NOT persist across jobs, so a real plateau won't
+accumulate). Built a FAST proxy instead:
+  - PA_USE_PLIK toggle (DEFAULT ON, zero prod impact): drop high-ell plik-lite (it needs
+    theory Cls to l~2508 -- a LMAX=900 attempt gave chi2~185000 GARBAGE) and keep only
+    lowTT+lowEE (theory to l~29). scan/configs/lowl_proxy.py: tau_reion profiled over
+    ln10As (other 4 LCDM params fixed) -> clean 2-param problem, seconds/iter at LMAX=100.
+  - PA_BF_TRACE (debug-only, off in prod): per-iter best_f dump, written every iter +
+    resume-accumulating (survives a walltime kill). bench/analyze_estop.py replays the
+    trigger over a (FTOL,PATIENCE) sweep and reports Dsigma1 vs the converged interval.
+  - RESULT (bench/analyze_estop on bf_trace_lowl_tau, 5 iters): sigma1 freezes by it1
+    (parab 0.00429, interval 0.00643) and the trigger fires only after the descent
+    window clears -> Dsigma1 = +0.0000 for ALL (FTOL 3e-4..5e-3, PATIENCE 3-5). Mechanics
+    SOUND (sigma1 extraction, replay-vs-code indexing, no off-by-one).
+
+WHAT THE PROXY CANNOT DO (deferred to a real full-l trace): the cond=1.0 proxy converges
+all rows uniformly (no edge-lag to stress), and being SMOOTH it has no ~0.1 roughness
+floor -- so it CANNOT tune the right FTOL for the rough full problem (FTOL=1e-3 is likely
+below the roughness floor -> would never fire -> no speedup; the right FTOL is ~the
+roughness scale, ~0.05-0.1, giving sigma1 good to the ~0.02-0.03sigma floor the result
+already lives with). To get that trace: BF_TRACE is now rank-aware (POI_SLICE inserts
+_r<rank>) and PA_BF_TRACE is wired into profile_prod_ad.slurm (FTOL stays 0 = full safe
+run), so the NEXT production submit captures the real per-iter trajectory for tuning.
+The queued 54845799 is UNAFFECTED (its env froze at submit, no PA_BF_TRACE; runs full).
+
+Commits: de67ebb (early-stop, default OFF) · 4396536 (PA_USE_PLIK + proxy) · 3d241ef
+(GTOL=1e-8 grind) · 934180e (standalone analyzer) · 716a1c8 (rank-aware trace + prod
+wiring). Tools: scan/validate_estop.slurm, bench/analyze_estop.{py,slurm}.
+
+NEXT: capture a full-l per-rank trace (resubmit prod or run lcdm_neff with PA_BF_TRACE);
+analyze_estop -> pick FTOL above the roughness floor; flip the PA_FTOL default; THEN the
+~2x lands on every run after the headline. Still keep the headline full (precision bar).
+
+
 2026-06-22 — MULTI-NODE POI-slice + AD-stall diagnosis; 6-node production launched
 ------------------------------------------------------------------------------------
 Session: perk-perf. The AD gate (54721220) timed out AGAIN: it RESUMED from it5 and AD
