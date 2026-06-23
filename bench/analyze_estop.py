@@ -95,88 +95,81 @@ def replay_sigtol(s1, sigma_poi, sigtol, patience):
     return n - 1
 
 
+def analyze_one_poi(name, grid, chi2_hist, sigma, default=(1e-2, 3)):
+    """Per-POI report: per-iter sigma1 + the sigma1-stability fire point at the default
+    (SIGTOL,PATIENCE). Returns (s1_series, k_fire_at_default, si_final)."""
+    n_hist = len(chi2_hist)
+    s1 = np.array([sig1_halfwidth(grid, chi2_hist[k]) for k in range(n_hist)])
+    si_final = s1[-1]
+    print(f"\n--- POI {name}  (sigma={sigma:.5f}; final sigma1_int={si_final:.5f}) ---")
+    print("   it  sig1_int   d(sig1)/sigma_to_final")
+    for k in range(n_hist):
+        dsig = abs(s1[k] - si_final) / sigma if np.isfinite(s1[k]) else np.nan
+        print(f"   {k - 1 if k else 'X':>2}  {s1[k]:8.5f}   {dsig:18.4f}")
+    sigtol, pat = default
+    k = replay_sigtol(s1, sigma, sigtol, pat)
+    dfire = abs(s1[k] - si_final) / sigma if np.isfinite(s1[k]) else np.nan
+    tag = "FIRED" if k < n_hist - 1 else "ran-to-end (not enough iters to fire)"
+    print(f"   default SIGTOL={sigtol:.0e} PAT={pat}: stop@it{k} (saved {n_hist-1-k}); "
+          f"d(sigma1)={dfire:.4f}sigma  [{tag}]")
+    return s1, k, si_final
+
+
 def main(path):
     d = np.load(path)
     bf = np.asarray(d["bf_hist"], float)       # (n_hist, N)
-    PV = np.asarray(d["PV"], float)            # (N,) grid (single POI => PV is the grid)
+    PV = np.asarray(d["PV"], float)            # (N,)
     POI_IDX = np.asarray(d["POI_IDX"], int)
     n_hist, N = bf.shape
-    npoi = len(np.unique(POI_IDX))
+    uniq = list(np.unique(POI_IDX))
+    sig_order = np.asarray(d["sigma_order"], float) if "sigma_order" in d.files else None
+    names = list(np.asarray(d["order"])) if "order" in d.files else None
     print(f"trace {path}: {n_hist} history entries ({n_hist-1} BFGS iters), "
-          f"N={N} rows, {npoi} POI(s)")
-    if npoi != 1:
-        print("WARNING: analysis assumes a SINGLE POI (PV == grid). Got "
-              f"{npoi} POIs -- per-POI splitting not implemented here.")
+          f"N={N} rows, {len(uniq)} POI(s)")
+    SIGTOL, PAT = 1e-2, 3                       # the production default
 
-    # ---- per-iteration sigma1 (both estimators) + window-improvement signal ----
-    print("\n  k  iters   min_chi2   sig1_par   sig1_int   max_per_row_improve(win=3)")
-    for k in range(n_hist):
-        chi2 = bf[k]
-        sp = sigma_parabola(PV, chi2)
-        si = sig1_halfwidth(PV, chi2)
-        if k >= 3:
-            win = float((bf[k - 3] - bf[k]).max())
-            wstr = f"{win:.2e}"
-        else:
-            wstr = "   --   "
-        print(f"  {k:2d}  {k:5d}   {np.nanmin(chi2):8.3f}   "
-              f"{sp:8.5f}   {si:8.5f}   {wstr}")
+    # ---- per-POI analysis (each POI's rows form its grid) ----
+    per = {}
+    for p in uniq:
+        rows = np.where(POI_IDX == p)[0]
+        name = (str(names[p]) if names is not None else f"poi{p}")
+        sigma = float(sig_order[p]) if sig_order is not None else \
+            sig1_halfwidth(PV[rows], bf[-1][rows])     # fallback: sig1_final
+        per[p] = analyze_one_poi(name, PV[rows], bf[:, rows], sigma, (SIGTOL, PAT))
 
-    sp_final = sigma_parabola(PV, bf[-1]); si_final = sig1_halfwidth(PV, bf[-1])
-    print(f"\nFINAL (it{n_hist-1}): sigma1_parab={sp_final:.5f}  "
-          f"sigma1_interval={si_final:.5f}")
-
-    # ---- per-row chi2 vs iteration: shows WHICH rows lag (edge rows settle later
-    #      than center, the gotcha). dchi2_to_final = how far each row is from its
-    #      final value at each iter. The trigger must wait for the slowest row. ----
-    o = np.argsort(PV); cen = o[len(o) // 2]
-    print("\n  per-row dchi2-to-final (row order = POI grid; center row marked *):")
-    hdr = "   iter " + " ".join(f"{('*' if r == cen else ' ')}r{r}" for r in o)
-    print(hdr)
-    for k in range(n_hist):
-        cells = " ".join(f"{bf[k][r]-bf[-1][r]:5.2f}" for r in o)
-        print(f"   it{k-1 if k else 'X':>2}  {cells}")
-    print("   (row 'itX' = initial best_f; large late-iter values = a still-descending row)")
-
-    # ---- sigma1-STABILITY trigger sweep (the PREFERRED, model-agnostic trigger) ----
-    sigma_poi = None
-    if "sigma_order" in d.files:
-        sigma_poi = float(np.asarray(d["sigma_order"], float)[int(POI_IDX[0])])
-    if sigma_poi is None:
-        sigma_poi = si_final if np.isfinite(si_final) else float("nan")
-        print(f"\n(NOTE: trace has no sigma_order; normalizing d(sigma1) by sig1_final="
-              f"{sigma_poi:.5f} instead of the config sigma)")
-    s1 = sig1_series(bf, PV)
-    print(f"\n=== sigma1-stability trigger sweep (vs FINAL; sigma(POI)={sigma_poi:.5f}) ===")
-    print(" SIGTOL  PAT  stop@it  iters_saved  sig1_int   d(sig1)/sigma_to_final  verdict")
-    for sigtol in (3e-3, 5e-3, 1e-2, 2e-2, 5e-2):
-        for pat in (3, 4, 5):
-            k = replay_sigtol(s1, sigma_poi, sigtol, pat)
-            si = s1[k]
-            dsig = abs(si - si_final) / sigma_poi if np.isfinite(sigma_poi) else np.nan
-            saved = (n_hist - 1) - k
-            fired = "fired" if k < n_hist - 1 else " end "
-            verdict = "OK" if dsig < 0.02 else ("marginal" if dsig < 0.05 else "BIAS")
-            print(f" {sigtol:.0e}  {pat:3d}  {k:6d}  {saved:11d}   {si:8.5f}   "
-                  f"{dsig:18.4f}   {fired} {verdict}")
-
-    # ---- chi2-plateau (legacy) trigger sweep (FTOL, PATIENCE) ----
-    print("\n=== chi2-plateau (legacy) trigger sweep (vs FINAL) ===")
-    print(" FTOL    PAT  stop@it  iters_saved  sig1_par   d/sig_par   sig1_int   d/sig_int  verdict")
-    for ftol in (3e-4, 5e-4, 1e-3, 2e-3, 5e-3):
-        for pat in (3, 4, 5):
-            k = replay_trigger(bf, ftol, pat)
-            chi2 = bf[k]
-            sp = sigma_parabola(PV, chi2); si = sig1_halfwidth(PV, chi2)
-            dpar = (sp - sp_final) / sp_final if sp_final else np.nan
-            dint = (si - si_final) / si_final if si_final else np.nan
-            saved = (n_hist - 1) - k
-            worst = max(abs(dpar), abs(dint))
-            verdict = "OK" if worst < 0.05 else ("marginal" if worst < 0.1 else "BIAS")
-            print(f" {ftol:.0e}  {pat:3d}  {k:6d}  {saved:11d}   "
-                  f"{sp:8.5f}  {dpar:+8.4f}   {si:8.5f}  {dint:+8.4f}   {verdict}")
+    # ---- GLOBAL trigger (the live bfgs_rows logic: stop when EVERY POI stable) ----
+    print(f"\n=== GLOBAL sigma1-stability trigger (live logic; SIGTOL={SIGTOL:.0e} "
+          f"PAT={PAT}) ===")
+    k_global = n_hist - 1
+    for k in range(1, n_hist):
+        if (k + 1) <= PAT:
+            continue
+        ready, worst = True, 0.0
+        for p in uniq:
+            s1 = per[p][0]
+            a, b = s1[k - PAT], s1[k]
+            if not (np.isfinite(a) and np.isfinite(b)):
+                ready = False; break
+            sigma = float(sig_order[p]) if sig_order is not None else per[p][2]
+            worst = max(worst, abs(b - a) / sigma)
+        if ready and worst < SIGTOL:
+            k_global = k; break
+    fired = k_global < n_hist - 1
+    print(f"  GLOBAL stop@it{k_global} (saved {n_hist-1-k_global} of {n_hist-1}) "
+          f"-- {'FIRED' if fired else 'ran to end'}")
+    # worst per-POI d(sigma1) at the global stop, vs each POI's final
+    worst_d = 0.0
+    for p in uniq:
+        s1, _, sif = per[p]
+        sigma = float(sig_order[p]) if sig_order is not None else sif
+        if np.isfinite(s1[k_global]):
+            worst_d = max(worst_d, abs(s1[k_global] - sif) / sigma)
+    verdict = "OK" if worst_d < 0.02 else ("marginal" if worst_d < 0.05 else "BIAS")
+    print(f"  worst per-POI d(sigma1) at the stop vs converged: {worst_d:.4f}sigma  [{verdict}]")
+    print("  (the live trigger waits for the SLOWEST POI; speedup vs production MAXIT=18 "
+          f"= 18/{k_global if fired else n_hist-1} iters)")
 
 
 if __name__ == "__main__":
     main(sys.argv[1] if len(sys.argv) > 1 else
-         "scan/results/bf_trace_ln10As.npz")
+         "scan/results/bf_trace_calib.npz")

@@ -115,9 +115,10 @@ FTOL_PATIENCE = int(os.environ.get("PA_FTOL_PATIENCE", "3"))
 # its FIRST run (unlike the chi2 FTOL, whose scale is the solver roughness floor). Robust to
 # the ~0.1 chi2 roughness (sigma1 is the PCHIP-smoothed crossing) and to edge-row lag (tail
 # rows sit at dchi2~9, away from the dchi2=1 crossings). The post-loop AD ||g|| cert still
-# runs. SIGTOL<=0 disables. DEFAULT OFF until DEMONSTRATED on a full-l calibration run; then
-# flip this default (~0.01 expected). See bench/analyze_estop.py (replays this trigger).
-SIGTOL = float(os.environ.get("PA_SIGTOL", "0"))     # interval half-width stability, in sigma units
+# runs. SIGTOL<=0 disables. DEFAULT 1e-2: DEMONSTRATED at full l on ln10As (the worst-
+# conditioned POI) -- fires at it5 (vs ||g|| grinding to it18+), sigma1 matched the converged
+# interval to 0.0001 sigma, ~2.6x wall-clock (CHANGELOG 2026-06-23). See bench/analyze_estop.py.
+SIGTOL = float(os.environ.get("PA_SIGTOL", "1e-2"))  # interval half-width stability, in sigma units
 SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter best_f history
 #   to this npz path for post-hoc early-stop validation. OFF by default (no prod impact).
