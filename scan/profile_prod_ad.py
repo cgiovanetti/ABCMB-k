@@ -100,6 +100,16 @@ NPTS = int(os.environ.get("PA_NPTS", CFG.get("npts", 25)))
 NSIG = float(os.environ.get("PA_NSIG", CFG.get("nsig", 3.0)))
 MAXIT = int(os.environ.get("PA_MAXIT", 40))
 GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||grad||_inf gate (scaled coords)
+# chi2-plateau EARLY-STOP. The AD ||g|| grinds slowly toward a ~0.1 rtol-independent
+# roughness floor it never reaches (so GTOL is unreachable), but chi2/intervals settle
+# by ~it5. Stop a POI's lockstep once the SLOWEST-converging row's best-chi2 has improved
+# < FTOL over FTOL_PATIENCE iters. The post-loop AD ||g|| cert still reports the honest
+# floor. FTOL<=0 disables. DEFAULT OFF (0) until validated on debug (bench/analyze_estop.py)
+# -- a premature stop = biased interval; once validated, flip this default to the chosen FTOL.
+FTOL = float(os.environ.get("PA_FTOL", "0"))         # max per-row chi2 improvement over window
+FTOL_PATIENCE = int(os.environ.get("PA_FTOL_PATIENCE", "3"))
+BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter best_f history
+#   to this npz path for post-hoc early-stop validation. OFF by default (no prod impact).
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
@@ -453,6 +463,22 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
             else np.array(Hinv0, float)
         gnorm = np.abs(g).max(1)
         start_it = 0
+    bf_hist = [best_f.copy()]            # chi2-plateau history (fresh on resume; rebuilds)
+    trace_prefix = None                  # debug-only: prior-job trace to prepend on resume
+    if BF_TRACE and resume_state is not None and os.path.exists(BF_TRACE):
+        try:
+            trace_prefix = np.load(BF_TRACE)["bf_hist"]
+        except Exception:
+            trace_prefix = None
+    def _write_trace():                  # cheap; called every iter so a walltime kill
+        if not BF_TRACE:                 # mid-BFGS still leaves a valid partial trace
+            return
+        hist = np.array(bf_hist)
+        if trace_prefix is not None:     # drop the duplicated resumed state, then extend
+            hist = np.concatenate([trace_prefix, hist[1:]], axis=0)
+        tmp = BF_TRACE + ".tmp.npz"
+        np.savez(tmp, bf_hist=hist, PV=PV, POI_IDX=POI_IDX, start_it=start_it)
+        os.replace(tmp, BF_TRACE)
     for it in range(start_it, maxit):
         active = gnorm > gtol
         if not active.any():
@@ -502,6 +528,18 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
                      best_f=best_f, best_x=best_x, it=it + 1, gnorm=gnorm,
                      fd_step=(FD_STEP if fd_step is None else fd_step), gtol=gtol)
             os.replace(tmp, ckpt_path)                    # atomic
+        # chi2-plateau early-stop: once the SLOWEST-improving row (the max per-row drop
+        # over the window) has plateaued below FTOL, every row has, so stop this POI.
+        bf_hist.append(best_f.copy())
+        _write_trace()
+        if FTOL > 0 and len(bf_hist) > FTOL_PATIENCE:
+            improve = float((bf_hist[-1 - FTOL_PATIENCE] - best_f).max())
+            if improve < FTOL:
+                if log_prefix:
+                    print(f"  {log_prefix} chi2 plateau: max per-row improve "
+                          f"{improve:.2e} < FTOL {FTOL:.0e} over {FTOL_PATIENCE} iters "
+                          f"-> stop at it{it}", flush=True)
+                break
     return best_f, best_x, gnorm
 
 
