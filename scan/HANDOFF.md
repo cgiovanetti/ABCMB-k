@@ -8,11 +8,14 @@ is in git history — superseded.)
 
 ────────────────────────────────────────────────────────────────────────
 ## TL;DR — where we are
-The frequentist profile tool **works and is queued to deliver** (54845799). The ~2× idea is
-**DONE and DEMONSTRATED at full l**: a model-agnostic **σ1-stability early-stop**, now ON by
-default (`PA_SIGTOL=1e-2`) — see §"EARLY-STOP STATUS" below. ~2.6× wall-clock, σ1 exact to
-0.0001σ. The only remaining work is **confirming it on the other 5 POIs** while production
-queues.
+The frequentist profile tool **works and has DELIVERED the headline** (54845799 COMPLETED
+2026-06-24 in **2h58m**, 6 nodes). The ~2× idea is **DONE, DEMONSTRATED, and PROVEN in
+production**: a model-agnostic **σ1-stability early-stop**, ON by default (`PA_SIGTOL=1e-2`)
+— see §"EARLY-STOP STATUS" below. ~2.3× realized wall-clock. The early-stop fired cleanly on
+**all 6 POIs** (it3–it6, worst Δσ1=5.2e-3σ vs the 0.02σ bar) — this validated it live on
+every POI, so the "confirm the other 5 POIs" item is **CLOSED**. Headline table:
+`scan/results/profiles_summary_mn6.{png,npz}` — all minima within +0.60σ of Planck 2018, all
+within |0.33σ| of the SMC posterior.
 
 ────────────────────────────────────────────────────────────────────────
 ## EARLY-STOP STATUS (2026-06-23, session "frequentist_3") — DONE + ENABLED
@@ -31,31 +34,35 @@ solver roughness floor (needs per-problem tuning) and a "speedup only on repeats
   at it5, σ1 matched converged to 0.0001σ** (200× inside the 0.02σ bar) → **6 iters vs
   MAXIT=18 ≈ 2.6× wall-clock**. The legacy chi2-plateau trigger never fired (below the
   roughness floor) — vindicating the switch. Artifacts: `bench/calib_{trace,result}_ln10As_l2508.*`.
-- 54845799 reads the `.py` at runtime → **it gets the speedup too** (user-approved; validated
-  on its own ln10As POI; AD ‖g‖ cert + full profile saved as backstop).
+- 54845799 read the `.py` at runtime → **it got the speedup** (user-approved; AD ‖g‖ cert +
+  full profile saved as backstop). PROVEN — see below.
 
-### REMAINING — validate the other 5 POIs (user: "while production queues")
-Full-l calibration of **h, omega_b, omega_cdm, n_s, tau_reion** (ln10As done). Each is a
-`scan/calib_estop.sh` run with `PA_POIS=<poi>`/list, `PA_SIGTOL=0` (full reference),
-`PA_BF_TRACE=scan/results/bf_trace_<tag>.npz`, then `python bench/analyze_estop.py <trace>`
-(now per-POI + a GLOBAL trigger row). Confirm each POI's σ1 settles ≥ PATIENCE iters before
-the global trigger fires. ~22 min/iter at l=2508, so ~2 POIs (NPTS≈5–7) per 4-h interactive
-node. ln10As is the worst-conditioned, so the others should fire ≥ as early/safely; if any
-fires while still moving, tighten `PA_SIGTOL` (5e-3 also fired it5 on ln10As).
-Tools: `bench/analyze_estop.{py,slurm}` · `scan/calib_estop.sh` · the rank-aware `PA_BF_TRACE`
-is also wired into `profile_prod_ad.slurm` for full multi-node trace capture.
+### PROVEN IN PRODUCTION (2026-06-24) — the other 5 POIs are validated, item CLOSED
+54845799 COMPLETED in **2h58m18s** (6 nodes). The early-stop fired on **all 6 POIs, no
+premature stops**: h it4 (5.02e-3σ), omega_b it3 (5.18e-3σ), **omega_cdm it6 (8.18e-4σ —
+latest, worst-conditioned cond~158, trigger correctly waited)**, n_s it5 (1.18e-3σ), ln10As
+it5 (2.48e-3σ), tau_reion it5 (2.30e-3σ). Every firing is well inside the 0.02σ bar (worst
+5.2e-3σ). This validated the early-stop **live on every POI** — h/omega_b/n_s never needed
+separate full-reference calibration (all better-conditioned than the already-calibrated
+ln10As/tau_reion/omega_cdm, and they fired earliest). The "REMAINING — validate other 5
+POIs" task is **CLOSED**.
 
-**DO NOT cancel the pending regular job 54845799** (user instruction). It reads the `.py`
-files at runtime, so any committed `.py` change applies to it automatically — no resubmit
-needed. It won't start for ~2 days (deep regular queue).
+Headline table (`scan/collect_profiles.py _mn6` → `scan/results/profiles_summary_mn6.{png,npz}`):
+all 6 minima within **+0.60σ of Planck 2018**, all within **|0.33σ| of the SMC posterior**.
+Clean parabolas, 11-pt grids bracket dχ²=1 and dχ²=4. conv 0–2/11 is expected (‖g‖_AD floors
+1.3–5.1 < GTOL=0.03 — the grind the early-stop exists to cut; AD cert reports the honest floor).
+Reference calibration artifacts retained: `bench/calib_{trace,result}_ln10As_l2508.*` (ln10As),
+`bench/calib_{trace,result}_tau_omegacdm_l2508.*` (tau_reion + omega_cdm). Validation tools
+(`bench/analyze_estop.{py,slurm}`, `scan/calib_estop.sh`, rank-aware `PA_BF_TRACE` in
+`profile_prod_ad.slurm`) remain in place for any future model.
 
 ────────────────────────────────────────────────────────────────────────
 ## Jobs / state
-- **54845799** `abcmb_prof_mn6` — PENDING, regular, 6 nodes, 8 h walltime. The production
+- **54845799** `abcmb_prof_mn6` — **COMPLETED 2026-06-24** (02:58:18, 6 nodes). The production
   run: `PA_POI_SLICE=1 PA_NPTS=11 PA_MAXIT=18 PA_TAG=_mn6 PA_GTOL=0.03 PA_HESS=0`, l=2508.
-  Each rank does 1 POI × 11 grid pts. Writes `scan/results/profile_prod_ad_<poi>_mn6.npz`.
-  Emails on start/end. Mid-BFGS + done-POI resumable. **Leave it queued.**
-- No other jobs of ours. The interactive node from tonight (54853342) was released.
+  Each rank did 1 POI × 11 grid pts → `scan/results/profile_prod_ad_<poi>_mn6.npz` (all 6
+  present). Collected by CPU job 54943881 (exit 137 AFTER print+save — non-blocking).
+- No jobs of ours running. No interactive allocations held.
 
 ────────────────────────────────────────────────────────────────────────
 ## What was diagnosed + fixed tonight (all committed on perk-perf)
