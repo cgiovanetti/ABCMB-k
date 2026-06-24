@@ -1,0 +1,30 @@
+trace scan/results/bf_trace_val1.npz: 8 history entries (7 BFGS iters), N=14 rows, 2 POI(s)
+
+--- POI omega_cdm  (sigma=0.00120; final sigma1_int=0.00128) ---
+   it  sig1_int   d(sig1)/sigma_to_final
+    X   0.00052               0.6305
+    0   0.00126               0.0129
+    1   0.00128               0.0011
+    2   0.00128               0.0001
+    3   0.00128               0.0001
+    4   0.00128               0.0001
+    5   0.00128               0.0000
+    6   0.00128               0.0000
+   default SIGTOL=1e-02 PAT=3: stop@it5 (saved 2); d(sigma1)=0.0001sigma  [FIRED]
+
+--- POI tau_reion  (sigma=0.00730; final sigma1_int=0.00702) ---
+   it  sig1_int   d(sig1)/sigma_to_final
+    X   0.00455               0.3387
+    0   0.00703               0.0007
+    1   0.00708               0.0073
+    2   0.00702               0.0001
+    3   0.00702               0.0004
+    4   0.00703               0.0003
+    5   0.00702               0.0001
+    6   0.00702               0.0000
+   default SIGTOL=1e-02 PAT=3: stop@it4 (saved 3); d(sigma1)=0.0004sigma  [FIRED]
+
+=== GLOBAL sigma1-stability trigger (live logic; SIGTOL=1e-02 PAT=3) ===
+  GLOBAL stop@it5 (saved 2 of 7) -- FIRED
+  worst per-POI d(sigma1) at the stop vs converged: 0.0003sigma  [OK]
+  (the live trigger waits for the SLOWEST POI; speedup vs production MAXIT=18 = 18/5 iters)
