@@ -157,6 +157,13 @@ USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ 
 # at truncated LMAX) -- e.g. validating l-independent machinery like the chi2 early-stop.
 USE_PLIK = (os.environ["PA_USE_PLIK"] != "0") if "PA_USE_PLIK" in os.environ \
     else bool(CFG.get("use_plik", True))
+# FULL Planck plik (clipy) vs plik-LITE for the high-ell TTTEEE likelihood. Config
+# field high_ell: "plik_lite" (default) | "plik_full". Full plik carries 47
+# foreground/calibration nuisances handled ENTIRELY inside the likelihood -- profiled
+# per cosmology at FIXED ABCMB theory (NO ABCMB re-run for nuisances), the whole point.
+# See scan/plik_full.py. PA_HIGH_ELL is a debug override.
+HIGH_ELL = os.environ.get("PA_HIGH_ELL", str(CFG.get("high_ell", "plik_lite"))).lower()
+USE_PLIK_FULL = USE_PLIK and (HIGH_ELL == "plik_full")
 WARM = os.environ.get("PA_WARM", "1") != "0"
 WARM_DIR = os.environ.get("PA_WARM_DIR", os.path.join(_HERE, "results"))
 RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
@@ -185,9 +192,17 @@ POIS = [p.strip() for p in POIS if p.strip() in ORDER]
 RANK = int(os.environ.get("SLURM_PROCID", 0))
 NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 
-pl = PlikLite()
+pl = PlikLite()          # always built: its abcmb_cl_to_Dl feeds the low-ell likelihoods
 lowee = LowLEE() if USE_LOWEE else None
 lowtt = LowLTT() if USE_LOWTT else None
+# full-plik backend (only when high_ell=plik_full). Its inner-profile preconditioner
+# (plf.Hprec) is set once by _setup_plik_full_precond() before any profile call.
+plf = None
+_plf_prof_B = None       # jitted batched inner profile (values path)
+if USE_PLIK_FULL:
+    from scan.plik_full import PlikFull
+    plf = PlikFull()
+    _plf_prof_B = jax.jit(lambda c: plf.profile_batched(c))
 model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
               output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
               rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
@@ -232,13 +247,16 @@ def build_dict(theta):
 # FAST function values via call_batched (no AD) -- the consistency-rule path
 # ======================================================================
 def _chi2_from_out(out):
-    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
-    Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
+    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)        # for the low-ell likelihoods (muK^2 D_l)
     Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
-    if USE_PLIK:
+    if USE_PLIK_FULL:                                # FULL plik: inner-profile the 47 nuisances
+        cls2d = plf.abcmb_cls_to_clik(out.ClTT, out.ClTE, out.ClEE, out.l)   # (B,6,Lcol)
+        chi2 = np.asarray(_plf_prof_B(cls2d)[0], dtype=float)
+    elif USE_PLIK:                                   # plik-LITE: profile A_planck analytically
+        Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
         m0 = pl.bin_model(Dtt, Dte, Dee)
         chi2 = np.asarray(pl.profile_A(m0, with_prior=True)[0], dtype=float)
-    else:                                  # low-ell-only DEBUG path (no high-ell plik-lite)
+    else:                                  # low-ell-only DEBUG path (no high-ell)
         chi2 = np.zeros(np.shape(Dee)[:-1], dtype=float)
     if lowee is not None:
         chi2 = chi2 + np.asarray(lowee.chi2(Dee), dtype=float)
@@ -309,17 +327,28 @@ def fdbatch_grad(POI_IDX, X, PV, step=None):
 # batched AD gradient (the it0 calibration + final certificate engine)
 # ======================================================================
 def _chi2_of_cls(ClTT, ClTE, ClEE):
-    """Pure-jnp, batched envelope-profiled plik-lite + low-ell chi2 from Cls."""
+    """Pure-jnp, batched envelope-profiled high-ell + low-ell chi2 from Cls.
+    For full plik the 47 nuisances are inner-profiled (stop_gradient'd optimum), then
+    the chi2 is differentiated in the Cls at the FIXED optimum -- exact by the envelope
+    theorem, mirroring the single-A_planck profiling of plik-lite."""
     lvec = model.SS.ells
-    Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
-    Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
-    if USE_PLIK:
+    Dtt = pl.abcmb_cl_to_Dl(ClTT, lvec); Dee = pl.abcmb_cl_to_Dl(ClEE, lvec)
+    if USE_PLIK_FULL:
+        cls2d = plf.abcmb_cls_to_clik(ClTT, ClTE, ClEE, lvec)                 # (B,6,Lcol)
+        # envelope theorem: profile the nuisances at the PRIMAL cls (stop_gradient the
+        # input so the outer jvp never traces tangents through the inner Hessian/solve),
+        # then differentiate penalized_chi2 in cls at the FIXED optimum.
+        nu_star = jax.lax.stop_gradient(
+            plf.profile_batched(jax.lax.stop_gradient(cls2d))[1])             # (B,21)
+        c2 = jax.vmap(plf.penalized_chi2)(cls2d, nu_star)
+    elif USE_PLIK:
+        Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
         m0 = pl.bin_model(Dtt, Dte, Dee)
         A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
         diff = pl.X_data - m0 / (A_star[..., None] ** 2)
         c2 = jnp.einsum("...i,ij,...j->...", diff, pl.invcov, diff) \
             + ((A_star - 1.0) / 0.0025) ** 2
-    else:                                  # low-ell-only DEBUG path (no high-ell plik-lite)
+    else:                                  # low-ell-only DEBUG path (no high-ell)
         c2 = jnp.zeros(jnp.shape(Dee)[:-1])
     if lowee is not None:
         c2 = c2 + lowee.chi2(Dee)
@@ -384,6 +413,30 @@ def ad_grad_rows(POI_IDX, X, PV, bchunk=None):
 
 
 # ---- single-cosmology AD value-and-grad (loop/vmap fallbacks + Hessian) ----
+def _single_chi2_from_out(out):
+    """single-cosmology total chi2 (high-ell profiled + low-ell), AD-able in `out`.
+    Shared by chi2_scaled_single and _chi2_full_scaled. Full plik inner-profiles the
+    47 nuisances (envelope-theorem: stop_gradient the optimum)."""
+    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l); Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
+    if USE_PLIK_FULL:
+        cls2d = plf.abcmb_cls_to_clik(out.ClTT, out.ClTE, out.ClEE, out.l)   # (6,Lcol)
+        nu_star = jax.lax.stop_gradient(plf.profile(jax.lax.stop_gradient(cls2d))[1])
+        c2 = plf.penalized_chi2(cls2d, nu_star)
+    elif USE_PLIK:
+        Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
+        m0 = pl.bin_model(Dtt, Dte, Dee)
+        A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
+        diff = pl.X_data - m0 / (A_star ** 2)
+        c2 = diff @ pl.invcov @ diff + ((A_star - 1.0) / 0.0025) ** 2
+    else:
+        c2 = jnp.zeros(())
+    if lowee is not None:
+        c2 = c2 + lowee.chi2(Dee)
+    if lowtt is not None:
+        c2 = c2 + lowtt.chi2(Dtt)
+    return c2
+
+
 def chi2_scaled_single(xP, poi_val, poi_idx):
     """scalar chi^2 at scaled nuisances xP for ONE row, AD-able in xP."""
     nuis = nuis_idx_of(poi_idx)
@@ -397,18 +450,7 @@ def chi2_scaled_single(xP, poi_val, poi_idx):
         else:
             p[name] = theta[i]
     out = model.run_cosmology_abbr(model.add_derived_parameters(p))
-    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
-    Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
-    Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
-    m0 = pl.bin_model(Dtt, Dte, Dee)
-    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
-    diff = pl.X_data - m0 / (A_star ** 2)
-    c2 = diff @ pl.invcov @ diff + ((A_star - 1.0) / 0.0025) ** 2
-    if lowee is not None:
-        c2 = c2 + lowee.chi2(Dee)
-    if lowtt is not None:
-        c2 = c2 + lowtt.chi2(Dtt)
-    return c2
+    return _single_chi2_from_out(out)
 
 
 def _vg_one(poi_idx):
@@ -635,18 +677,7 @@ def _chi2_full_scaled(xs_full, theta0):
         else:
             p[name] = theta[i]
     out = model.run_cosmology_abbr(model.add_derived_parameters(p))
-    Dtt = pl.abcmb_cl_to_Dl(out.ClTT, out.l)
-    Dte = pl.abcmb_cl_to_Dl(out.ClTE, out.l)
-    Dee = pl.abcmb_cl_to_Dl(out.ClEE, out.l)
-    m0 = pl.bin_model(Dtt, Dte, Dee)
-    A_star = jax.lax.stop_gradient(pl.profile_A(m0, with_prior=True)[1])
-    diff = pl.X_data - m0 / (A_star ** 2)
-    c2 = diff @ pl.invcov @ diff + ((A_star - 1.0) / 0.0025) ** 2
-    if lowee is not None:
-        c2 = c2 + lowee.chi2(Dee)
-    if lowtt is not None:
-        c2 = c2 + lowtt.chi2(Dtt)
-    return c2
+    return _single_chi2_from_out(out)
 
 
 def _full_grad_scaled(theta0, xs):
@@ -662,6 +693,14 @@ def _warm_hessian_cache_path():
     return os.path.join(WARM_DIR, f"warm_hessian_{cfg}_l{LMAX}"
                         f"_tt{int(USE_LOWTT)}_ee{int(USE_LOWEE)}"
                         f"{'' if USE_PLIK else '_noplik'}.npz")
+
+
+def _setup_plik_full_precond(theta_ref=None):
+    """No-op retained for call-site stability. The full-plik inner profile is now
+    self-contained: it computes its OWN per-cosmology Hessian each call (a fixed
+    reference Hessian converged slowly for far cosmologies -- the calibration
+    nuisances make the Hessian cls-dependent). No external preconditioner setup."""
+    return
 
 
 def _warm_precond_hessian(theta_warm, h=FDH):
@@ -855,6 +894,9 @@ def profile_lockstep(pois, outdir):
     POI_IDX = np.array(rows_poi, int); PV = np.array(rows_pv, float)
     N = len(PV)
 
+    # ---- full-plik inner-profile preconditioner (once, before any likelihood call) ----
+    _setup_plik_full_precond(CENTER)
+
     # ---- optional multi-node: slice the row list across ranks ----
     if RANK_SLICE and NPROC > 1:
         mine = np.arange(RANK, N, NPROC)
@@ -994,6 +1036,7 @@ def profile_lockstep(pois, outdir):
 
 
 def multistart(poi, outdir, K=MS_K):
+    _setup_plik_full_precond(CENTER)             # full-plik inner-profile preconditioner (no-op for lite)
     poi_idx = ORDER.index(poi)
     i = poi_idx; c, s = CENTER[i], SIGMA[i]
     test_vals = np.array([c, c + 2 * s])

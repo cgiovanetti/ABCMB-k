@@ -9,6 +9,85 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-24 (pm) — FULL Planck plik (clipy) + Neff: likelihood, inner profile, driver wiring
+-------------------------------------------------------------------------------------------
+Session "frequentist_4" (perk-perf). User ask: extend the frequentist tool to (1) the FULL
+Planck 2018 high-ell plik TTTEEE (not plik-lite), profiling the ~47 foreground/calibration
+nuisances INSIDE the likelihood at FIXED ABCMB theory (no ABCMB re-run for nuisances), and
+(2) add Neff. Status this entry: likelihood + inner profile DONE & validated; driver wired;
+integration gate + headline runs queued (debug-queue congestion all afternoon).
+
+KEY DISCOVERY -- clipy. `/pscratch/sd/c/carag/Neal_ACTDR6/cobaya_packages/code/planck/clipy`
+is a pure-Python, JAX-native reimplementation of clik (what modern cobaya calls). It supports
+plik_rd12_HM_v22b_TTTEEE.clik, implements all 15 SMICA foreground components, reads the FITS
+templates from the bundle, runs x64, JITs, is differentiable + vmappable. So "reimplement plik
+in JAX" was already done. Gate (scan/validate_clipy.py): self-test diff 4e-6; full-plik chi2 at
+LCDM best fit = 2371.85 (-2logL, ~2289 bandpowers) SANE; AD-through-clipy matches FD to 3e-12;
+vmap works. clipy returns logL (chi2 = -2logL); chi2_mode=True drops priors. cls input is
+(6,lmax+1) muK^2 C_l [TT,EE,BB,TE,TB,EB] from raw ABCMB C_l * T_CMB_uK^2. See memory
+[[clipy-full-plik-jax]].
+
+scan/plik_full.py -- the full-plik likelihood. 21 FLOATED nuisances (A_cib_217, xi_sz_cib,
+A_sz, ksz_norm, 4 ps, 4 gal545 TT-dust, 6 galf_TE TE-dust, calib_100T, calib_217T, A_planck)
++ 26 FIXED (EE dust, subpix, cnoise, indices, A_pol, P-calibrations) -- the Planck baseline
+exactly (cobaya planck_2018_highl_plik yamls). Gaussian + joint-SZ (ksz+1.6*A_sz~N(9.5,3))
+priors added explicitly (clipy called with chi2_mode=True for the bare data chi2). The
+nuisances are PROFILED per cosmology at fixed theory -> the high-ell chi2 is differentiable in
+the Cls by the envelope theorem (stop_gradient the nuisance optimum), so the existing staged-AD
+gradient path is intact.
+
+INNER-PROFILE OPTIMIZER (the delicate core; ~7 debug iterations). clipy's 2nd derivative is
+UNRELIABLE (1st-order AD is exact -- verified) so EVERY Hessian-Newton variant failed (fixed /
+per-cosmology / active-set / reparam: gap 2.8-14 chi2 vs scipy), while scipy's gradient-only
+L-BFGS-B converges. Two nuisances rail at uniform-prior bounds (xi_sz_cib->1, ksz_norm->0 via
+the joint-SZ prior), so the method must be genuinely BOUND-CONSTRAINED. LANDED: gradient-only
+nonmonotone Spectral Projected Gradient (SPG: projected Barzilai-Borwein steps + GLL
+nonmonotone line search) in the well-conditioned scaled-z bounded box. Matches scipy L-BFGS-B
+to worst 0.017 chi2 (mean 0.002) by maxit=800 across an 8-cosmology spread (scan/tune_inner.py;
+offline vs saved Cls scan/results/clsref_lcdm.npz from scan/save_clsref.py). Well under the
+~0.1 ODE roughness floor. ~430 ms/cosmo at B=8 (warm-starting across outer iters is the speed
+lever if needed; production B is larger -> better parallelism). Monotone Armijo crawled;
+NONMONOTONE (GLL) was the key 10x speedup.
+
+DRIVER WIRING (scan/profile_prod_ad.py). New config field high_ell: "plik_lite" (default,
+unchanged) | "plik_full". Branches the 4 likelihood touchpoints: _chi2_from_out (value path ->
+jit(profile_batched)), _chi2_of_cls (AD envelope-theorem: nu*=stop_gradient(profile_batched(
+stop_gradient(cls)))), and a shared _single_chi2_from_out for chi2_scaled_single/_chi2_full_
+scaled (preconditioner/Hessian). The cls INPUT to the inner profile is stop_gradient'd so the
+outer staged jvp never traces tangents through the SPG scan. _setup_plik_full_precond is a
+no-op (SPG is self-contained). Configs: scan/configs/lcdm_plikfull.py (6-POI cross-check) and
+lcdm_neff_plikfull.py (the Neff+full-plik headline). Both grad_method="ad".
+
+INTEGRATION GATE (scan/validate_fullplik_grad.py, real driver, lcdm_plikfull, B=4, l=2508):
+  (1) VALUE path finite & sane (chi2 ~2784-2812 = full plik + low-ell at the tau grid).
+  (2) CONSISTENCY PASS: staged-AD chi2 == value-path chi2 to 7.8e-4 -- the staged-AD machinery
+      runs correctly with the SPG inner profile inside the jvp (stop_gradient'd input).
+  (3) gradient AD-vs-FD: ||g|| norms agree 0.01-1.3% on 3/4 rows; row 1 (tau=0.0507) off 4.4%
+      (max-rel 0.25). NOT an AD bug: the SPG residual (~0.017 chi2) + bound-transition kinks
+      (xi/ksz projecting onto their bounds) make the VALUE path slightly non-smooth, so FD is
+      noisy there, and the per-component rel-error blows up where a Cl crosses zero (known ClTE
+      artifact). The deliverable is VALUE-path-driven (profile + sigma1 early-stop use the exact
+      value path, good to 0.017 chi2 << the ~0.1 ODE roughness floor), so a few-% AD-gradient
+      perturbation only nudges BFGS directions -- it cannot bias the intervals.
+  AD-through-SPG compile ~20 min (one-time, cached). Warm-Hessian preconditioner WORKS for full
+  plik (AD-through-SPG, ~23 min, CACHED to scan/results/warm_hessian_lcdm_plikfull_*.npz; nuis
+  cond ~160 -- ill-conditioned, so the preconditioner matters; keep PRECOND=1). Debug e2e runs
+  timed out only on the 4-GPU SHARDED AD recompile (the gate cache was 1-GPU unsharded) -- a
+  cache/walltime artifact, NOT a loop bug (the BFGS loop is the unchanged, validated plik-lite
+  bfgs_rows; the lockstep setup printed cleanly).
+
+LAUNCHED (regular qos, 4 nodes, NPTS=11, sigma1 early-stop, PRECOND=1, grad_method=ad):
+  54980703 lcdm_plikfull  (6-POI full-plik cross-check vs the prior plik-lite headline; warm
+                           Hessian pre-cached -> faster startup), PA_TAG=_pf6
+  54980729 lcdm_neff_plikfull (the 7-POI LCDM+Neff full-plik HEADLINE -- the deliverable),
+                           PA_TAG=_pf
+Both resumable (BFGS-state ckpt + JAX compile cache survive a 10h timeout -> resubmit same cmd).
+NEXT on resume: confirm both descended + the sigma1 early-stop fired; collect the profiles
+(scan/collect_profiles.py), compare full-plik intervals vs plik-lite (entry above) and Neff vs
+the published Planck posterior. SPEED lever if needed: warm-start the SPG inner profile across
+outer BFGS iters (nuisances barely move -> far fewer SPG iters).
+
+
 2026-06-24 — PRODUCTION HEADLINE COMPLETE: 6-POI LCDM profile in 2h58m (~2.3x realized)
 --------------------------------------------------------------------------------------
 Session "frequentist_3" (perk-perf), continued. The queued headline 54845799 ran and
