@@ -51,16 +51,22 @@ advanced cleanly. All prior boxes print correct (uniform priors at Planck bounds
 +-6sigma). The interactive srun saw 1 GPU (shard=False); multi-GPU sharding is the identical
 call_batched(shard=...) path already validated in smc.py, so it's de-risked.
 
-LAUNCHED 54988678 (scan/smc_plikfull.slurm; 1 node 4 GPUs, regular qos, 12h, mail flags, N=512,
-MOVES_SLOW=2 MOVES_FAST=20, EVAL_CHUNK=128 CLIPY_CHUNK=32, l=2508 lensed, rtol=1e-5, seed=0).
-Resumable per-stage -> resubmit the same sbatch (auto-detects scan/results/smc_plikfull_state.npz).
-Expected ~30-60 adaptive tempering stages; ~10-13 h wall => likely 1 job + maybe 1 resume. Output:
-scan/results/smc_plikfull.npz (marg_mean/marg_std over all 27 params; logZ is the evidence under
-the flat-box prior convention -- NOT comparable to the plik-lite logZ=-509.92: different param
-space + prior). NEXT on resume: confirm beta->1 + healthy acc; compare the 6 cosmo marginals vs
-the plik-lite SMC (smc_lcdm.npz) and the full-plik frequentist profile (54980703) -- the
-profile-vs-marginal nuisance treatment difference is itself the headline result of the study.
-Config: scan/configs/lcdm_plikfull.py (high_ell="plik_full"). See memory [[smc-plikfull-feasibility]].
+LAUNCHED two jobs (scan/smc_plikfull.slurm; 1 node 4 GPUs, regular qos, mail flags, N=512,
+MOVES_SLOW=2 MOVES_FAST=20, EVAL_CHUNK=128 CLIPY_CHUNK=32, l=2508 lensed, rtol=1e-5, seed=0):
+  54988847  LCDM full-plik SMC (27-D)        -> scan/results/smc_plikfull.npz
+  54988849  LCDM+Neff full-plik SMC (28-D)   -> scan/results/smc_plikfull_neff.npz
+            (SMC_CONFIG=scan/configs/lcdm_neff_plikfull.py; Neff in the SLOW block: it changes the
+             Cls so it goes through call_batched, box CEN 3.044 +- 5*0.2 = [2.044, 4.044]).
+WALLTIME 24h (user: a resume's QUEUE wait can be >2 days, so size the job to finish in ONE shot
+-- gpu_regular allows up to 48h; ~10-13 h estimated for ~30-60 adaptive stages gives comfortable
+margin). Still resumable per-stage if it ever times out (resubmit same sbatch -> auto-detects
+<OUT>_state.npz). logZ is the evidence under the flat-box prior convention -- NOT comparable to
+the plik-lite logZ=-509.92 (different param space + prior). NEXT when done: confirm beta->1 +
+healthy acc_slow/acc_fast; compare the 6 cosmo marginals vs the plik-lite SMC (smc_lcdm.npz) and
+the full-plik frequentist profile (54980703); for the Neff run, the marginalised Neff vs the
+frequentist Neff profile (54980729) and Planck. The profile-vs-marginal nuisance treatment
+difference is itself the headline result. Config: scan/configs/lcdm_plikfull.py /
+lcdm_neff_plikfull.py (high_ell="plik_full"). See memory [[smc-plikfull-feasibility]].
 
 
 2026-06-24 (pm) — FULL Planck plik (clipy) + Neff: likelihood, inner profile, driver wiring

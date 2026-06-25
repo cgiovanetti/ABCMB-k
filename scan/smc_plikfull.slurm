@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=32
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --job-name=abcmb_smc_plikfull
 #SBATCH --output=logs/abcmb_smc_plikfull_%j.out
 #SBATCH --mail-type=ALL
