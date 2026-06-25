@@ -9,6 +9,60 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-24 (eve) — FAST/SLOW SMC on FULL plik, MARGINALISING the 21 nuisances (feasibility study)
+-------------------------------------------------------------------------------------------------
+Session "smc_plikfull". User ask: the existing SMC anchor (scan/smc.py, the VALIDATED
+2026-06-16 run: plik-LITE, 6 cosmo sampled, A_planck profiled, logZ=-509.92) did NOT carry the
+full-plik foreground nuisances. User wants a feasibility study that does -- and chose to
+MARGINALISE (sample) the 21 floated plik nuisances, not profile them. Plus the key user insight:
+a nuisance-only move does NOT need the theory code to re-run, so split fast/slow like Cobaya.
+
+BUILT scan/smc_plikfull.py -- a dedicated script (smc.py left untouched: it's a delivered
+result). Particle = (6 cosmo + 21 nuisance) = 27-D. Full plik TTTEEE via clipy (PlikFull) +
+low-ell TT/EE (calib=1, so low-ell is a pure function of the Cls). FLAT-box prior on every
+coordinate (cosmo CEN+-5sig; nuisance = Planck uniform bounds where finite, else start+-6*scale);
+the Gaussian + joint-SZ nuisance priors are folded into the tempered likelihood
+(=PlikFull.penalized_chi2 + low-ell) -- mirrors smc.py's flat-box scheme exactly, so the
+tempering/ESS/resample/evidence machinery is REUSED verbatim. At beta=1, flatbox x exp(-chi2/2)
+= the true nuisance-marginalised posterior.
+
+THE FAST/SLOW SPLIT (the speed lever the user asked for) -- Metropolis-within-Gibbs, two blocks
+per tempering stage:
+  * SLOW (6 cosmo): a proposal changes the Cls -> ONE Model.call_batched (GPU theory) + clipy +
+    low-ell. MOVES_SLOW=2/stage.
+  * FAST (21 nuis): a proposal leaves the cosmology, so the per-particle clik C_l block (and the
+    low-ell chi2) are CACHED and REUSED -- only clipy re-runs. NO ABCMB. MOVES_FAST=20/stage
+    (oversampled because each move is ~free). Cache invariant chi2 = highell_pen + lowl held on
+    every accept; caches reshuffled with the particles on resample; RECOMPUTED from the saved
+    particles on resume (so the state file stays small). Separate adaptive proposal scales +
+    block covariances (cov[:6,:6] / cov[6:,6:], nuisance block gets a prior-scale diagonal floor).
+Cost/stage ~ MOVES_SLOW*N theory solves (fast moves free) => marginalising 21 nuisances costs
+about the SAME ABCMB time as the plik-lite run while delivering a full nuisance-marginalised
+posterior. This is exactly Cobaya fast/slow oversampling, hand-rolled around call_batched.
+
+SMOKE-VALIDATED end-to-end at PRODUCTION l=2508 (interactive 1-GPU, N=32, 2 stages + a 3rd via
+RESUME): init chi2 finite & sane (min 9214 over random draws; full-plik optimum ~2784); per-device
+GPU peak 5.39 GB at EVAL_CHUNK=32 + CLIPY_CHUNK=32 (so production sharded 4-GPU EVAL_CHUNK=128 ->
+B_local=32 -> same ~5.4 GB, safe on 40 GB A100s); fast/slow accounting correct (n_evals counts
+ONLY theory solves -- fast moves add 0); acc_slow ~0.44, acc_fast self-corrected 0.075->0.71 via
+the scale_n halving; ESS bisection hits 0.5N; pre-emptive-resample stall-fix path fired; logZ
+accumulates; 27-D marginals + final npz written; RESUME loaded state, recomputed Cls caches, and
+advanced cleanly. All prior boxes print correct (uniform priors at Planck bounds, calibs at
++-6sigma). The interactive srun saw 1 GPU (shard=False); multi-GPU sharding is the identical
+call_batched(shard=...) path already validated in smc.py, so it's de-risked.
+
+LAUNCHED 54988678 (scan/smc_plikfull.slurm; 1 node 4 GPUs, regular qos, 12h, mail flags, N=512,
+MOVES_SLOW=2 MOVES_FAST=20, EVAL_CHUNK=128 CLIPY_CHUNK=32, l=2508 lensed, rtol=1e-5, seed=0).
+Resumable per-stage -> resubmit the same sbatch (auto-detects scan/results/smc_plikfull_state.npz).
+Expected ~30-60 adaptive tempering stages; ~10-13 h wall => likely 1 job + maybe 1 resume. Output:
+scan/results/smc_plikfull.npz (marg_mean/marg_std over all 27 params; logZ is the evidence under
+the flat-box prior convention -- NOT comparable to the plik-lite logZ=-509.92: different param
+space + prior). NEXT on resume: confirm beta->1 + healthy acc; compare the 6 cosmo marginals vs
+the plik-lite SMC (smc_lcdm.npz) and the full-plik frequentist profile (54980703) -- the
+profile-vs-marginal nuisance treatment difference is itself the headline result of the study.
+Config: scan/configs/lcdm_plikfull.py (high_ell="plik_full"). See memory [[smc-plikfull-feasibility]].
+
+
 2026-06-24 (pm) — FULL Planck plik (clipy) + Neff: likelihood, inner profile, driver wiring
 -------------------------------------------------------------------------------------------
 Session "frequentist_4" (perk-perf). User ask: extend the frequentist tool to (1) the FULL
