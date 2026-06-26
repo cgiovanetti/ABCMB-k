@@ -4,6 +4,41 @@
 > and the one-off `scan/` validation/derisk scripts cited below were removed; see
 > git history and `CHANGELOG.txt` for their results.
 
+────────────────────────────────────────────────────────────────────────
+## ACTIVE TASK (2026-06-25, session "Wilks") — Workstream E: coverage / Wilks check
+**Read the top `CHANGELOG.txt` entry first — it has the full design + the three bugs.**
+
+State: `scan/wilks.py` (+ `wilks_collect.py`, `wilks.slurm`) is BUILT and the machinery is
+validated end-to-end on GPU (l=2508). It generates Gaussian plik-lite mocks + a mockable
+Gaussian τ prior, re-fits each mock on the batch axis with a shared-Jacobian Gauss-Newton,
+and forms `t = chi2_cond(POI=truth) - chi2_global` to test against χ²₁ (coverage). Two fit
+bugs were fixed and verified (τ-Jacobian factor; symmetric warm-start-at-truth). A third fix
+— anchor the GN Jacobian at the fixed warm-start reference (`WK_JAC_REF=warmstart`, default),
+which removes a biased-fixed-point inflation of `t` — is committed but **was NOT re-run on GPU
+before the node expired**. The headline coverage numbers are NOT yet produced.
+
+RESUME (one short GPU job, then production):
+1. **Validate the fix** (debug or interactive, ~25 min). Inside an srun with
+   `PYTHONPATH=$(pwd)` + `module load conda && conda activate actdr6`:
+   `WK_CONFIG=scan/configs/lcdm.py WK_NMOCK=16 WK_LMAX=2508 WK_POIS="h,tau_reion"
+   WK_VALIDATE=8 WK_GN_MAXIT=10 python -u scan/wilks.py`
+   GATE: (a) per-POI `t med` near the χ²₁ median (~0.45; noisy at N=16) and `neg`≈0; (b) the
+   cert line `[cert:<poi>] ... max|dt|` ≪ ~0.1 (cheap shared-J ≈ the per-mock-J ground
+   truth). If (b) fails, the fixed-J-at-truth approximation is insufficient → set production
+   to the per-mock-J fitter (`gn_fit_permock`) and use 4 nodes (a single 500-mock per-mock
+   Jacobian is ~6000 Boltzmann solves, so it needs the node count).
+2. **Production**: `WK_CONFIG=scan/configs/lcdm.py sbatch --nodes=2 scan/wilks.slurm`, then
+   the same with `lcdm_neff.py` (500 mocks, ~2-3 h/config with the cheap fitter; mocks slice
+   across nodes via `WK_RANK_SLICE` auto). The slurm runs `wilks_collect.py` at the end →
+   `scan/results/wilks_<config>_merged.npz` + per-POI + summary PNGs (the coverage tables).
+3. Headline sentence to produce: "empirical coverage of the Δχ² intervals is XX% (1σ) /
+   YY% (2σ) vs nominal 68.3% / 95% over 500 mocks" per config = review gap #4 closed.
+
+Knobs (scan/wilks.py header has the full list): `WK_NMOCK WK_LMAX WK_POIS WK_VALIDATE
+WK_JAC_REF(warmstart|batchmean) WK_GN_MAXIT WK_GN_PLATEAU_PCT WK_TAU_SIG WK_SEED WK_TAG`.
+Gotcha carried over: at l=2508 small-B is latency-bound (~2 min/GN iter); the ~0.1-chi2
+discretization roughness floor smears `t` slightly but does not bias the coverage fractions.
+
 Canonical goal: **give a new ABCMB cosmology →
 profile-likelihood optimum ±½σ in a FEW HOURS of compute** (must beat CLASS+MH ΛCDM+Neff
 @ 22 h). Plan lineage: `scan/TOOL_PLAN.md` (strategy) → this doc (current state) →

@@ -279,8 +279,9 @@ def _gn_matrices(J, free_idx):
 def gn_fit(theta0, free_idx, D_data, tau_obs, A_obs, label=""):
     """Fit all B mocks in lockstep.  free_idx: global dims optimised (the rest held at
     theta0).  theta0 (B,D) warm starts.  Returns (chi2 (B,), theta (B,D), info).
-    The Jacobian is shared across mocks and refreshed at the batch-mean theta each iter
-    (cheap: 2*nfree primal evals); the model m0(theta_k) is per-mock (one B-batch/iter)."""
+    The Jacobian is shared across mocks, anchored at the fixed warm-start reference (truth)
+    by default (WK_JAC_REF); only the model m0(theta_k) is re-evaluated per-mock each iter
+    (one B-batch primal call), so a fit costs ~one primal batch per GN iteration."""
     B = D_data.shape[0]
     nf = len(free_idx)
     theta = np.asarray(theta0, float).copy()
@@ -520,7 +521,7 @@ def main():
           f"max||g||={info_g['gnorm'].max():.2e} chi2 med={np.median(chi2_glob):.2f}",
           flush=True)
 
-    # ---- per-POI conditional fits (POI fixed at truth; warm-start from the global fit) ----
+    # ---- per-POI conditional fits (POI fixed at truth; warm-start at TRUTH, symmetric) ----
     results = {}
     for poi in POIS:
         pidx = ORDER.index(poi)
