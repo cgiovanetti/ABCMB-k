@@ -9,6 +9,75 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-25 — Wilks-theorem / coverage validator (Workstream E) — built + debugged; one fix pending GPU validation
+----------------------------------------------------------------------------------------------------------------
+Session "Wilks". Goal (TOOL_PLAN.md Workstream E, the last big tool item): are the
+frequentist Delta-chi2 intervals the profile tool reports actually calibrated? Generate
+mock data, re-fit, and check the profile-likelihood test statistic against Wilks' theorem.
+
+NEW FILES (the only wilks artifacts; everything else this session was scratch and removed):
+- scan/wilks.py        — the validator (driver).
+- scan/wilks_collect.py — merges multi-node mock slices -> coverage table + plots (CPU).
+- scan/wilks.slurm      — production launcher (1 task/node x 4 GPUs, mock-slice across nodes,
+                          mail flags). Run twice: WK_CONFIG=scan/configs/lcdm.py and
+                          .../lcdm_neff.py.
+
+DESIGN (chosen with the user):
+- Data model, fully + exactly mockable: plik-lite high-ell TTTEEE is a multivariate
+  Gaussian (cov C), so a mock is d_k = m0(theta_true) + L z_k (L L^T = C). A Gaussian tau
+  measurement tau_obs_k ~ N(tau_true, sig_tau=config sig[tau_reion]) stands in for the
+  non-Gaussian low-ell EE (a tabulated SimAll likelihood with no exact Gaussian mock
+  generator); A_planck is profiled analytically and its prior is mocked too. So every
+  parameter incl. tau is constrained and the model ~ the headline likelihood but exactly
+  sampleable. truth = config CENTER by default.
+- Test statistic per mock k, per POI: t_k = chi2_cond_k(POI=theta_true) - chi2_global_k.
+  Wilks: {t_k} ~ chi2_1; coverage frac(t<1)=0.683, frac(t<3.84)=0.95 is the deliverable
+  (review gap #4). theta_true is inside the Delta-chi2<level interval iff t < level, so the
+  at-truth test statistic gives the interval coverage directly.
+- FITTER: mocks ride the batch axis; a shared-Jacobian Gauss-Newton fits the whole mock
+  population with ONE primal call_batched per iteration (no per-mock gradients) -- the only
+  affordable option (a full per-mock Jacobian for 500 mocks is ~6000 Boltzmann solves).
+  A_planck profiled analytically each eval. Per-mock-Jacobian GN (gn_fit_permock) is the
+  rigorous CERTIFICATE on a WK_VALIDATE-sized subsample (exact local-Jacobian fixed point;
+  its t must match the shared-Jacobian t).
+
+GPU SHAKEOUT (interactive node, l=2508) — three issues found, two fixed + verified, one
+fixed but NOT yet GPU-validated (the node expired):
+  1. [FIXED, verified] tau-prior contributions to the GN normal matrix / step / gradient
+     were missing the dtau/dx = SIGMA_tau Jacobian factor (mixed scaled coords with physical
+     tau), over-weighting the tau direction by 1/SIGMA_tau^2 ~ 2e4. Symptom: ||g|| ~ 675 and
+     a stalled fit. After the SIGMA_tau fix, ||g|| dropped to ~17 at it0 and the fit
+     converges. (_gn_matrices + the gradient term carry SIGMA_tau now.)
+  2. [FIXED, verified] conditional fits were warm-started from the GLOBAL solution
+     (non-POI params ~1sigma off the conditional optimum) -- asymmetric with the global fit
+     (which starts at truth), so the convergence bias did NOT cancel in t = cond - global.
+     t med fell 3 -> 1.7 after warm-starting the conditional fits at TRUTH (symmetric).
+  3. [FIXED, PENDING VALIDATION] the shared Jacobian was refreshed at the DRIFTING batch
+     mean. For the conditional fits the non-POI params get stuck and the Jacobian follows
+     them into a self-reinforcing BIASED fixed point: cond:h converged to chi2~606.75 vs a
+     true conditional min ~604, leaving t med ~1.7 (chi2_1 median is 0.45). FIX: anchor the
+     Jacobian at the FIXED warm-start reference (= truth, ~1sigma from every mock's MLE), so
+     rho perp J(truth) ~ the true MLE for BOTH global and conditional fits and the residual
+     bias cancels in t. WK_JAC_REF=warmstart (default) vs batchmean (legacy). NOT re-run on
+     GPU yet -- the interactive allocation expired right after the edit.
+
+STATUS: machinery validated end-to-end (mock gen, GN convergence, stats, plots, cert all
+run). Headline coverage numbers NOT yet produced; fix #3 needs a GPU check.
+
+NEXT SESSION (short GPU job, then production):
+  1. Validate fix #3: srun wilks.py at l=2508, NMOCK~16, WK_VALIDATE=8. Gate: t med near the
+     chi2_1 median (~0.45, noisy at small N) AND the cert max|dt| (warmstart shared-J vs
+     per-mock-J) << ~0.1. If the cert dt is still large, the cheap fixed-J-at-truth is
+     insufficient -> switch production to the per-mock-J fitter (gn_fit_permock) on 4 nodes.
+  2. Production: sbatch scan/wilks.slurm for lcdm then lcdm_neff (--nodes=2, 500 mocks; ~2-3
+     h/config with the cheap fitter). Then python scan/wilks_collect.py <name> for the
+     coverage table + plots.
+PERF: at l=2508 small-B is latency-bound (~110-130 s/GN-iter); the global fit's slow tail
+ran to maxit (percentile chi2-plateau added, WK_GN_PLATEAU_PCT=90). rtol=1e-5, the ~0.1-chi2
+discretization roughness floor (CHANGELOG 2026-06-24) smears t slightly but does not bias
+the coverage fractions.
+
+
 2026-06-25 — Cleanup: docstrings + prune the validation/bench sprawl
 -------------------------------------------------------------------
 Session "docstrings_cleanup". Goal: reduce cognitive load and bring docstrings and

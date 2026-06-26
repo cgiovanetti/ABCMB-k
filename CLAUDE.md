@@ -173,6 +173,13 @@ What exists and works:
 - **SMC posterior** — `scan/smc.py` (plik-lite, delivered) and `scan/smc_plikfull.py`
   (full plik, fast/slow Gibbs marginalising the 21 nuisances): hand-rolled tempered
   SMC around `call_batched`, giving the posterior and the evidence.
+- **Wilks / coverage validator (Workstream E)** — `scan/wilks.py` (+ `wilks_collect.py`,
+  `wilks.slurm`): Gaussian plik-lite mocks + a mockable Gaussian τ prior, re-fit on the
+  batch axis with a shared-Jacobian Gauss-Newton, test statistic `t = chi2_cond(POI=truth)
+  − chi2_global` checked against χ²₁ (coverage). BUILT + machinery validated; two fit bugs
+  fixed; one accuracy fix (anchor the GN Jacobian at the warm-start reference, `WK_JAC_REF=
+  warmstart`) is **pending a GPU cert check** before the production run. See the top
+  `CHANGELOG.txt` entry — "NEXT SESSION" has the exact validate-then-launch steps.
 - **Delivered headline**: the 6-POI ΛCDM profile vs plik-lite(+lowTT/EE) completed in
   2h58m on 6 nodes; minima within +0.60σ of Planck 2018 and |0.33σ| of the SMC
   posterior (`scan/results/profiles_summary_mn6.{npz,png}`). Full-plik and ΛCDM+Neff
