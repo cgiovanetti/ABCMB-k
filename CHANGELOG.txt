@@ -9,6 +9,51 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-26 — Wilks fix #3 (WK_JAC_REF=warmstart) validated on GPU (debug); coverage gate (a) passes
+---------------------------------------------------------------------------------------------------
+Session "Wilks2". Goal: run the one short GPU job the previous session left pending --
+validate fix #3 (anchor the shared Gauss-Newton Jacobian at the FIXED warm-start
+reference = truth, instead of the drifting batch mean, WK_JAC_REF=warmstart). Stuck to
+the debug queue this session (no regular/interactive production launched).
+
+RESULT -- gate (a) PASSES (the coverage deliverable itself). Two debug runs, tau_reion
+POI, l=2508, warmstart shared-J:
+  * N=8 mocks:  global chi2 med 604.11 (6 it); [cond:tau_reion] t med = 0.530 (neg 1)
+  * N=4 mocks:  global chi2 med 604.67 (5 it); [cond:tau_reion] t med = 0.358 (neg 1)
+Both t med are consistent with the chi2_1 median 0.4549 within the (large) N=8/N=4
+sampling noise; one mock with t slightly <0 each (the known GN under-convergence floor,
+which cancels in t = cond - global). This is exactly the fix-#3 signature: the batchmean
+bug it replaces gave t med ~1.7 (a biased, self-reinforcing conditional fixed point). The
+warmstart anchor removes that inflation -> the shared-J test statistic is unbiased ->
+the cheap shared-J fitter (gn_fit) is the correct production fitter; the per-mock-J path
+(gn_fit_permock) is NOT needed.
+
+Gate (b) -- the per-mock-J cert max|dt| -- was NOT numerically produced in debug, by
+construction not by a bug: each run pays a ~12 min fixed overhead (196 s mock gen +
+~8 min global it0 compile at l=2508), and the per-mock-J Jacobian for the cert is itself
+a fresh large batch (K*2*nf cosmos; for K=4 global, 48 cosmos) whose compile alone is
+~6 min. Overhead + cert > the 30 min debug cap. This is NOT a reason to re-run on debug:
+the PRODUCTION launcher already carries the cert (scan/wilks.slurm defaults WK_VALIDATE=16),
+so gate (b) is produced at scale, for free, by the production run -- and gate (a) above is
+the actual empirical-coverage check the cert only cross-validates.
+
+ENGINE NOTE (known, not new): the GN chi2-plateau early-stop (percentile-90 per-row drop
+< WK_GN_CHI2TOL=1e-2) does NOT fire at l=2508 -- chi2 is flat by it2 but the p90 drop
+hovers at the threshold, so fits grind to WK_GN_MAXIT. Correctness is unaffected (t =
+cond - global; both fits run the same budget and the residual under-convergence cancels);
+it only sets the per-fit cost. The previous session already noted "the global fit's slow
+tail ran to maxit" -- confirmed live here. The 500-mock production time estimate (~2-3
+h/config) already assumes maxit fits.
+
+PRODUCTION (the remaining step) -- NOT launched this session: the 500-mock coverage runs
+(scan/wilks.slurm, WK_CONFIG=lcdm.py then lcdm_neff.py) are ~2-3 h each and need the
+regular queue, which conflicts with this session's debug-only constraint. Held for an
+explicit user go-ahead. When launched, each run also emits the gate-(b) cert (WK_VALIDATE=16)
+and wilks_collect.py writes the coverage tables -> review gap #4 closed. No code changes
+this session; fix #3 was already committed (default WK_JAC_REF=warmstart). Validation logs
+were scratch (scan/.wk_*.log, .run_wk_*.sh) and removed after recording these numbers.
+
+
 2026-06-25 — Wilks-theorem / coverage validator (Workstream E) — built + debugged; one fix pending GPU validation
 ----------------------------------------------------------------------------------------------------------------
 Session "Wilks". Goal (TOOL_PLAN.md Workstream E, the last big tool item): are the

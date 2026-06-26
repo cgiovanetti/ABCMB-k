@@ -5,34 +5,37 @@
 > git history and `CHANGELOG.txt` for their results.
 
 ────────────────────────────────────────────────────────────────────────
-## ACTIVE TASK (2026-06-25, session "Wilks") — Workstream E: coverage / Wilks check
-**Read the top `CHANGELOG.txt` entry first — it has the full design + the three bugs.**
+## ACTIVE TASK — Workstream E: coverage / Wilks check (fix #3 VALIDATED 2026-06-26 "Wilks2")
+**Read the top `CHANGELOG.txt` entry first — it has the full design + the three bugs + the
+2026-06-26 validation result.**
 
-State: `scan/wilks.py` (+ `wilks_collect.py`, `wilks.slurm`) is BUILT and the machinery is
-validated end-to-end on GPU (l=2508). It generates Gaussian plik-lite mocks + a mockable
-Gaussian τ prior, re-fits each mock on the batch axis with a shared-Jacobian Gauss-Newton,
-and forms `t = chi2_cond(POI=truth) - chi2_global` to test against χ²₁ (coverage). Two fit
-bugs were fixed and verified (τ-Jacobian factor; symmetric warm-start-at-truth). A third fix
-— anchor the GN Jacobian at the fixed warm-start reference (`WK_JAC_REF=warmstart`, default),
-which removes a biased-fixed-point inflation of `t` — is committed but **was NOT re-run on GPU
-before the node expired**. The headline coverage numbers are NOT yet produced.
+State: `scan/wilks.py` (+ `wilks_collect.py`, `wilks.slurm`) is BUILT, debugged, and fix #3
+(`WK_JAC_REF=warmstart` — anchor the shared GN Jacobian at the fixed truth reference) is now
+**VALIDATED on GPU**. Two debug runs (tau_reion, l=2508, warmstart): `t med = 0.530` (N=8) and
+`0.358` (N=4), both consistent with the χ²₁ median 0.455 within the small-N noise (`neg`=1
+each) — vs the batchmean bug's inflated `t med ~1.7`. Gate (a), the empirical-coverage check
+itself, PASSES → the cheap shared-J fitter (`gn_fit`) is the correct production fitter (the
+per-mock-J `gn_fit_permock` path is NOT needed). The cert max|dt| (gate b) was not produced in
+debug — the per-mock-J Jacobian compile (~6 min) plus the ~12 min/run fixed overhead exceed
+debug's 30 min cap — but the production launcher already emits it (`WK_VALIDATE=16`), so gate
+(b) comes for free at scale. Headline coverage numbers NOT yet produced (production not run).
 
-RESUME (one short GPU job, then production):
-1. **Validate the fix** (debug or interactive, ~25 min). Inside an srun with
-   `PYTHONPATH=$(pwd)` + `module load conda && conda activate actdr6`:
-   `WK_CONFIG=scan/configs/lcdm.py WK_NMOCK=16 WK_LMAX=2508 WK_POIS="h,tau_reion"
-   WK_VALIDATE=8 WK_GN_MAXIT=10 python -u scan/wilks.py`
-   GATE: (a) per-POI `t med` near the χ²₁ median (~0.45; noisy at N=16) and `neg`≈0; (b) the
-   cert line `[cert:<poi>] ... max|dt|` ≪ ~0.1 (cheap shared-J ≈ the per-mock-J ground
-   truth). If (b) fails, the fixed-J-at-truth approximation is insufficient → set production
-   to the per-mock-J fitter (`gn_fit_permock`) and use 4 nodes (a single 500-mock per-mock
-   Jacobian is ~6000 Boltzmann solves, so it needs the node count).
-2. **Production**: `WK_CONFIG=scan/configs/lcdm.py sbatch --nodes=2 scan/wilks.slurm`, then
-   the same with `lcdm_neff.py` (500 mocks, ~2-3 h/config with the cheap fitter; mocks slice
-   across nodes via `WK_RANK_SLICE` auto). The slurm runs `wilks_collect.py` at the end →
-   `scan/results/wilks_<config>_merged.npz` + per-POI + summary PNGs (the coverage tables).
-3. Headline sentence to produce: "empirical coverage of the Δχ² intervals is XX% (1σ) /
+RESUME — ONLY the production launch remains (needs the **regular** queue, ~2-3 h/config; was
+deliberately NOT launched in the debug-only "Wilks2" session — get a user go-ahead):
+1. **Production**: `WK_CONFIG=scan/configs/lcdm.py sbatch --nodes=2 scan/wilks.slurm`, then
+   the same with `lcdm_neff.py` (500 mocks, ~2-3 h/config with the validated cheap fitter;
+   mocks slice across nodes via `WK_RANK_SLICE` auto). The slurm runs `wilks_collect.py` at
+   the end → `scan/results/wilks_<config>_merged.npz` + per-POI + summary PNGs (coverage
+   tables), and the run's own `WK_VALIDATE=16` cert closes gate (b).
+2. Headline sentence to produce: "empirical coverage of the Δχ² intervals is XX% (1σ) /
    YY% (2σ) vs nominal 68.3% / 95% over 500 mocks" per config = review gap #4 closed.
+
+To re-run the debug validation (not required again — fix #3 is validated): inside an srun with
+`PYTHONPATH=$(pwd)` + `module load conda && conda activate actdr6`, `WK_CONFIG=scan/configs/lcdm.py
+WK_NMOCK=8 WK_POIS=tau_reion WK_VALIDATE=4 WK_GN_MAXIT=6 python -u scan/wilks.py` (tau-only,
+small so it fits debug). The full both-POI + cert run does NOT fit one 30-min debug window at
+l=2508 (per-run overhead + cert > 30 min); use a longer (interactive/regular) allocation if a
+standalone cert is wanted, or just read it off the production run.
 
 Knobs (scan/wilks.py header has the full list): `WK_NMOCK WK_LMAX WK_POIS WK_VALIDATE
 WK_JAC_REF(warmstart|batchmean) WK_GN_MAXIT WK_GN_PLATEAU_PCT WK_TAU_SIG WK_SEED WK_TAG`.
