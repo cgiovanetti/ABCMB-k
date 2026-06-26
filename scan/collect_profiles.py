@@ -1,5 +1,5 @@
 """collect_profiles.py -- gather the per-POI frequentist profile npz (written
-independently by each POI_SLICE rank) into ONE summary: a table of best-fit +/- 1sigma
+independently by each POI_SLICE rank) into one summary: a table of best-fit +/- 1sigma
 intervals with convergence certificates, compared to Planck 2018 and the validated SMC
 posterior, plus an overlay Delta-chi^2 plot.
 
@@ -11,7 +11,7 @@ Usage (inside an srun/allocation; pure numpy+matplotlib, no GPU needed):
 
 Reads scan/results/<PREFIX>_<poi><TAG>.npz. Core fields (poi_grid, chi2, sigma1=
 [lo,mid,hi], sigma2) are required; certificate fields (gnorm, converged, gtol,
-gradmethod) are OPTIONAL so the entry-(a) npz (which lack them) also parse. Robust to
+gradmethod) are optional so the entry-(a) npz (which lack them) also parse. Robust to
 POIs not yet written (each POI_SLICE rank writes when it finishes).
 """
 import os, sys, glob

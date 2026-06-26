@@ -1,29 +1,29 @@
 """smc.py — hand-rolled tempered Sequential Monte Carlo (SMC) on the batched
 ABCMB likelihood (TOOL_PLAN.md Workstream D — the Bayesian anchor).
 
-Gives the Bayesian posterior + the evidence (logZ) on the SAME data model the
+Gives the Bayesian posterior and the evidence (logZ) on the same data model the
 frequentist profiles (scan/profile_prod_ad.py) use: plik-lite high-ell TTTEEE
-(A_planck ENVELOPE-PROFILED, exactly as the driver does) + real low-ell TT
+(A_planck envelope-profiled, exactly as the driver does) + real low-ell TT
 (Commander) + low-ell EE (SRoll2). log-likelihood = -chi2/2.
 
-WHY EAGER PYTHON (not blackjax): the ABCMB pipeline is GPU -> CPU HyRex -> GPU and
-is NOT end-to-end jittable (jitting the whole pipeline is the known ~20-min monolith
+Why eager Python (not blackjax): the ABCMB pipeline is GPU -> CPU HyRex -> GPU and
+is not end-to-end jittable (jitting the whole pipeline is the known ~20-min monolith
 hang, TOOL_PLAN.md gotcha #1). So the SMC loop is hand-rolled in numpy around
-`Model.call_batched` — every likelihood evaluation of a population of particles is
-ONE batched call. We NEVER wrap the pipeline in jax.jit/vmap ourselves.
+`Model.call_batched` -- every likelihood evaluation of a population of particles is
+one batched call; the pipeline is never wrapped in jax.jit/vmap here.
 
-A_planck CAVEAT: A_planck is PROFILED (envelope theorem, stop_gradient — same as the
-driver), NOT marginalized. This is acceptable given its tight N(1, 0.0025) prior; the
+A_planck caveat: A_planck is profiled (envelope theorem, stop_gradient -- same as the
+driver), not marginalized. This is acceptable given its tight N(1, 0.0025) prior; the
 profiled and marginalized posteriors coincide to O(sigma_A^2) for a calibration
 nuisance this tightly constrained. Noted in the npz (a_planck_profiled=True) and the
 CHANGELOG.
 
-ALGORITHM (tempered SMC, pi_beta ∝ prior x L^beta, beta: 0 -> 1):
+Algorithm (tempered SMC, pi_beta ∝ prior x L^beta, beta: 0 -> 1):
   * N particles init from the flat prior box (CEN +- 5*SIG per param, tau floored
-    at 0.01). N stays FIXED the whole run -> ONE compile of the call_batched B aval.
+    at 0.01). N stays fixed the whole run -> one compile of the call_batched B aval.
   * adaptive beta ladder: each stage finds delta-beta by bisection so the ESS of the
-    UPDATED cumulative weights logW + (-delta_beta*chi2/2) is ~ESS_TARGET*N; beta
-    accumulates to EXACTLY 1.0 at the end. logW carries the running importance
+    updated cumulative weights logW + (-delta_beta*chi2/2) is ~ESS_TARGET*N; beta
+    accumulates to exactly 1.0 at the end. logW carries the running importance
     weights so the schedule + evidence stay correct even when a stage skips
     resampling (logW non-uniform). Incremental log-weight = -delta_beta*chi2_i/2.
   * logZ += logsumexp(logW+logw_incr) - logsumexp(logW) at each stage (the
@@ -35,10 +35,10 @@ ALGORITHM (tempered SMC, pi_beta ∝ prior x L^beta, beta: 0 -> 1):
     per-particle in numpy. Proposals outside the prior box -> reject (chi2=+inf).
     Acceptance rate logged per stage (healthy 0.15-0.5); if <0.1, the proposal is
     scaled down by 2 for the next stage.
-  * State (particles, chi2, beta, logZ, rng) persisted to npz EVERY stage ->
+  * State (particles, chi2, beta, logZ, rng) persisted to npz every stage ->
     resumable via SMC_RESUME=<path>.
 
-ENV KNOBS (all optional):
+Env knobs (all optional):
   SMC_N(512) SMC_MOVES(3) SMC_ESS_TARGET(0.5) SMC_LMAX(2508) SMC_SEED(0)
   SMC_OUT(scan/results/smc_lcdm) SMC_CONFIG(scan/configs/lcdm.py)
   SMC_RTOL(1e-5) SMC_MAXSTAGES(80) SMC_RESUME(path; auto-detects SMC_OUT_state.npz)

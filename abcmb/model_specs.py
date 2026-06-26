@@ -64,19 +64,19 @@ def load_specs(input_specs):
     # recomb-dense) cuts memory + the LoS scan but trades time resolution.
     specs["n_lna_PE"]        = input_specs.get("n_lna_PE", 300)
     # Save-grid layout (perturbations.make_lna_grid). "uniform" reproduces the
-    # historical linspace. "visibility" is the EXTENSIBLE adaptive grid: it places
-    # points by the inverse-CDF of (lna_vis_floor + g/max(g)), where g is the actual
-    # CMB visibility BG.visibility(lna,params) on a dense grid, so resolution tracks
-    # every source feature (recomb + reion + new physics) per cosmology with no
-    # recompile. "recomb_dense" is the legacy hand-placed Gaussian (NOT extensible).
-    # Any non-uniform mode requires the per-interval LoS trapezoid weights in
-    # spectrum.py (already grid-agnostic).
+    # historical linspace. "visibility" is the adaptive grid: it places
+    # points by the inverse-CDF of (lna_vis_floor + g/max(g)), where g is the
+    # CMB visibility BG.visibility(lna,params) on a dense grid, so resolution
+    # tracks every source feature (recomb + reion + new physics) per cosmology
+    # with no recompile. "recomb_dense" is the legacy hand-placed Gaussian (not
+    # physics-extensible). Any non-uniform mode requires the per-interval LoS
+    # trapezoid weights in spectrum.py (already grid-agnostic).
     specs["lna_grid_mode"]    = input_specs.get("lna_grid_mode", "visibility")
     specs["lna_grid_n_dense"] = input_specs.get("lna_grid_n_dense", 4000)
     # "visibility" mode knobs (physics-agnostic). Defaults (smooth=0.3, floor=0.4)
     # recover the old uniform-500 accuracy at every multipole l>=5 with n_lna_PE=300
     # (~1.6x less per-call memory / LoS-scan cost); only the l=2-4 quadrupole regresses
-    # sub-permille. See bench/grid_diag*.log + CHANGELOG 2026-05-30.
+    # sub-permille. See CHANGELOG 2026-05-30.
     specs["lna_vis_floor"]      = input_specs.get("lna_vis_floor", 0.4)
     specs["lna_vis_smooth"]     = input_specs.get("lna_vis_smooth", 0.3)
     specs["lna_vis_gprime_amp"] = input_specs.get("lna_vis_gprime_amp", 0.0)

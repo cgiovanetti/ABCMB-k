@@ -1,4 +1,0 @@
-{"B": 8, "kchunk": 100, "shard": 0, "massive": 1, "n_dev": 1, "warm": 179.29, "run": 76.5, "per_param": 9.5629, "peak_gb": [4.78], "shape": [8, 799], "ok": true}
-{"B": 16, "kchunk": 100, "shard": 0, "massive": 1, "n_dev": 1, "warm": 207.41, "run": 103.6, "per_param": 6.4748, "peak_gb": [9.52], "shape": [16, 799], "ok": true}
-{"B": 16, "kchunk": 50, "shard": 0, "massive": 1, "n_dev": 1, "warm": 214.65, "run": 111.32, "per_param": 6.9576, "peak_gb": [9.52], "shape": [16, 799], "ok": true}
-{"B": 16, "kchunk": 25, "shard": 0, "massive": 1, "n_dev": 1, "warm": 234.58, "run": 131.5, "per_param": 8.219, "peak_gb": [9.65], "shape": [16, 799], "ok": true}

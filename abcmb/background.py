@@ -286,15 +286,15 @@ class BackgroundPreRecomb(eqx.Module):
         i0 = int(np.searchsorted(grid_np, lna_cut, side='right'))
         lna_save = self.lna_tau_tab[i0:]      # (n_save,) in (lna_cut, lna_end]
 
-        # ---- Diffrax solve, saving DIRECTLY at the grid points ----
+        # ---- Diffrax solve, saving directly at the grid points ----
         # SaveAt(ts=lna_save) interpolates the solver's per-step dense output at the
         # save points as it integrates (same interpolant as the old SaveAt(dense=True)
-        # + sol.evaluate, so values are unchanged), but WITHOUT materializing the dense
+        # + sol.evaluate, so values are unchanged), but without materializing the dense
         # Solution. The old path evaluated the dense Solution at all 10000 grid points;
         # under the B-vmap each evaluate broadcast against the padded (max_steps=4096)
-        # step array, giving a (B, 10000, 4096) intermediate = ~21 GB at B=64 — this was
-        # the binding GPU memory peak of the whole pipeline (bench/round3_*). SaveAt(ts)
-        # removes the max_steps axis entirely.
+        # step array, giving a (B, 10000, 4096) intermediate = ~21 GB at B=64, which was
+        # the binding GPU memory peak of the whole pipeline. SaveAt(ts) removes the
+        # max_steps axis entirely.
         term = ODETerm(self._dtau_dlna)
         controller = PIDController(rtol=1e-8, atol=1e-8)
         saveat = SaveAt(ts=lna_save)

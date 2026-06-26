@@ -1,32 +1,32 @@
 """lowl_like.py — JAX, autodiff-differentiable Planck 2018 low-ell likelihoods.
 
-Two pieces, both faithful re-implementations of cobaya's NATIVE (clik-free) low-ell
+Two pieces, both faithful re-implementations of cobaya's native (clik-free) low-ell
 likelihoods, re-arranged so they are pure-JAX, vmap/jacfwd-able, and consume the
-SAME padded D_ell[0..lmax] (muK^2) arrays that scan/plik_lite.py already produces
+same padded D_ell[0..lmax] (muK^2) arrays that scan/plik_lite.py already produces
 from ABCMB output:
 
   * LowLEE  -- SRoll2 / SimAll low-ell EE (ell=2..29). cobaya stores a per-multipole
-    log-prob TABLE probEE[3000, 28]: row j is the log-likelihood at
-    D_ell^EE = j * 1e-4 muK^2.  cobaya's native code does a FLOOR lookup
-    (`(D/step).astype(int)`) -> piecewise-constant, NOT differentiable.  We
-    CUBIC-interpolate each column (the table step is 1e-4 muK^2, so the interpolant
-    is faithful) -> smooth, C1, AD-able.  REPLACES the circular N(0.0544,0.0073)
-    tau "prior": tau is now constrained by FITTING the actual low-ell EE data.
+    log-prob table probEE[3000, 28]: row j is the log-likelihood at
+    D_ell^EE = j * 1e-4 muK^2.  cobaya's native code does a floor lookup
+    (`(D/step).astype(int)`) -> piecewise-constant, not differentiable.  We
+    cubic-interpolate each column (the table step is 1e-4 muK^2, so the interpolant
+    is faithful) -> smooth, C1, AD-able.  This replaces the circular N(0.0544,0.0073)
+    tau prior: tau is now constrained by fitting the actual low-ell EE data.
 
   * LowLTT  -- Commander Gibbs low-ell TT (ell=2..29), Gaussianized via the public
     "cl2x" change-of-variable: per multipole a cubic spline x(C_ell) maps the cl to
     a Gaussian variable; logL = sum log(dx/dC) [Jacobian] - 0.5 (x-mu)^T Cinv (x-mu).
-    Adds the ell=2..29 TEMPERATURE the plik-lite-only run dropped.
+    Adds the ell=2..29 temperature the plik-lite-only run dropped.
 
-PERF: the cubic spline DERIVATIVES (interpax approx_df, a tridiagonal solve per
-column) are PRECOMPUTED at __init__ and passed to interp1d(..., fx=...) at call
-time, so the traced graph only EVALUATES -- the 56 coefficient solves never enter
-the jacfwd/vmap graph (otherwise the AD compile blows up to >10 min).
+The cubic-spline derivatives (interpax approx_df, a tridiagonal solve per column)
+are precomputed at __init__ and passed to interp1d(..., fx=...) at call time, so
+the traced graph only evaluates -- the 56 coefficient solves never enter the
+jacfwd/vmap graph (otherwise the AD compile blows up to >10 min).
 
 Both return a chi^2 contribution = -2 ln L (up to an additive constant that cancels
-in any Delta-chi^2 profile).  Validated against the cobaya native formula in
-scan/validate_lowl.py.  calib (= A_planck) enters as D_ell -> D_ell/calib^2 as in
-cobaya; calibration is negligible vs low-ell uncertainty so default calib=1.
+in any Delta-chi^2 profile), and both match the cobaya native formula.  calib
+(= A_planck) enters as D_ell -> D_ell/calib^2 as in cobaya; calibration is
+negligible vs low-ell uncertainty so default calib=1.
 """
 import os
 import numpy as np

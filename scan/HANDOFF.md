@@ -1,6 +1,10 @@
 # HANDOFF — frequentist tool, 2026-06-22 (night)
 
-Branch `perk-perf` (NOT merged to main). Canonical goal: **give a new ABCMB cosmology →
+> Note (2026-06-25 cleanup): this work now lives on `main`. The `bench/` directory
+> and the one-off `scan/` validation/derisk scripts cited below were removed; see
+> git history and `CHANGELOG.txt` for their results.
+
+Canonical goal: **give a new ABCMB cosmology →
 profile-likelihood optimum ±½σ in a FEW HOURS of compute** (must beat CLASS+MH ΛCDM+Neff
 @ 22 h). Plan lineage: `scan/TOOL_PLAN.md` (strategy) → this doc (current state) →
 `CHANGELOG.txt` top entries (detail). Read this FIRST. (Prior `HANDOFF` content, 2026-06-11,

@@ -27,24 +27,24 @@ def make_lna_grid(BG, params, n, specs):
     ``specs["lna_grid_mode"]``:
       - ``"uniform"``  : ``jnp.linspace(lna_transfer_start, 0, n)`` (historical
         behaviour; the default).
-      - ``"visibility"`` : EXTENSIBLE adaptive grid. Points are placed as the
+      - ``"visibility"`` : adaptive grid. Points are placed as the
         inverse-CDF of a density ``floor + g/max(g) (+ gprime_amp*|g'|/max|g'|)``,
-        where ``g`` is the *actual* CMB visibility ``BG.visibility(lna, params)``
+        where ``g`` is the CMB visibility ``BG.visibility(lna, params)``
         evaluated on a dense grid. The visibility already carries every localized
         source feature for the given cosmology (recombination peak, reionization
         bump, and whatever a new-physics model adds), so resolution is placed
-        where the source varies WITHOUT hard-coding feature locations or widths.
+        where the source varies without hard-coding feature locations or widths.
         The ``floor`` keeps baseline coverage for the broad ISW/Pk contributions.
       - ``"recomb_dense"`` : legacy hand-placed Gaussian bump(s) at ``BG.lna_rec``
-        (and optionally ``lna_reion_center``). Kept for reference; NOT physics-
-        extensible (a recomb-only bump starves reionization -> EE bias). Prefer
-        ``"visibility"``.
+        (and optionally ``lna_reion_center``). Kept for reference; not
+        physics-extensible (a recomb-only bump starves reionization and biases
+        EE). Prefer ``"visibility"``.
 
     Shape-controlling values (``n``, ``lna_grid_n_dense``, the mode/knobs) are
     static; ``BG``/``params`` are traced, so the grid auto-adapts per cosmology
-    with NO recompile when scanning parameters at fixed specs. Endpoints are
+    with no recompile when scanning parameters at fixed specs. Endpoints are
     exactly ``lna_transfer_start`` and ``0``; the grid is strictly increasing.
-    A non-uniform grid MUST be paired with the per-interval ``jnp.diff`` trapezoid
+    A non-uniform grid must be paired with the per-interval ``jnp.diff`` trapezoid
     weights in ``spectrum.py`` (already grid-agnostic).
     """
     lna_start = BG.lna_transfer_start
@@ -64,8 +64,9 @@ def make_lna_grid(BG, params, n, specs):
         # on the uniform dense grid u with a Gaussian of width lna_vis_smooth.
         sm = specs.get("lna_vis_smooth", 0.0)
         if sm > 0.0:
-            # Kernel SIZE must be static (n_dense, sm static; window assumed ~7.5
-            # e-folds for sizing only). Kernel VALUES use the traced du -> exact.
+            # Kernel size must be static (n_dense, sm static; window assumed ~7.5
+            # e-folds for sizing only). Kernel values use the traced du, so the
+            # weights stay exact.
             half = max(1, int(round(4.0 * sm * n_dense / 7.5)))
             du = (u[-1] - u[0]) / (n_dense - 1)
             idx = jnp.arange(-half, half + 1)
@@ -193,10 +194,9 @@ class PerturbationEvolver(eqx.Module):
         return PT
 
     # ------------------------------------------------------------------
-    # Batched (params-axis) path. Phase D refactor: enables frequentist
-    # scans by computing one k chunk over a batch of B param-points at a
-    # time on GPU. See bench/design_memo.md for the architecture
-    # rationale (K_CHUNK=100, double-vmap, no lax.scan around diffrax).
+    # Batched (params-axis) path. Computes one k-chunk over a batch of B
+    # param-points at a time on GPU, which is what enables the frequentist
+    # scans (k_chunk_size=100, double vmap, no lax.scan around diffrax).
     # ------------------------------------------------------------------
     @eqx.filter_jit
     def _evolve_chunk(self, k_chunk, lna_batch, BG_batch, params_batch):
@@ -208,9 +208,9 @@ class PerturbationEvolver(eqx.Module):
         size hit the same compiled code. Different shape (last chunk if
         N_k isn't divisible by K_CHUNK) recompiles once.
 
-        Per-mode trajectory results differ across batch compositions due
-        to diffrax PID step-controller noise, but all within the
-        configured rtol/atol — see bench/chunking_debug_report.md.
+        Per-mode trajectory results differ slightly across batch
+        compositions due to diffrax step-controller noise, but stay within
+        the configured rtol/atol; downstream Cl/Pk agreement is unaffected.
 
         BG_batch and params_batch must be valid pytrees stacked along a
         leading B axis; ``BG_batch.kappa_func`` must be ``None``.
@@ -226,23 +226,21 @@ class PerturbationEvolver(eqx.Module):
     @eqx.filter_jit
     def _transpose_chunk(self, chunk):
         """Transpose a raw ``(K_CHUNK, B, Nlna, Ny)`` chunk into the
-        ``(B, Ny, Nlna, K_CHUNK)`` output layout, INSIDE the per-chunk JIT (so
-        the small per-chunk transpose, ~1/5 the full tensor, replaces a single
-        full-size transpose of the whole concatenated modes tensor)."""
+        ``(B, Ny, Nlna, K_CHUNK)`` output layout, inside the per-chunk JIT, so
+        the small per-chunk transpose replaces a single full-size transpose of
+        the whole concatenated modes tensor."""
         return chunk.transpose(1, 3, 2, 0)
 
     def _compute_modes_batched(self, args, k_chunk_size=100):
         """Compute raw modes tensor for a B-axis batch.
 
-        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
-        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
-        each chunk. Python-loop over chunks; NOT lax.scan (which had a
-        13-min compile pathology in Phase B). The per-mode trajectory
-        difference between full-vmap and chunked is real but is just
-        diffrax PID step-controller noise within the requested rtol/atol
-        envelope — see bench/chunking_debug_report.md for evidence.
-        Downstream Cl/Pk agreement is at ~2.6e-5 rel (see
-        bench/smoke_batched_pipeline.log), which is what matters.
+        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100),
+        calling the JIT'd ``_evolve_chunk`` on each chunk. The loop over chunks
+        is a plain Python loop rather than ``lax.scan``, which had a long
+        compile time when wrapped around diffrax. The per-mode trajectory
+        difference between the full vmap and the chunked path is diffrax
+        step-controller noise within the requested rtol/atol; downstream Cl/Pk
+        agreement is ~2.6e-5 relative, which is what matters.
 
         Parameters:
         -----------
@@ -251,8 +249,8 @@ class PerturbationEvolver(eqx.Module):
             a leading B axis on every batched leaf. ``BG_batch.kappa_func``
             must be ``None``.
         k_chunk_size : int
-            Number of k-modes per JIT cache entry. 100 ≈ 5.5 GB at B=64
-            on an A100 (see bench/design_memo.md §1).
+            Number of k-modes per JIT cache entry. 100 uses ~5.5 GB at B=64
+            on an A100.
 
         Returns:
         --------
@@ -268,13 +266,14 @@ class PerturbationEvolver(eqx.Module):
         n_k = len(k_axis)
 
         # Transpose each k-chunk to the (B, Ny, Nlna, K_CHUNK) output layout
-        # INSIDE its JIT, then concatenate along the k axis. vs the original
-        # concatenate(axis=0) + a single full-size .transpose(): this never holds
-        # the whole (N_k,B,Nlna,Ny) tensor AND its transpose at once, dropping the
+        # inside its JIT, then concatenate along the k axis. Unlike a single
+        # concatenate(axis=0) plus one full-size transpose, this never holds the
+        # whole (N_k, B, Nlna, Ny) tensor and its transpose at once, dropping the
         # modes-build peak from ~3x to ~2x the raw modes tensor. It is also
-        # SHARDING-SAFE: concatenating B-axis-sharded chunks along the (unsharded)
+        # sharding-safe: concatenating B-axis-sharded chunks along the unsharded
         # k axis keeps the B sharding, so each device holds only its B_local slice
-        # (a pre-allocated jnp.zeros would be replicated at full B and OOM).
+        # (a pre-allocated jnp.zeros would be replicated at full B and run out of
+        # memory).
         chunks_T = [
             self._transpose_chunk(self._evolve_chunk(
                 k_axis[i:i + k_chunk_size], lna_batch, BG_batch, params_batch))
@@ -287,18 +286,17 @@ class PerturbationEvolver(eqx.Module):
         """Evolve perturbations for a B-axis batch of (BG, params), return
         a batched PerturbationTable.
 
-        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100
-        per bench/design_memo.md), calling the JIT'd ``_evolve_chunk`` on
-        each. Python-level loop — *not* ``lax.scan`` — because scan-around-
-        diffrax has a known compile pathology (13-min per shape; see
-        bench/baseline_summary.txt vs bench/flipped_summary.txt).
+        Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100),
+        calling the JIT'd ``_evolve_chunk`` on each. The loop over chunks is a
+        plain Python loop rather than ``lax.scan``, which has a long compile
+        time when wrapped around diffrax.
 
         Parameters:
         -----------
         args : tuple
             ``(BG_batch, params_batch)``. Both must be stacked pytrees with
             a leading B axis on every batched leaf. ``BG_batch.kappa_func``
-            must be ``None`` (use ``strip_bg_kappa`` before stacking).
+            must be ``None``.
         k_chunk_size : int
             Number of k-modes per JIT cache entry.
 
@@ -317,10 +315,9 @@ class PerturbationEvolver(eqx.Module):
     def make_output_table_batched(self, lna_batch, modes_batch, args_batch):
         """Batched version of ``make_output_table`` via outer vmap.
 
-        Earlier we found PT fields with ~1e-5 relative drift vs the
-        single-call PT and assumed it was a vmap bug — it was actually
-        diffrax step-controller noise propagating from modes. See
-        bench/chunking_debug_report.md. The vmap is correct.
+        PT fields show ~1e-5 relative drift vs the single-call PT; this is
+        diffrax step-controller noise propagating from the modes, not a vmap
+        error.
 
         Parameters:
         -----------

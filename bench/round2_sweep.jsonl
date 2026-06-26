@@ -1,9 +1,0 @@
-{"B": 64, "kchunk": 100, "shard": 1, "n_dev": 4, "warm": 171.59, "run": 69.84, "per_param": 1.0912, "peak_gb": [5.32, 5.27, 5.27, 5.27], "shape": [64, 799], "ok": true}
-{"B": 256, "kchunk": 100, "shard": 1, "n_dev": 4, "warm": 236.42, "run": 136.36, "per_param": 0.5327, "peak_gb": [21.14, 21.09, 21.09, 21.09], "shape": [256, 799], "ok": true}
-{"B": 512, "kchunk": 48, "shard": 1, "n_dev": 4, "warm": 322.74, "run": 222.36, "per_param": 0.4343, "peak_gb": [42.24, 42.18, 42.18, 42.18], "shape": [512, 799], "ok": true}
-{"B": 128, "kchunk": 100, "shard": 1, "n_dev": 4, "warm": 194.37, "run": 92.27, "per_param": 0.7209, "peak_gb": [10.58, 10.55, 10.55, 10.55], "shape": [128, 799], "ok": true}
-{"B": 384, "kchunk": 100, "shard": 1, "massive": 0, "n_dev": 4, "warm": 277.47, "run": 183.48, "per_param": 0.4778, "peak_gb": [31.65, 31.6, 31.6, 31.6], "shape": [384, 799], "ok": true}
-{"B": 192, "kchunk": 100, "shard": 1, "massive": 0, "n_dev": 4, "warm": 212.79, "run": 116.34, "per_param": 0.6059, "peak_gb": [15.84, 15.8, 15.8, 15.8], "shape": [192, 799], "ok": true}
-{"B": 256, "kchunk": 48, "shard": 1, "massive": 0, "n_dev": 4, "warm": 249.72, "run": 147.18, "per_param": 0.5749, "peak_gb": [21.14, 21.09, 21.09, 21.09], "shape": [256, 799], "ok": true}
-{"B": 512, "kchunk": 100, "shard": 1, "massive": 0, "n_dev": 4, "warm": 326.57, "run": 227.5, "per_param": 0.4443, "peak_gb": [42.24, 42.18, 42.18, 42.18], "shape": [512, 799], "ok": true}
-{"B": 64, "kchunk": 100, "shard": 0, "massive": 0, "n_dev": 4, "warm": 211.75, "run": 127.05, "per_param": 1.9852, "peak_gb": [21.1, 0.0, 0.0, 0.0], "shape": [64, 799], "ok": true}

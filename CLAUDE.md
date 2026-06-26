@@ -154,100 +154,45 @@ For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, 
 
 Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
 
-### Status & where to resume (updated 2026-06-12 — direction set: the PE tool)
+### Status & where to resume (updated 2026-06-25)
 
-**THE CANONICAL PLAN IS `scan/TOOL_PLAN.md` — read it first.** The refined goal
-(user, 2026-06-12): a tool that takes a new ABCMB-style cosmology and returns the
-optimum ±1/2σ in a few hours; competitive bar = CLASS+MH does ΛCDM+Neff in ~22 h.
-Deliverables: batched lockstep-BFGS profile likelihoods with AD convergence
-certificates (headline), SMC posterior on the same likelihood (Bayesian anchor,
-review gap #2), coverage mocks on the batch axis (gap #4). The blocking first step
-is sharding the staged batched-AD gradient and measuring its throughput
-(TOOL_PLAN Workstream A). Orientation order: `scan/TOOL_PLAN.md` →
-`CHANGELOG.txt` (top entries) → `scan/HANDOFF.md` (background).
+The per-k batched engine and the parameter-estimation tool built on it are delivered
+and live on `main`. Orientation: `scan/TOOL_PLAN.md` (the plan; Workstreams A-D done)
+→ `CHANGELOG.txt` (top entries, full detail) → `scan/HANDOFF.md` (background).
 
-Engine status: the batched pipeline (`Model.call_batched`) is implemented, fast,
-and SCALES. A production 6-POI ΛCDM frequentist profile vs plik-lite(+lowTT/EE)
-has already COMPLETED (2h49m / 3 nodes, intervals within ~1σ of Planck 2018);
-the AD-gradient BFGS driver (`scan/profile_prod_ad.py`) and the correct-but-
-unsharded batched AD gradient (`scan/batched_grad.py`) exist on top of it.
-`perk-perf` branch (**current HEAD, NOT merged to main**) holds all of this.
-Perf-round background below; read `bench/round3_plan.md` / `bench/round2_plan.md`
-only if you need the memory/throughput archaeology.
+What exists and works:
+- **Batched engine** — `Model.call_batched(params_list, shard=)` runs the whole
+  pipeline params-axis-batched and B-axis-sharded across GPUs (`abcmb/main.py`).
+- **Frequentist profile tool** — `scan/profile_prod_ad.py`, config-driven
+  (`scan/configs/*.py`): a lockstep BFGS over all POIs × grid points, with
+  finite-difference-on-batch or staged-AD gradients (`scan/batched_grad.py`), a
+  sigma1-stability early-stop, and a post-loop AD ‖g‖ convergence certificate.
+  Likelihoods: plik-lite (`scan/plik_lite.py`), full Planck plik via clipy with an
+  inner SPG nuisance profile (`scan/plik_full.py`), and real low-ell TT/EE
+  (`scan/lowl_like.py`). Results are combined by `scan/collect_profiles.py`.
+- **SMC posterior** — `scan/smc.py` (plik-lite, delivered) and `scan/smc_plikfull.py`
+  (full plik, fast/slow Gibbs marginalising the 21 nuisances): hand-rolled tempered
+  SMC around `call_batched`, giving the posterior and the evidence.
+- **Delivered headline**: the 6-POI ΛCDM profile vs plik-lite(+lowTT/EE) completed in
+  2h58m on 6 nodes; minima within +0.60σ of Planck 2018 and |0.33σ| of the SMC
+  posterior (`scan/results/profiles_summary_mn6.{npz,png}`). Full-plik and ΛCDM+Neff
+  profiles and SMC runs followed — see `CHANGELOG.txt`.
 
-**ROUND-4 RESULT — n_lna lever: default save grid is now visibility-driven & N=300:**
-`model_specs` defaults changed: `n_lna_PE` 500->300, `lna_grid_mode` "uniform"->
-"visibility" (`lna_vis_smooth`=0.3, `lna_vis_floor`=0.4). The grid
-(`perturbations.make_lna_grid`) places points as the inverse-CDF of
-`floor + smooth(g)/max(g)` where `g=BG.visibility` — a TRACED per-cosmology quantity,
-so resolution auto-tracks recomb+reion+any-new-physics with NO per-parameter
-recompile (EXTENSIBLE; this is why a hand-placed bump at `BG.lna_rec` was rejected —
-it ignored reionization and wrecked EE@l=2). Paired with per-interval `jnp.diff`
-trapezoid weights in `spectrum.py` (bit-identical for uniform, REQUIRED for
-non-uniform). Result: per-call peak **11.73->7.09 GB (1.65×)** at B=64 (exactly
-linear 300/500); per_param unchanged at B=64 (solver-bound) so the win is ~1.65×
-more cosmologies/GPU + a cheaper LoS scan. Accuracy: matches-or-beats uniform-500 at
-every multipole **l>=5** (TT mid 0.192 vs 0.197); only the l=2-4 quadrupole regresses
-sub-permille (l=2 EE 0.231->0.304), which clustering can't fix and the user accepted.
-Revert = `n_lna_PE=500, lna_grid_mode="uniform"`. Tools: `bench/grid_diag.py`
-(per-ell error map), `bench/recomb_grid_sweep.py`, `bench/validate_vis300.py`
-(batched parity + memory), `bench/massive_grid_check.py`.
+Engine defaults worth knowing (`abcmb/model_specs.py`): the save grid is
+visibility-driven with `n_lna_PE=300` (revert with `n_lna_PE=500,
+lna_grid_mode="uniform"`); `k_chunk=100`; production `rtol_large_k_PE=1e-5`. The
+per-device GPU peak scales with B_local = B/n_dev, so to fit a larger batch, shard
+over more GPUs or lower B.
 
-**ROUND-3 RESULT — per-call GPU memory cut ~2× (accuracy-neutral, both committed):**
-The binding peak was NOT the modes tensor (the round-2 "0.33 GB/B_local persistent
-saved-trajectory tensor" model was WRONG — it mis-fit a transient). It was
-`_tabulate_conformal_time`'s `SaveAt(dense=True)` + `vmap(sol.evaluate)` over 10000
-pts, which under the B-vmap made a `(B,10000,max_steps=4096)` = 21 GB transient at
-B=64, **Ny-independent**. Fixed with `SaveAt(ts=lna_tau_tab[i0:])` (commit 7ce1756,
-PORTABLE to plain ABCMB → `../ABCMB_memory_reduction.md`). Plus the batched
-modes builder held 3 copies of the modes tensor; fixed with a donated in-place
-scatter (`_write_chunk`, commit edb3bb7), the lever for massive (modes ∝ Ny).
-Combined: **massless B=64 21.08→9.46 GB (2.23×), massive B=16 9.51→5.13 GB
-(1.85×)**, runtime unchanged. Gate: massless vs CLASS byte-identical; snapshots 5/5
-@rtol=1e-5 incl massive. Massive THROUGHPUT: freed memory fits B=64 → 6.51→4.25
-s/param (1.53×). `aH`-tabulation was tried and REVERTED (XLA already CSEs aH; no
-speedup) — do not re-attempt. Tools: `bench/profile_buildbgs.py`,
-`bench/runtime_peak.py`, `bench/profile_peak.py --stop`.
+**USER CONSTRAINTS (hard — honor these):** stay near permille (no tol-loosening /
+float32 / fp32-bf16 storage — all measured and rejected); no TCA / diffrax
+regime-switching; no SLURM job arrays (Perlmutter is touchy; ≤2 queued jobs get
+priority); k_chunk stays 100 (smaller is slower, no memory benefit); do not lower
+l_max for massive neutrinos.
 
-**Throughput (the big result):** memory, not the solver, was the throughput cap,
-and it dissolves under sharding. Just raising B: per-param 1.09 s (B=64) → 0.44 s
-(B=512) on 4 GPUs, ~2.3 cosmologies/s/node, still falling with B. GPUs are
-A100-**80GB**. Per-device peak = **0.33 GB × B_local** (B_local=B/n_dev; massless
-ΛCDM) / 0.60 (one massive ν), the persistent saved-trajectory tensor ∝
-N_k·Nlna·Ny·B_local — **independent of k_chunk**. Recommendation: B≈512 per
-4-GPU node, scale nodes. Multi-node harness: `scan/scan_multinode.slurm` +
-`scan/scan_slice.py` (ONE multi-node job, one worker/node, NOT a job array).
-
-**Correctness:** `accuracy_test.py` matches CLASS at TT 0.197% on these nodes;
-`test_snapshots.py` rtol loosened 1e-8→1e-5 (the 1e-8 fixtures drift ~4e-7 across
-GPU models — not a regression). Run snapshots (GPU) if you touch theory code.
-
-**USER CONSTRAINTS (hard — honor these):** stay near PERMILLE (NO tol-loosening /
-float32 / fp32-bf16 storage — all measured & rejected); NO TCA / diffrax
-regime-switching; NO SLURM job arrays (Perlmutter touchy, ≤2 queued jobs get
-priority); k_chunk stays 100 (smaller is slower, no mem benefit); **do NOT lower
-l_max for massive neutrinos**.
-
-**NEXT STEPS: follow `scan/TOOL_PLAN.md` §8 (order of work).** In short:
-(A) shard the staged AD gradient + measure its throughput at production shape
-[BLOCKING — prices everything; decision rule AD-vs-FD in TOOL_PLAN §1/§2];
-(B) evolve `scan/profile_prod_ad.py` into the config-driven tool (lockstep batch
-across all POIs × ≥25 grid pts × multistarts, warm starts, stable batch shapes);
-(C) the ΛCDM+Neff headline benchmark vs the 22 h bar; (D) hand-rolled tempered
-SMC on `call_batched` for the posterior+evidence (independent of A/B — can run
-in parallel); (E) coverage mocks (later). Phase H of the original plan.md is
-realized by B+C; still-untaken from the original plan: Phase F.2 (LINX under
-vmap — LINX runs per-cosmo in the `add_derived_parameters` python loop; fine at
-~ms/cosmo but could bite for large-B `bbn_type="linx"` scans).
-Perf levers left on the table (only if memory/throughput bites again): visibility-
-grid knobs (`lna_vis_smooth`/`lna_vis_floor`) re-tuned per-likelihood if l<5 is
-cut; Idea A2 from `bench/round3_memory.md` (stream PT per k-chunk; bigger
-refactor, blocked by the spectrum's global cubic spline over PT.k).
-
-Artifacts in `bench/`: `round3_plan.md` + `round3_{memory,massivenu}.md` (this
-round); `round2_plan.md` + `round2_{solver,precision,scaleout,memory}.md` (round 2);
-`round2_sweep.jsonl` / `round2_massive.jsonl` (measurements); `mem_throughput_sweep.py`
-(`--massive`), `perf_multigpu.py`, `validate_autokchunk.py`, `tol_bracket.py`.
+A `bench/` directory of perf archaeology and one-off validation scripts was removed in
+the 2026-06-25 cleanup; the conclusions are in `CHANGELOG.txt`, and the engine's
+correctness contract is `pytests/` (accuracy vs CLASS + snapshots).
 
 ## Special instructions
 

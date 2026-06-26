@@ -1,5 +1,10 @@
 # TOOL_PLAN — the parameter-estimation tool (canonical plan, 2026-06-12)
 
+> Note (2026-06-25 cleanup): Workstreams A-D are delivered. The `bench/` directory
+> and the one-off `scan/` benchmark/validation scripts referenced below were removed;
+> see git history and `CHANGELOG.txt`. The reproduction path is the kept `scan/` core
+> (drivers, likelihoods, configs).
+
 ## 0. Goal (verbatim from the user) and the competitive bar
 
 > "I want a tool where I can give it a new cosmology ABCMB-style and in a few

@@ -10,13 +10,13 @@ A_planck) are pure-JAX and vmap over a leading batch axis. ABCMB's
 turns that (B, n_ell) block into a (B,) chi^2 vector — exactly the artifact a
 frequentist scan keeps.
 
-Conventions (must match cobaya exactly, validated in scan/validate_plik.py):
+Conventions (must match cobaya exactly):
   * Data file ``cl_cmb_plik_v22.dat`` columns: [L_av, D_l, err], where
     D_l = l(l+1) C_l / (2 pi) in muK^2.  613 bins = 215 TT + 199 TE + 199 EE.
   * bin_lmin_offset = 30; bins reach l = 2508.
   * cobaya works "directly with D_L not C_L": it pre-multiplies the raw bweights
     by 2 pi / (l (l+1)), then dots them against the theory D_l array. We replicate
-    that, so our binning matrix acts on D_l (NOT C_l).
+    that, so our binning matrix acts on D_l (not C_l).
   * A_planck enters as model_binned -> model_binned / A_planck^2.
 
 ABCMB gives *raw, dimensionless* C_l (the (dT/T)^2 angular power) on the integer

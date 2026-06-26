@@ -27,18 +27,17 @@ from .linx import thermo as linxThermo
 config.update("jax_enable_x64", True)
 
 
-# --- cached CPU-backend HyRex wrappers (built ONCE per RecModel) ---------------
+# --- cached CPU-backend HyRex wrappers (built once per RecModel) ---------------
 # The recombination stage runs on the CPU backend. It used to be wrapped inline
 # as ``eqx.filter_jit(jax.vmap(self.RecModel), backend='cpu')`` at each call site
 # (in ``_build_bgs_batched`` and ``run_cosmology_abbr``). The compiled executable
 # is deduped by XLA -- so individual calls stayed fast -- but creating a fresh
 # jit wrapper on every call accumulated host-side JAX cache metadata
-# (~0.12 GB/call, MEASURED with scan/diag_recompile.py). Over a long optimizer
-# loop this bloated and fragmented host RAM until an LLVM CPU-backend section
-# allocation failed ("Unable to allocate section memory" -> OOM crash in
-# scan/profile_opt.py after ~26 evaluations). Caching the wrapper by RecModel
+# (~0.12 GB/call). Over a long optimizer loop this bloated and fragmented host
+# RAM until an LLVM CPU-backend section allocation failed ("Unable to allocate
+# section memory") after a few dozen evaluations. Caching the wrapper by RecModel
 # identity keeps a single stable executable + cache entry and removes the leak.
-# It closes over ONLY RecModel (not the full ``Model``) so no unrelated GPU
+# It closes over only RecModel (not the full ``Model``) so no unrelated GPU
 # arrays are dragged onto the CPU backend.
 _RECMODEL_CPU_CACHE = {}
 
@@ -133,7 +132,7 @@ class Model(eqx.Module):
             Any unknown keys will be preserved for custom species extensibility.
         """
 
-        # Pull adjoint out of kwargs before load_specs — it must NOT end up
+        # Pull adjoint out of kwargs before load_specs — it must not end up
         # inside self.specs (a non-JAX pytree leaf breaks lax.cond / filter_jit
         # tracing).
         adjoint = kwargs.pop("adjoint", diffrax.ForwardMode)
@@ -174,7 +173,7 @@ class Model(eqx.Module):
         )
 
         # Initialize recombination model.
-        self.RecModel = hyrex.recomb_model(adjoint=adjoint) # DO NOT CHANGE z1 FROM 0
+        self.RecModel = hyrex.recomb_model(adjoint=adjoint) # do not change z1 from 0
 
         # Initialize BBN model
         self.PArthENoPE_CLASS_table = jnp.asarray(np.loadtxt(file_dir+'/sBBN_2025_CLASS.txt'))
@@ -267,15 +266,14 @@ class Model(eqx.Module):
             (last cosmology replicated) and the padding is sliced off the
             output. If False, runs on a single device.
         k_chunk_size : int
-            Number of k-modes evolved per ``_evolve_chunk`` JIT kernel — a
-            THROUGHPUT knob, not a memory knob. Default 100 is optimal
-            (bench/sweep_kchunk.py; and bench/round2_{sweep,massive}.jsonl show
-            smaller chunks are strictly slower with NO memory benefit). The
-            GPU memory peak is the persistent saved-trajectory tensor
-            ~3.65·N_k·Nlna·Ny·8B·(B/n_dev), independent of k_chunk — so to fit a
-            larger B, shard over more GPUs or lower B, NOT shrink k_chunk. On an
-            80 GB A100 this allows B/n_dev ≲ 200 (massless ΛCDM, Ny≈46) or ≲ 110
-            (one massive ν, Ny≈83) per device.
+            Number of k-modes evolved per ``_evolve_chunk`` JIT kernel. This
+            sets throughput, not memory: the peak is the persistent
+            saved-trajectory tensor (~3.65 N_k Nlna Ny 8B per device, scaling
+            with B/n_dev and independent of k_chunk), so to fit a larger B,
+            shard over more GPUs or lower B rather than shrink the chunk. The
+            default 100 is a good choice; on an 80 GB A100 it allows B/n_dev of
+            order 200 (massless ΛCDM, Ny≈46) or 110 (one massive neutrino,
+            Ny≈83) per device.
 
         Returns
         -------
@@ -284,13 +282,13 @@ class Model(eqx.Module):
         """
         B = len(params_list)
 
-        # decide whether to shard over multiple GPUs + build the B-axis
-        # shardfn (GSPMD auto-partition; the pipeline is embarrassingly
-        # parallel over B, no collectives). Applied INSIDE the setup and again
-        # before the modes solve, so pre-recomb / get_BG / perturb / spectrum
-        # all run sharded -- each device builds & solves only B/n_dev
-        # cosmologies (1/n_dev the memory + parallel setup). Sharding AFTER the
-        # setup instead would build all B on device 0 and OOM at large B.
+        # Build the B-axis shardfn (GSPMD auto-partition; the pipeline is
+        # embarrassingly parallel over B, so there are no collectives). It is
+        # applied inside the setup and again before the modes solve, so
+        # pre-recomb, get_BG, the perturbation evolver and the spectrum all run
+        # sharded -- each device builds and solves only B/n_dev cosmologies.
+        # Sharding after the setup would instead build all B on device 0 and run
+        # out of memory at large B.
         shardfn, n_dev = self._make_shardfn(shard)
         do_shard = shardfn is not None
 
@@ -301,13 +299,11 @@ class Model(eqx.Module):
             pad = n_dev - (B % n_dev)
             params_list_run = params_list_run + [params_list_run[-1]] * pad
 
-        # --- memory guard. MEASURED (bench/round2_{sweep,massive}.jsonl, A100):
-        # the per-device GPU peak is set by the PERSISTENT saved-trajectory
-        # tensor, ~ 3.65 * N_k * Nlna * Ny * 8B * B_local, and is INDEPENDENT of
-        # k_chunk (shrinking k_chunk neither lowers the peak nor helps -- it only
-        # adds launch overhead). So memory is governed by B_local = B/n_dev:
-        # shard more / lower B to fit, NOT by tuning k_chunk. Warn (don't fail)
-        # if the estimate exceeds device memory so a scan picks B sanely. ---
+        # --- memory guard. The per-device GPU peak is set by the persistent
+        # saved-trajectory tensor, ~ 3.65 * N_k * Nlna * Ny * 8B * B_local, and
+        # is independent of k_chunk. Memory is therefore governed by
+        # B_local = B/n_dev: shard more or lower B to fit. Warn (don't fail) if
+        # the estimate exceeds device memory so a scan can pick B sensibly. ---
         B_local = -(-len(params_list_run) // n_dev) if do_shard else len(params_list_run)
         try:
             try:
@@ -388,10 +384,10 @@ class Model(eqx.Module):
         return full_params, bg
 
     # ---- batched setup (vmap over B) -----------------------------------
-    # The per-cosmology _build_one_bg path above runs get_BG EAGERLY (it is
+    # The per-cosmology _build_one_bg path above runs get_BG eagerly (it is
     # not under jit), which costs ~7 s/param of pure dispatch overhead and
-    # does NOT amortize over B. The three methods below run the identical
-    # work under ONE jit each, vmapped over the B axis, collapsing 3B jit
+    # does not amortize over B. The three methods below run the identical
+    # work under one jit each, vmapped over the B axis, collapsing 3B jit
     # dispatches + 2B device transfers into 3 jits + 3 transfers.
 
     @eqx.filter_jit
@@ -607,7 +603,7 @@ class Model(eqx.Module):
         Construct the full ``Background`` from pre-recomb + HyRex output.
 
         Selects the reionization model (z-input vs tau-input) via ``lax.cond``.
-        NOT directly ``@eqx.filter_jit``-decorated; called from inside
+        not directly ``@eqx.filter_jit``-decorated; called from inside
         ``_run_post_recomb`` (which is jit-wrapped).
 
         Parameters:
@@ -763,7 +759,7 @@ class Model(eqx.Module):
             # Comprehensive Neff, includes all relativsitic species at early times.
             Neff_BBN = params["Neff"]
             
-            # last two args are user input omega_b and (Neff_BBN - 3.046) (MUST be 3.046 as 
+            # last two args are user input omega_b and (Neff_BBN - 3.046) (must be 3.046 as 
             # this was assumed when constructing the PArthENoPE table)
             res_YHe = bilinear_interp(omegab, DNeff,YHe_grid, params['omega_b'],Neff_BBN - 3.046)
 
@@ -771,7 +767,7 @@ class Model(eqx.Module):
             params['YHe'] = res_YHe
         elif self.specs["bbn_type"].lower() == "linx":
             # Applies if user requested to run LINX.
-            # For this branch to happen, Neff must NOT have already been set. 
+            # For this branch to happen, Neff must not have already been set. 
             # Logic above has already accounted for this, since input_T and input_Neff must both be False
             # for LINX to execute.
             params['Delta_Neff_init'] = jnp.array(params.get('Delta_Neff_init', 0.))

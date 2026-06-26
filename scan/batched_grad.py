@@ -1,19 +1,15 @@
 """batched_grad.py — staged forward-mode AD on the per-k batched pipeline.
 
-Implements the design in bench/batched_ad_design.md: instead of `jacfwd`-ing the
-whole cross-device pipeline (the ~20 min monolith), we apply `jax.jvp` to EACH
-already-`filter_jit`'d BATCHED stage separately, in eager Python, threading the
-array tangent between stages -- exactly how `Model.call_batched` orchestrates the
-PRIMAL. Because we differentiate the BATCHED stages, the gradient inherits the
-params-axis batching + k-chunking (+ sharding, once wired). Risk #1 (the
-perturbation stage) is validated in scan/derisk_batched_ad.py (1.55x compile,
-5e-4 vs FD); this assembles the full chain and validates the END-TO-END Cl gradient
-against the proven single-cosmology `jacfwd`.
+Instead of jacfwd-ing the whole cross-device pipeline (which fuses into a ~20-min
+monolith), apply jax.jvp to each already-filter_jit'd batched stage separately,
+in eager Python, threading the array tangent between stages -- the same way
+``Model.call_batched`` orchestrates the primal. Differentiating the batched
+stages means the gradient inherits the params-axis batching, k-chunking, and
+(once wired) sharding.
 
-This lives in scan/ and only CALLS the existing Model batched-stage methods
-(`_pre_recomb_batched`, HyRex `_recmodel_cpu`, `_get_BG_batched`,
-`PE.full_evolution_batched`, `SS.get_Cl_batched`) -- NO core-code edits. If it works
-+ is fast, it gets promoted to `Model.call_batched_grad` later.
+This lives in scan/ and only calls the existing batched-stage methods
+(``_pre_recomb_batched``, HyRex ``_recmodel_cpu``, ``_get_BG_batched``,
+``PE.full_evolution_batched``, ``SS.get_Cl_batched``), with no core-code edits.
 
 Run via srun on a GPU node, PYTHONPATH=$(pwd). Env: BG_LMAX(128), BG_WRT(omega_cdm,n_s).
 """
@@ -86,11 +82,11 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         direction j). Returns (ClTT,ClTE,ClEE) primal (B,n_l) and a list[P] of
         (dClTT,dClTE,dClEE) tangents (B,n_l).
 
-    k_chunk_size threads through full_evolution_batched on BOTH the primal and the
-    jvp. It is a GRADIENT-path knob, independent of the primal call_batched (which
+    k_chunk_size threads through full_evolution_batched on both the primal and the
+    jvp. It is a gradient-path knob, independent of the primal call_batched (which
     keeps k_chunk=100): under jvp the augmented ForwardMode-Kvaerno5 loop is fused
-    over vmap(k_chunk, B), so a SMALLER k_chunk shrinks that fusion and the compile
-    (the cost is more cached chunks at runtime). See bench/grad_compile_findings.md.
+    over vmap(k_chunk, B), so a smaller k_chunk shrinks that fusion and the compile,
+    at the cost of more cached chunks at runtime.
 
     shard : bool or None. If True (or None with >1 visible GPU), shard the B
         axis across all visible GPUs via the SAME GSPMD shardfn call_batched

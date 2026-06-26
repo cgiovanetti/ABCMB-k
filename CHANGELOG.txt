@@ -9,6 +9,44 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-25 — Cleanup: docstrings + prune the validation/bench sprawl
+-------------------------------------------------------------------
+Session "docstrings_cleanup". Goal: reduce cognitive load and bring docstrings and
+comments in the ABCMB core and the kept production scripts in line with regular ABCMB
+style (numpy API, concise, no ALL-CAPS / breathless narration). No theory change.
+
+Removed (all recoverable from git history):
+- The entire bench/ directory (~99 tracked files): perf archaeology (rounds 2-4,
+  smoke/diag/ideas/notes), one-off benchmarks, and the early-stop calibration
+  artifacts. The conclusions live in this CHANGELOG; the engine's correctness contract
+  is pytests/ (accuracy vs CLASS + snapshots).
+- ~35 one-off scan/ scripts: derisk/feasibility probes (derisk_*, fwdad_*, the
+  OPTION_B / FEASIBILITY docs), gradient/compile/timing benchmarks (grad_*, jvp_*,
+  *_timing, time_b51, spec_compile_probe, bench_plik_runtime, tol_converge/_profconv,
+  noise_floor), correctness gates (validate_*), the inner-profile tuner (tune_inner +
+  save_clsref), the superseded grid-scan pipeline (scan_profile/scan_slice/
+  profile_config/collect_profile + their slurms), the optimizer-profile experiment
+  (profile_opt/profile_batched/profile_demo/warm_compile), and the old Newton driver
+  profile_prod.py (its interval/sigma_parabola helpers were moved into
+  profile_prod_ad.py).
+- Stale logs, the .jobid stash, out_profile/, and superseded result data (tol_sweep_*,
+  the rtol-variant n_s scans, entry-(a) PNGs, profile_demo/batched_ns/validation
+  outputs, the SMC resume state, calibration traces). Kept all warm-Hessian/MLE-prepass
+  caches, BFGS checkpoints, warm-start sources, and headline outputs.
+
+Kept reproduction set (scan/): profile_prod_ad.py (driver), plik_lite/plik_full/
+lowl_like (likelihoods), batched_grad (staged AD gradient), smc/smc_plikfull
+(posteriors), collect_profiles, configs/, the production slurms, and TOOL_PLAN.md +
+HANDOFF.md (each with a short cleanup note at the top).
+
+Docstrings/comments: rewrote the Claudish/ALL-CAPS module docstrings and the comments
+that referenced now-removed files, in abcmb/{main,perturbations,model_specs,
+background}.py and the kept scan core scripts. Edits are behaviour-preserving
+(docstrings/comments only, except relocating the two interval helpers into the
+driver); every edited .py was checked with `python -m py_compile`. Updated CLAUDE.md's
+status section to the current state (work merged to main; bench/ removed).
+
+
 2026-06-24 (eve) — FAST/SLOW SMC on FULL plik, MARGINALISING the 21 nuisances (feasibility study)
 -------------------------------------------------------------------------------------------------
 Session "smc_plikfull". User ask: the existing SMC anchor (scan/smc.py, the VALIDATED
