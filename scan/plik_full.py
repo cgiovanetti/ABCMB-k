@@ -1,17 +1,17 @@
 """plik_full.py — FULL Planck 2018 high-ell plik (TTTEEE) for the frequentist tool.
 
-Replaces plik-LITE. The full plik carries 47 foreground/calibration nuisances that
-do NOT enter the theory code -- so they are handled ENTIRELY inside the likelihood
+Replaces plik-lite. The full plik carries 47 foreground/calibration nuisances that
+do not enter the theory code, so they are handled entirely inside the likelihood
 (profiled at fixed ABCMB theory Cls), never by re-running ABCMB. That is the whole
 point of this module: one ABCMB call per cosmology, then a cheap inner optimisation
 over the nuisances.
 
 Backend: `clipy` (pure-Python, JAX-native clik reimplementation; same code modern
 cobaya calls). Its constructor self-tests against the clik-stored check_value
-(validate_clipy.py: diff 4e-6). We feed it ABCMB Cls (raw -> muK^2, TT/EE/BB/TE/TB/EB
+(self-test diff 4e-6). We feed it ABCMB Cls (raw -> muK^2, TT/EE/BB/TE/TB/EB
 ordering, 0..lmax) and a nuisance dict; it returns logL (chi^2 = -2 logL).
 
-Nuisance treatment (matches the Planck 2018 baseline EXACTLY -- the cobaya
+Nuisance treatment (matches the Planck 2018 baseline exactly -- the cobaya
 planck_2018_highl_plik yamls):
   FLOATED (21), profiled per cosmology:
     A_cib_217, xi_sz_cib, A_sz, ksz_norm,            (CIB & SZ; uniform priors)
@@ -30,8 +30,8 @@ optimum fixed via stop_gradient), so the existing staged-AD gradient path is int
 
 Conventions:
   * cls block to clipy: shape (6, lmax+1) = [TT, EE, BB, TE, TB, EB], muK^2 C_l
-    (NOT D_l). raw ABCMB C_l -> muK^2 via * T_CMB_uK^2 (T_CMB_uK = 2.7255e6).
-  * chi2_mode=True returns the BARE data logL (no priors); we add the Planck priors
+    (not D_l). raw ABCMB C_l -> muK^2 via * T_CMB_uK^2 (T_CMB_uK = 2.7255e6).
+  * chi2_mode=True returns the bare data logL (no priors); we add the Planck priors
     ourselves for full transparency/control.
 """
 import os
@@ -187,13 +187,13 @@ class PlikFull:
         return self.data_chi2(cls2d, nu_phys) + self.prior_penalty(nu_phys)
 
     # ------------------------------------------------------------------
-    # inner nuisance profile (scaled coords): GRADIENT-ONLY nonmonotone Spectral
+    # inner nuisance profile (scaled coords): gradient-only nonmonotone Spectral
     # Projected Gradient (SPG). See profile() for the full rationale. Short version:
     # clipy's 2nd derivative is unreliable (1st-order AD is exact, verified) so every
     # Hessian-Newton variant failed; two nuisances rail at uniform-prior bounds (the
-    # joint-SZ prior) so the method must be genuinely BOUND-CONSTRAINED. SPG (projected
-    # BB steps + GLL nonmonotone Armijo) is gradient-only AND projects onto the box, and
-    # matches scipy L-BFGS-B to <0.02 chi^2 by maxit=800 (tune_inner, B=8 spread).
+    # joint-SZ prior) so the method must be genuinely bound-constrained. SPG (projected
+    # BB steps + GLL nonmonotone Armijo) is gradient-only and projects onto the box, and
+    # matches scipy L-BFGS-B to <0.02 chi^2 by maxit=800 (offline tuning, B=8 spread).
     # ------------------------------------------------------------------
     @property
     def zlo(self):
@@ -217,24 +217,27 @@ class PlikFull:
 
     def profile(self, cls2d, z0=None, maxit=None, maxls=None, eigfloor=None):
         """Inner-profile the 21 floated nuisances at fixed theory cls2d (6,lmax+1).
-        GRADIENT-ONLY Spectral Projected Gradient (SPG: projected gradient with
-        Barzilai-Borwein steps + Armijo) in the BOUNDED scaled-z box. Returns
+        Gradient-only Spectral Projected Gradient (SPG: projected gradient with
+        Barzilai-Borwein steps + Armijo) in the bounded scaled-z box. Returns
         (chi2_prof, nu_star_phys).
 
         Why this design: (1) clipy's 2nd derivative is unreliable (verified: 1st-order AD
         is exact, every Hessian-Newton variant failed, gap 2.8-14 chi^2), so the method
-        must be GRADIENT-ONLY -- BB steps build curvature from consecutive gradients.
+        must be gradient-only -- BB steps build curvature from consecutive gradients.
         (2) Two nuisances rail at their uniform-prior bounds (xi_sz_cib->1, ksz_norm->0,
         joint-SZ prior); where the data wants them far outside the box the boundary
-        gradient is steep, so a sigmoid-reparam unconstrained BFGS stalls SHORT of the
-        bound and loses several chi^2 (tune_inner). PROJECTION sets them EXACTLY at the
+        gradient is steep, so a sigmoid-reparam unconstrained BFGS stalls short of the
+        bound and loses several chi^2, while projection sets them exactly at the
         bound. (3) Scaled-z (scale = prior sigma) is well-conditioned, so SPG converges
         like scipy L-BFGS-B (~100 iters). Smooth in cls -> clean envelope-theorem
-        gradient. Differentiable in cls2d only through the FINAL eval; callers wanting the
-        gradient stop_gradient the cls INPUT to the SPG, then differentiate penalized_chi2
+        gradient. Differentiable in cls2d only through the final eval; callers wanting the
+        gradient stop_gradient the cls input to the SPG, then differentiate penalized_chi2
         at the fixed optimum. eigfloor accepted but unused."""
-        maxit = (800 if maxit is None else maxit)                # SPG: worst gap 0.017 chi^2 vs scipy
-        #                                                          (tune_inner, B=8); 600->0.067, 400->0.13
+        # default 800 (SPG: worst gap 0.017 chi^2 vs scipy across a B=8 spread;
+        # 600->0.067, 400->0.13). PLF_MAXIT env override is for cheap debug smoke tests
+        # only -- leave it unset in production so the inner profile stays at 800.
+        if maxit is None:
+            maxit = int(os.environ.get("PLF_MAXIT", "800"))
         maxls = self.maxls if maxls is None else maxls
         zlo, zhi, c1 = self.zlo, self.zhi, self.c1
         f = lambda zz: self._obj_z(cls2d, zz)

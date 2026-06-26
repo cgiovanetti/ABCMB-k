@@ -1,40 +1,32 @@
-"""profile_prod_ad.py — config-driven, lockstep frequentist profile TOOL.
+"""Config-driven, lockstep frequentist profile-likelihood tool (TOOL_PLAN.md).
 
-The parameter-estimation tool (TOOL_PLAN.md Workstream B). One sbatch in, an npz
-+ png per POI out: grid, profiled chi2, best fit, 1sigma/2sigma PCHIP intervals,
-per-point AD ||g|| convergence certificate, multistart spread.
+One sbatch in; per profiled parameter (POI), an npz + png out with the grid,
+profiled chi2, best fit, 1sigma/2sigma PCHIP intervals, a per-point AD ||g||
+convergence certificate, and the multistart spread.
 
-Evolved from the entry-(a)/2026-06-11 BFGS profile driver. THREE structural
-changes (TOOL_PLAN section 3 + the 2026-06-12 Workstream-A orchestrator verdict):
+  1. Config-driven (PA_CONFIG=path/to/config.py). A config declares the parameter
+     order, fiducials (cen), scale widths (sig), which parameters are POIs, the
+     fixed dict, optional user_species, likelihood toggles, and NPTS/NSIG. Adding
+     a parameter (e.g. Neff) is a config edit, not a code edit. Ships
+     configs/lcdm.py (6-param LCDM) and configs/lcdm_neff.py.
 
-  1. CONFIG-DRIVEN (PA_CONFIG=path/to/config.py). A config declares parameter
-     names (order), fiducials (cen), scale widths (sig), which are POIs, the
-     FIXED dict, optional user_species, likelihood toggles, NPTS/NSIG. LCDM+Neff
-     (or +any ABCMB param) is now a config edit, not a code edit. Ships
-     configs/lcdm.py (the original 6-param setup) + configs/lcdm_neff.py.
+  2. One lockstep batch across all POIs x grid points x multistart replicas. Each
+     "row" is one optimisation point; the BFGS state (x, Hinv, f, g) is per-row
+     arrays, so concatenating POIs just lengthens the batch. Per-row direction j
+     is the j-th free dim of that row's POI (P = D-1). One POI per SLURM rank is
+     available via PA_RANK_SLICE for multi-node runs; a single task handles the
+     full set.
 
-  2. ONE LOCKSTEP BATCH across ALL POIs x grid points x multistart replicas.
-     Each "row" is one optimisation point (poi_idx, poi_val); the BFGS state
-     (x, Hinv, f, g) is per-row arrays, so concatenating POIs just lengthens the
-     batch. Per-row direction j = "the j-th free dim of THAT row's POI"
-     (P = D-1 is uniform). Today's one-POI-per-rank stays as an OPTION
-     (PA_RANK_SLICE) for multi-node; single-task handles the full set.
-
-  3. GRADIENTS: the config's grad_method selects the BFGS iteration gradient
-     (a per-physics choice; PA_GRADMETHOD is a DEBUG-ONLY override that warns).
-     "fdbatch" (LCDM default, Workstream-A verdict).
-     Central finite-difference gradients assembled ON THE BATCH AXIS: the
-     2*P*N perturbed cosmologies are evaluated through call_batched in chunks
-     of PA_FD_CHUNK (128 -> B_local=32 ~12 GB/dev on a 4-GPU node; padded to keep
-     shapes stable). The value path is chunked at the same size. VALUES for the Armijo
-     line search + the recorded profile ALWAYS come from the fast call_batched
-     path (the consistency rule, commit 76127ca -- never mix value sources).
-     it0 CALIBRATION compares fdbatch against the exact batched-AD gradient and
-     halves PA_FD_STEP until they agree (max-rel <= PA_FD_CALTOL). The FINAL
-     stationarity CERTIFICATE is ALWAYS the exact AD gradient: ||g||_inf < GTOL
-     per row + the nuisance Hessian (central FD of the AD gradient) + PD check.
-     grad_method=ad / batched / loop / vmap remain available (config or, for
-     debugging, the PA_GRADMETHOD override).
+  3. Gradient method (config field grad_method). "fdbatch" (the LCDM default)
+     assembles central finite-difference gradients on the batch axis: the 2*P*N
+     perturbed cosmologies go through call_batched in chunks of PA_FD_CHUNK, and
+     iteration 0 calibrates the FD step against the exact batched-AD gradient
+     until they agree (max-rel <= PA_FD_CALTOL). "ad" uses the exact gradient
+     every iteration. Either way, all values for the line search and the recorded
+     profile come from the call_batched path, and the final stationarity
+     certificate (||g||_inf < GTOL, the nuisance Hessian, the PD check) is always
+     from the exact AD gradient. grad_method ad/batched/loop/vmap stay available
+     (PA_GRADMETHOD is a debug-only override).
 
 Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
@@ -59,10 +51,51 @@ import jax.numpy as jnp
 from abcmb.main import Model
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
-from scan.profile_prod import interval, sigma_parabola
 from scan.batched_grad import staged_chi2_and_grad, _to_float as _bg_to_float
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ======================================================================
+# profile-interval helpers
+# ======================================================================
+def interval(x, y, level):
+    """Delta-chi2 = level crossings of a profile, via shape-preserving (PCHIP)
+    interpolation and dense-grid root finding. The chi2 is deterministic and
+    smooth, so the crossings are sub-grid accurate. Returns (lo, min_x, hi)."""
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    if m.sum() < 4:
+        return np.nan, np.nan, np.nan
+    x, y = x[m], y[m]; o = np.argsort(x); x, y = x[o], y[o]
+    try:
+        from scipy.interpolate import PchipInterpolator
+        p = PchipInterpolator(x, y - y.min())
+        xs = np.linspace(x[0], x[-1], 40001); ys = p(xs)
+    except Exception:                                   # fallback: dense linear
+        xs = np.linspace(x[0], x[-1], 40001); ys = np.interp(xs, x, y - y.min())
+    i = int(np.argmin(ys)); x0 = xs[i]; t = ys[i] + level
+    def cross(side):
+        seg, vs = (xs[:i + 1][::-1], ys[:i + 1][::-1]) if side < 0 else (xs[i:], ys[i:])
+        k = np.where(vs >= t)[0]
+        if len(k) == 0 or k[0] == 0:
+            return np.nan
+        j = k[0]; a, b, fa, fb = seg[j - 1], seg[j], vs[j - 1], vs[j]
+        return a + (t - fa) * (b - a) / (fb - fa + 1e-30)
+    return cross(-1), x0, cross(+1)
+
+
+def sigma_parabola(x, y):
+    """Symmetric Gaussian sigma from a parabola fit to the points within
+    Delta-chi2 <= 4 of the minimum (sigma = 1/sqrt(2a) for chi2 ~ a x^2)."""
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    x, y = x[m], y[m]
+    if len(x) < 3:
+        return np.nan
+    d = y - y.min(); sel = d <= 4.0
+    if sel.sum() < 3:
+        sel = np.argsort(d)[:max(3, len(x) // 2)]
+    a = np.polyfit(x[sel], y[sel], 2)[0]                 # chi2 ~ a x^2 + ...
+    return np.nan if a <= 0 else 1.0 / np.sqrt(2.0 * a)
 
 
 # ======================================================================
@@ -91,6 +124,13 @@ D = len(ORDER)
 P = D - 1                                            # free nuisance dims per row
 CENTER = np.array([CFG["cen"][k] for k in ORDER])
 SIGMA = np.array([CFG["sig"][k] for k in ORDER])
+# GRID placement (center + half-span-per-sigma) is DECOUPLED from the optimizer's
+# scaled-coordinate system (CENTER/SIGMA stay the config guess, so the well-conditioned
+# scaling never changes mid-run). The MLE pre-pass (PA_MLE_PREPASS) overwrites these with
+# the joint MLE + its Fisher errors so every POI grid is centered on the actual optimum
+# with a span matched to the real uncertainty -- the model-agnostic fix for new physics.
+GRID_CEN = CENTER.copy()
+GRID_SIG = SIGMA.copy()
 FIXED = dict(CFG["fixed"])
 USER_SPECIES = CFG.get("user_species", None)
 
@@ -100,24 +140,25 @@ NPTS = int(os.environ.get("PA_NPTS", CFG.get("npts", 25)))
 NSIG = float(os.environ.get("PA_NSIG", CFG.get("nsig", 3.0)))
 MAXIT = int(os.environ.get("PA_MAXIT", 40))
 GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||grad||_inf gate (scaled coords)
-# chi2-plateau EARLY-STOP. The AD ||g|| grinds slowly toward a ~0.1 rtol-independent
-# roughness floor it never reaches (so GTOL is unreachable), but chi2/intervals settle
-# by ~it5. Stop a POI's lockstep once the SLOWEST-converging row's best-chi2 has improved
-# < FTOL over FTOL_PATIENCE iters. The post-loop AD ||g|| cert still reports the honest
-# floor. FTOL<=0 disables. DEFAULT OFF (0) until validated on debug (bench/analyze_estop.py)
-# -- a premature stop = biased interval; once validated, flip this default to the chosen FTOL.
+# chi2-plateau early-stop (legacy; off by default). The AD ||g|| grinds slowly
+# toward a ~0.1 rtol-independent roughness floor it never reaches, so GTOL is not
+# met, but chi2/intervals settle by ~it5. Stop a POI's lockstep once the
+# slowest-converging row's best-chi2 has improved < FTOL over FTOL_PATIENCE iters.
+# The post-loop AD ||g|| certificate still reports the honest floor. FTOL<=0
+# disables. Superseded by the sigma1-stability trigger below.
 FTOL = float(os.environ.get("PA_FTOL", "0"))         # max per-row chi2 improvement over window
 FTOL_PATIENCE = int(os.environ.get("PA_FTOL_PATIENCE", "3"))
-# sigma1-STABILITY EARLY-STOP (the PREFERRED trigger: model-agnostic, no per-model tuning).
-# Stop once EVERY POI's 1-sigma interval half-width has changed by < PA_SIGTOL * sigma(POI)
-# over PA_SIGTOL_PATIENCE iters -- i.e. the DELIVERABLE (the interval) has converged to
-# PA_SIGTOL sigmas. The tolerance is in sigma-units, so it transfers to any new cosmology on
-# its FIRST run (unlike the chi2 FTOL, whose scale is the solver roughness floor). Robust to
-# the ~0.1 chi2 roughness (sigma1 is the PCHIP-smoothed crossing) and to edge-row lag (tail
-# rows sit at dchi2~9, away from the dchi2=1 crossings). The post-loop AD ||g|| cert still
-# runs. SIGTOL<=0 disables. DEFAULT 1e-2: DEMONSTRATED at full l on ln10As (the worst-
-# conditioned POI) -- fires at it5 (vs ||g|| grinding to it18+), sigma1 matched the converged
-# interval to 0.0001 sigma, ~2.6x wall-clock (CHANGELOG 2026-06-23). See bench/analyze_estop.py.
+# sigma1-stability early-stop (the default trigger; model-agnostic, no per-model
+# tuning). Stop once every POI's 1-sigma interval half-width has changed by
+# < PA_SIGTOL * sigma(POI) over PA_SIGTOL_PATIENCE iters -- i.e. the deliverable
+# (the interval) has converged to PA_SIGTOL sigmas. The tolerance is in
+# sigma-units, so it transfers to any new cosmology on its first run (unlike the
+# chi2 FTOL, whose scale is the solver roughness floor). It is robust to the ~0.1
+# chi2 roughness (sigma1 is the PCHIP-smoothed crossing) and to edge-row lag (tail
+# rows sit at dchi2~9, away from the dchi2=1 crossings). The post-loop AD ||g||
+# certificate still runs. SIGTOL<=0 disables. The default 1e-2 was validated at
+# full l (CHANGELOG 2026-06-23): on the worst-conditioned POI it fires at it5 and
+# matches the converged interval to ~1e-4 sigma, ~2.6x faster wall-clock.
 SIGTOL = float(os.environ.get("PA_SIGTOL", "1e-2"))  # interval half-width stability, in sigma units
 SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter best_f history
@@ -125,10 +166,10 @@ BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
-# grad_method is a RUN-CONFIG field (a per-physics-model analysis choice: FD
-# iterations are fine for LCDM but risky for non-convex new-physics params), NOT an
-# env var. PA_GRADMETHOD remains as a DEBUG-ONLY override and WARNS loudly when set
-# (user direction 2026-06-12; see scan/configs/*.py grad_method + TOOL_PLAN section 2).
+# grad_method is a run-config field (a per-model analysis choice: FD iterations are
+# fine for LCDM but risky for non-convex new-physics params), not an env var.
+# PA_GRADMETHOD is a debug-only override that warns loudly when set
+# (see scan/configs/*.py grad_method + TOOL_PLAN section 2).
 _CFG_GRADMETHOD = str(CFG.get("grad_method", "fdbatch")).lower()
 if "PA_GRADMETHOD" in os.environ:
     GRADMETHOD = os.environ["PA_GRADMETHOD"].lower()
@@ -165,7 +206,21 @@ USE_PLIK = (os.environ["PA_USE_PLIK"] != "0") if "PA_USE_PLIK" in os.environ \
 HIGH_ELL = os.environ.get("PA_HIGH_ELL", str(CFG.get("high_ell", "plik_lite"))).lower()
 USE_PLIK_FULL = USE_PLIK and (HIGH_ELL == "plik_full")
 WARM = os.environ.get("PA_WARM", "1") != "0"
+# Use the config CENTER as the warm start (instead of reading the prior LCDM
+# profile npz). For a RECENTERED re-run the config `cen` IS the joint MLE, so this
+# gives every row the ideal continuation-like start (all non-POI dims at the MLE,
+# POI fixed at its grid value) AND computes the warm-Hessian preconditioner at the
+# MLE. The default (0) keeps the legacy `_global_best_fit_physical` behaviour.
+WARM_FROM_CEN = os.environ.get("PA_WARM_FROM_CEN", "0") != "0"
 WARM_DIR = os.environ.get("PA_WARM_DIR", os.path.join(_HERE, "results"))
+# MLE PRE-PASS (model-agnostic auto-centering). Before any grid is built, solve the
+# joint D-dim MLE (all params free, nuisances inner-profiled), recenter every POI grid
+# on it, set the grid half-span from the MLE Fisher errors, warm-start there, and reuse
+# the MLE Hessian as the BFGS preconditioner. Turns "hand-recenter each new model" into
+# a one-line flag. Default OFF (legacy static-grid behaviour preserved).
+MLE_PREPASS = os.environ.get("PA_MLE_PREPASS", "0") != "0"
+MLE_MAXITER = int(os.environ.get("PA_MLE_MAXITER", "60"))     # L-BFGS-B iters for the joint solve
+MLE_SIG_CLIP = float(os.environ.get("PA_MLE_SIG_CLIP", "3.0"))  # grid sigma clamped to [1/clip, clip] x prior
 RANK_SLICE = os.environ.get("PA_RANK_SLICE", "0") != "0"
 POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out: each
 # rank owns a DISJOINT subset of POIs (POIS[RANK::NPROC]) and runs its own lockstep,
@@ -624,17 +679,26 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         sig1_hist.append(_cur_sig1())
         if SIGTOL > 0 and len(sig1_hist) > SIGTOL_PATIENCE:
             prev = sig1_hist[-1 - SIGTOL_PATIENCE]; cur = sig1_hist[-1]
-            worst = 0.0; ready = True
+            worst = 0.0; ready = True; n_finite = 0; n_offgrid = 0
             for p in poi_rows:
                 a, b = prev[p], cur[p]
-                if not (np.isfinite(a) and np.isfinite(b)):
-                    ready = False; break              # this POI's interval not formed yet
-                worst = max(worst, abs(b - a) / SIGMA[p])
-            if ready and worst < SIGTOL:
+                fa, fb = np.isfinite(a), np.isfinite(b)
+                if fa and fb:
+                    worst = max(worst, abs(b - a) / GRID_SIG[p]); n_finite += 1
+                elif (not fa) and (not fb):
+                    n_offgrid += 1        # unbracketed the WHOLE window -> off-grid: a grid/
+                    #                       centering problem, NOT something more iters fix.
+                    #                       Do NOT let it block the stop (this is what burned a
+                    #                       slice to the wall before; the pre-pass prevents it).
+                else:
+                    ready = False; break  # interval just forming/lost -> wait one more window
+            if ready and n_finite > 0 and worst < SIGTOL:
                 if log_prefix:
+                    extra = (f" ({n_offgrid} POI(s) UNBRACKETED/off-grid -- check centering)"
+                             if n_offgrid else "")
                     print(f"  {log_prefix} sigma1 stable: worst d(sigma1)/sigma "
                           f"{worst:.2e} < SIGTOL {SIGTOL:.0e} over {SIGTOL_PATIENCE} iters "
-                          f"-> stop at it{it}", flush=True)
+                          f"-> stop at it{it}{extra}", flush=True)
                 break
         # ---- chi2-plateau early-stop (legacy alternative; needs solver-floor tuning) ----
         if FTOL > 0 and len(bf_hist) > FTOL_PATIENCE:
@@ -752,6 +816,83 @@ def _hinv0_for_poi(H, poi_idx):
     if lo <= 1e-6:                                   # floor to PD
         sub = sub + (abs(min(lo, 0.0)) + 1e-3) * np.eye(P)
     return np.linalg.inv(sub)
+
+
+# ======================================================================
+# MLE PRE-PASS: joint D-dim minimum + Fisher errors (model-agnostic auto-centering)
+# ======================================================================
+def _mle_cache_path():
+    cfg = os.path.splitext(os.path.basename(CONFIG_ABS))[0]
+    return os.path.join(WARM_DIR, f"mle_prepass_{cfg}_l{LMAX}"
+                        f"_tt{int(USE_LOWTT)}_ee{int(USE_LOWEE)}"
+                        f"{'' if USE_PLIK else '_noplik'}.npz")
+
+
+def _fisher_grid_sigma(H):
+    """Per-parameter PROFILE-likelihood 1sigma (the dchi2=1 half-width) from the joint
+    SCALED Hessian H (= d2chi2/dxs2, xs=(theta-CENTER)/SIGMA). For a quadratic chi2 the
+    profile error equals the marginal error: cov = 2 H^{-1}, so sigma_scaled_i =
+    sqrt(2 (H^{-1})_ii); physical sigma_i = sigma_scaled_i * SIGMA_i. Eigen-floored for
+    PD safety and clamped to [1/MLE_SIG_CLIP, MLE_SIG_CLIP] x the prior SIGMA so a noisy
+    Hessian can never produce an absurd grid (it just falls back toward the prior guess)."""
+    Hs = 0.5 * (H + H.T)
+    ev, V = np.linalg.eigh(Hs)
+    ev = np.maximum(ev, 1e-6)                         # floor to PD
+    Hinv = (V * (1.0 / ev)) @ V.T
+    var_scaled = np.maximum(2.0 * np.diag(Hinv), 1e-12)
+    sig_scaled = np.sqrt(var_scaled)                  # in units of the prior SIGMA
+    sig_scaled = np.clip(sig_scaled, 1.0 / MLE_SIG_CLIP, MLE_SIG_CLIP)
+    return SIGMA * sig_scaled
+
+
+def _joint_mle(theta_start):
+    """Solve the joint D-dim MLE (ALL params free, plik nuisances inner-profiled) with
+    L-BFGS-B on the exact AD gradient, then evaluate the Hessian at the optimum. Returns
+    (theta_mle (D,), H_mle (D,D) scaled, chi2_min). Cached to disk (shared across
+    POI_SLICE ranks / survives resume). The expensive Hessian DOUBLES as the BFGS
+    preconditioner, so the only NET new cost vs the old warm-Hessian flow is the solve."""
+    import scipy.optimize as _spo
+    cache = _mle_cache_path()
+    if HESS_CACHE and os.path.exists(cache):
+        try:
+            d = np.load(cache)
+            if (d["theta_mle"].shape == (D,) and d["H"].shape == (D, D)
+                    and int(d["lmax"]) == LMAX and bool(d["lowtt"]) == USE_LOWTT
+                    and bool(d["lowee"]) == USE_LOWEE
+                    and np.allclose(d["center"], CENTER, atol=1e-9)):
+                print(f"[mle] loaded cached joint MLE ({cache})", flush=True)
+                return (np.array(d["theta_mle"], float), np.array(d["H"], float),
+                        float(d["chi2_min"]))
+            print(f"[mle] cache present but mismatched -> recompute", flush=True)
+        except Exception as ex:
+            print(f"[mle] cache load failed ({ex}) -> recompute", flush=True)
+    cen = jnp.asarray(CENTER)
+    vg = jax.jit(lambda xs: _full_grad_scaled(cen, xs))      # compile once; fast thereafter
+    nfev = [0]
+    def fun(x):
+        f, g = vg(jnp.asarray(x))
+        nfev[0] += 1
+        return float(f), np.asarray(g, float)
+    x0 = (np.asarray(theta_start, float) - CENTER) / SIGMA
+    t0 = time.perf_counter()
+    res = _spo.minimize(fun, x0, jac=True, method="L-BFGS-B",
+                        bounds=[(-6.0, 6.0)] * D,
+                        options={"maxiter": MLE_MAXITER, "ftol": 1e-10, "gtol": 1e-6})
+    theta_mle = CENTER + SIGMA * np.asarray(res.x, float)
+    print(f"[mle] joint solve: chi2_min={float(res.fun):.3f} in {nfev[0]} evals "
+          f"{time.perf_counter()-t0:.0f}s (L-BFGS-B {('ok' if res.success else 'stop:'+str(res.message))})",
+          flush=True)
+    H = _warm_precond_hessian(theta_mle)                      # DxD scaled Hessian AT the MLE
+    if HESS_CACHE:
+        try:
+            tmp = cache + f".tmp.r{RANK}.npz"
+            np.savez(tmp, theta_mle=theta_mle, H=H, chi2_min=float(res.fun),
+                     center=CENTER, lmax=LMAX, lowtt=USE_LOWTT, lowee=USE_LOWEE)
+            os.replace(tmp, cache)
+            print(f"[mle] saved joint-MLE cache ({cache})", flush=True)
+        except Exception as ex:
+            print(f"[mle] cache save failed ({ex})", flush=True)
+    return theta_mle, H, float(res.fun)
 
 
 # ======================================================================
@@ -874,7 +1015,7 @@ def rss_gb():
 # ======================================================================
 def _grid_for(poi):
     i = ORDER.index(poi)
-    c, s = CENTER[i], SIGMA[i]
+    c, s = GRID_CEN[i], GRID_SIG[i]                  # MLE-recentered when PA_MLE_PREPASS ran
     return np.linspace(c - NSIG * s, c + NSIG * s, NPTS)
 
 
@@ -882,6 +1023,22 @@ def profile_lockstep(pois, outdir):
     """Build ONE row set (all pois x NPTS grid points), warm-start, run BFGS in
     lockstep, then certify with the exact AD gradient + Hessian, and write one
     npz/png per POI."""
+    # ---- MLE PRE-PASS (model-agnostic auto-centering): solve the joint optimum FIRST,
+    # then center every grid on it with a Fisher-matched span. Must run BEFORE the grid
+    # assembly (which reads GRID_CEN/GRID_SIG via _grid_for). The MLE Hessian is reused
+    # as the BFGS preconditioner (H_prepass) so no Hessian is computed twice. ----
+    H_prepass = None
+    if MLE_PREPASS:
+        global GRID_CEN, GRID_SIG
+        theta_mle, H_prepass, chi2_mle = _joint_mle(CENTER)
+        GRID_CEN = np.asarray(theta_mle, float)
+        GRID_SIG = _fisher_grid_sigma(H_prepass)
+        print("[mle] recentered grids on joint MLE (chi2_min=%.3f):" % chi2_mle, flush=True)
+        for i, nm in enumerate(ORDER):
+            print(f"[mle]   {nm:>10}: cen {CENTER[i]:.5g} -> {GRID_CEN[i]:.5g} "
+                  f"({(GRID_CEN[i]-CENTER[i])/SIGMA[i]:+.2f} prior-sig); "
+                  f"grid-sig {GRID_SIG[i]:.3g} (prior {SIGMA[i]:.3g}, "
+                  f"{GRID_SIG[i]/SIGMA[i]:.2f}x)", flush=True)
     # ---- assemble the flat row set ----
     rows_poi = []; rows_pv = []; row_of_poi = {}
     for poi in pois:
@@ -908,7 +1065,14 @@ def profile_lockstep(pois, outdir):
     x0 = np.zeros((N, P))
     prov = "cold (x0=0)"
     if WARM:
-        theta_warm, prov = _global_best_fit_physical()
+        if MLE_PREPASS:
+            theta_warm = GRID_CEN.copy()       # the joint MLE found by the pre-pass
+            prov = "joint MLE (PA_MLE_PREPASS)"
+        elif WARM_FROM_CEN:
+            theta_warm = CENTER.copy()
+            prov = "config CENTER (PA_WARM_FROM_CEN; = joint MLE for a recentered run)"
+        else:
+            theta_warm, prov = _global_best_fit_physical()
         if theta_warm is not None:
             x0 = _warm_x0_for_rows(POI_IDX, PV, theta_warm)
         else:
@@ -956,7 +1120,9 @@ def profile_lockstep(pois, outdir):
     if PRECOND and resume_state is None and WARM and theta_warm is not None:
         try:
             tH = time.perf_counter()
-            Hwarm = _warm_precond_hessian(theta_warm)
+            # reuse the MLE-pre-pass Hessian (computed AT the MLE) when available;
+            # else compute the warm Hessian at theta_warm (legacy path)
+            Hwarm = H_prepass if H_prepass is not None else _warm_precond_hessian(theta_warm)
             by_poi = {ORDER.index(p): _hinv0_for_poi(Hwarm, ORDER.index(p))
                       for p in pois}
             Hinv0 = np.stack([by_poi[int(Ps[b])] for b in range(len(Ps))])
@@ -1020,11 +1186,26 @@ def profile_lockstep(pois, outdir):
                  use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS)
         j = int(np.nanargmin(chi2))
         nconv = int(np.nansum(conv)); npt_valid = int(np.isfinite(chi2).sum())
+        # CENTERING self-check: a min railing at idx 0/1 or N-1/N-2, or a nan interval
+        # edge, means the grid does not bracket dchi2=1 (the failure the MLE pre-pass
+        # fixes). Surface it LOUDLY rather than shipping a railed/half interval.
+        edge = (j <= 1 or j >= NPTS - 2)
+        railed = edge or not (np.isfinite(lo1) and np.isfinite(hi1))
+        warn = ""
+        if railed:
+            why = []
+            if j <= 1: why.append(f"min at idx {j} (LOW edge)")
+            if j >= NPTS - 2: why.append(f"min at idx {j} (HIGH edge)")
+            if not np.isfinite(lo1): why.append("lower 1sig off-grid")
+            if not np.isfinite(hi1): why.append("upper 1sig off-grid")
+            warn = ("  ** CENTERING WARNING: " + "; ".join(why)
+                    + ("; rerun with PA_MLE_PREPASS=1 to auto-center" if not MLE_PREPASS
+                       else "; pre-pass ran -- profile may be non-Gaussian, widen PA_NSIG"))
         print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; "
               f"1sig=[{lo1:.5f},{hi1:.5f}] (PCHIP +/-{(hi1-lo1)/2:.5f}; "
               f"parab={sig_p:.5f}); converged {nconv}/{npt_valid}; "
               f"max||g||_AD={np.nanmax(gnorm):.2e}; "
-              f"PD {int(np.nansum(pd))}/{npt_valid} -> {npz}", flush=True)
+              f"PD {int(np.nansum(pd))}/{npt_valid} -> {npz}{warn}", flush=True)
         _plot(poi, grid, chi2, npz)
 
     # run finished cleanly -> drop the resumable BFGS checkpoint

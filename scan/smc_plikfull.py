@@ -1,57 +1,56 @@
-"""smc_plikfull.py — fast/slow tempered SMC on the FULL Planck plik, MARGINALISING
+"""smc_plikfull.py — fast/slow tempered SMC on the full Planck plik, marginalising
 the 21 foreground/calibration nuisances (the nuisance-marginalised Bayesian anchor;
-a FEASIBILITY STUDY of doing a real nuisance-marginalised Planck analysis on the
-batched ABCMB engine).
+a feasibility study of a real nuisance-marginalised Planck analysis on the batched
+ABCMB engine).
 
-Difference vs scan/smc.py (the VALIDATED plik-LITE run): there, the 6 cosmological
-params are sampled and the single A_planck is PROFILED. Here the high-ell likelihood
-is the FULL Planck 2018 plik TTTEEE (clipy; 21 floated foreground/calibration
-nuisances + 26 fixed), and ALL 21 floated nuisances are SAMPLED alongside the
-cosmology -> the particle is (Dc cosmo + 21 nuisance)-dimensional and the posterior
-is genuinely nuisance-MARGINALISED. Low-ell TT (Commander) + low-ell EE (SRoll2)
-are included exactly as in smc.py (calib=1: A_planck's effect on low-ell is
-negligible vs the low-ell error, so low-ell stays a pure function of the Cls).
+Difference vs scan/smc.py (the plik-lite run): there the 6 cosmological params are
+sampled and the single A_planck is profiled. Here the high-ell likelihood is the
+full Planck 2018 plik TTTEEE (clipy; 21 floated foreground/calibration nuisances +
+26 fixed), and all 21 floated nuisances are sampled alongside the cosmology -> the
+particle is (Dc cosmo + 21 nuisance)-dimensional and the posterior is genuinely
+nuisance-marginalised. Low-ell TT (Commander) + low-ell EE (SRoll2) are included
+exactly as in smc.py (calib=1: A_planck's effect on low-ell is negligible vs the
+low-ell error, so low-ell stays a pure function of the Cls).
 
-================  THE FAST/SLOW SPLIT (the "enormous time saver")  ================
-A nuisance-only move does NOT change the theory Cls, so it does NOT re-run ABCMB --
-exactly Cobaya's fast/slow oversampling. We exploit this with Metropolis-within-
-Gibbs, two blocks per tempering stage:
+The fast/slow split (the time saver): a nuisance-only move does not change the theory
+Cls, so it does not re-run ABCMB -- exactly Cobaya's fast/slow oversampling. We
+exploit this with Metropolis-within-Gibbs, two blocks per tempering stage:
 
-  * SLOW block (the Dc cosmology params): a proposal changes the Cls -> ONE
+  * Slow block (the Dc cosmology params): a proposal changes the Cls -> one
     Model.call_batched (the expensive GPU theory solve) + clipy + low-ell. A few
     moves per stage (SMC_MOVES_SLOW, default 2).
-  * FAST block (the 21 nuisances): a proposal leaves the cosmology -- hence the Cls
-    and the low-ell chi^2 -- UNCHANGED, so we REUSE the cached per-particle clik
+  * Fast block (the 21 nuisances): a proposal leaves the cosmology -- and hence the
+    Cls and the low-ell chi^2 -- unchanged, so we reuse the cached per-particle clik
     C_l block and only re-evaluate clipy (the high-ell data chi^2) + the Gaussian/
     joint-SZ nuisance priors. No ABCMB. Oversampled (SMC_MOVES_FAST, default 20)
-    because each move is ~free relative to the theory solve.
+    because each move is nearly free relative to the theory solve.
 
 Both block kernels are pi_beta-invariant, so their composition is a valid SMC
-mutation kernel; the tempering / ESS / resampling / evidence machinery is IDENTICAL
+mutation kernel; the tempering / ESS / resampling / evidence machinery is identical
 to smc.py (it only ever touches the per-particle tempered chi^2). The cost per stage
 is ~ MOVES_SLOW * N theory solves (the fast moves are nearly free), so marginalising
-21 nuisances costs about the SAME ABCMB time as the plik-lite run while delivering a
+21 nuisances costs about the same ABCMB time as the plik-lite run while delivering a
 full nuisance-marginalised posterior.
 
-================  PRIOR / LIKELIHOOD (tempered) DECOMPOSITION  ====================
-Mirrors smc.py's flat-box scheme exactly (max code reuse, low bug surface):
-  prior  : FLAT box on every sampled coordinate. Cosmo box = CEN +- PRIOR_NSIG*SIG
+Prior / likelihood (tempered) decomposition. Mirrors smc.py's flat-box scheme exactly
+(max code reuse, low bug surface):
+  prior  : flat box on every sampled coordinate. Cosmo box = CEN +- PRIOR_NSIG*SIG
            (tau floored). Nuisance box = the Planck uniform-prior bounds where finite,
            else start +- NUIS_BOX_NSIG*scale (wide enough that the Gaussian-prior
            tails are negligible at the edge).
-  L^beta : the FULL penalised high-ell chi^2 (clipy bare data chi^2 + the Planck
+  L^beta : the full penalised high-ell chi^2 (clipy bare data chi^2 + the Planck
            Gaussian + joint-SZ nuisance priors = plik_full.penalized_chi2) + low-ell,
            tempered by beta: 0 -> 1.
 At beta=1, prior x L = flatbox x exp(-1/2 (data + lowl + nuisance-priors)) = the true
 nuisance-marginalised posterior (the wide flat box only truncates negligible tails).
-logZ is the evidence under this flat-box prior convention (NOT directly comparable to
+logZ is the evidence under this flat-box prior convention (not directly comparable to
 the plik-lite logZ=-509.92: different parameter space + prior). Documented in the npz.
 
-EAGER PYTHON loop around Model.call_batched + a jitted batched clipy: the pipeline is
-GPU->CPU-HyRex->GPU and is NOT end-to-end jittable (TOOL_PLAN gotcha #1). We never
-wrap the pipeline ourselves.
+Eager Python loop around Model.call_batched + a jitted batched clipy: the pipeline is
+GPU->CPU-HyRex->GPU and is not end-to-end jittable (TOOL_PLAN gotcha #1); the pipeline
+is never wrapped here.
 
-ENV KNOBS (all optional):
+Env knobs (all optional):
   SMC_N(512) SMC_MOVES_SLOW(2) SMC_MOVES_FAST(20) SMC_ESS_TARGET(0.5)
   SMC_EVAL_CHUNK(128; ABCMB cosmologies/call_batched) SMC_CLIPY_CHUNK(32; nuisances/clipy call)
   SMC_LMAX(2508) SMC_SEED(0) SMC_RTOL(1e-5) SMC_MAXSTAGES(120)
@@ -248,9 +247,37 @@ def peak_gb():
 # ======================================================================
 # prior box: cosmo (CEN +- PRIOR_NSIG*SIG, tau floored) + nuisance bounds/box
 # ======================================================================
+def _recenter_path():
+    """Per-config recenter override: scan/results/smc_recenter_<config>.npz. If present,
+    the cosmo flat-box is centered on its joint MLE `cen` with per-dim half-width `nsig`
+    (sigma). This fixes the degeneracy-truncation that a STATIC LCDM-centered box causes
+    once a correlated param (Neff) shifts + broadens the posterior: the box minimum no
+    longer rails, so no marginal tail is clipped. Keyed by config so it auto-applies to
+    the Neff run (lcdm_neff_plikfull) WITHOUT touching the LCDM run (no file -> legacy)."""
+    cfg = os.path.splitext(os.path.basename(CONFIG_ABS))[0]
+    return os.path.join(_HERE, "results", f"smc_recenter_{cfg}.npz")
+
+
 def _prior_box():
-    lo_c = CEN_C - PRIOR_NSIG * SIG_C
-    hi_c = CEN_C + PRIOR_NSIG * SIG_C
+    cen_c = CEN_C.copy(); nsig_c = np.full(Dc, PRIOR_NSIG)
+    rc = _recenter_path()
+    if os.path.exists(rc):
+        try:
+            d = np.load(rc, allow_pickle=True)
+            if [str(x) for x in d["order"]] == COSMO_ORDER:
+                cen_c = np.asarray(d["cen"], float)
+                ns = np.asarray(d["nsig"], float)
+                nsig_c = np.full(Dc, float(ns)) if ns.ndim == 0 else ns
+                print(f"[smc-pf] PRIOR BOX RECENTERED on joint MLE ({rc}): cen shift "
+                      f"{np.array2string((cen_c - CEN_C) / SIG_C, precision=2)} sigma_prior; "
+                      f"box half-width nsig={np.array2string(nsig_c, precision=1)} -- "
+                      f"prevents the Neff-degeneracy marginal truncation.", flush=True)
+            else:
+                print(f"[smc-pf] recenter file {rc} order mismatch -> legacy box", flush=True)
+        except Exception as ex:
+            print(f"[smc-pf] recenter load failed ({ex}) -> legacy box", flush=True)
+    lo_c = cen_c - nsig_c * SIG_C
+    hi_c = cen_c + nsig_c * SIG_C
     if "tau_reion" in COSMO_ORDER:
         ti = COSMO_ORDER.index("tau_reion")
         lo_c[ti] = max(lo_c[ti], TAU_FLOOR)

@@ -2,7 +2,11 @@
 #SBATCH --account=m3166_g
 #SBATCH --constraint=gpu
 #SBATCH --qos=regular
-#SBATCH --nodes=4
+# nodes should EQUAL the POI count so POI_SLICE gives 1 POI/node (balanced; the
+# bottleneck is the per-node row count, so 2 POIs/node ~doubles that node's wall-clock
+# and makes it the straggler). 7 = the LCDM+Neff headline's 7 POIs. For the 6-POI
+# lcdm_plikfull cross-check, override: sbatch --nodes=6 ... (1 node would sit idle at 7).
+#SBATCH --nodes=7
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=64
