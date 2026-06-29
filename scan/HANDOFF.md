@@ -20,13 +20,19 @@ debug — the per-mock-J Jacobian compile (~6 min) plus the ~12 min/run fixed ov
 debug's 30 min cap — but the production launcher already emits it (`WK_VALIDATE=16`), so gate
 (b) comes for free at scale. Headline coverage numbers NOT yet produced (production not run).
 
-RESUME — ONLY the production launch remains (needs the **regular** queue, ~2-3 h/config; was
-deliberately NOT launched in the debug-only "Wilks2" session — get a user go-ahead):
-1. **Production**: `WK_CONFIG=scan/configs/lcdm.py sbatch --nodes=2 scan/wilks.slurm`, then
-   the same with `lcdm_neff.py` (500 mocks, ~2-3 h/config with the validated cheap fitter;
-   mocks slice across nodes via `WK_RANK_SLICE` auto). The slurm runs `wilks_collect.py` at
-   the end → `scan/results/wilks_<config>_merged.npz` + per-POI + summary PNGs (coverage
-   tables), and the run's own `WK_VALIDATE=16` cert closes gate (b).
+RESUME — production is LAUNCHED (2026-06-28). Attempt 1 (06-26, --time=6h) sat ~2 days in the
+regular queue then TIMED OUT mid-run (each fit ~67 min × 7-8 fits + cert > 6h); gate (a) came
+through in the logs at N=500 and is well calibrated (LCDM t med ~0.45-0.55 ≈ χ²₁ median 0.455)
+but the t arrays were never SAVED. Fixes applied: (1) wilks.py is now resumable + incremental-
+save (commit 2c8b3d8 — saves after the global fit and each POI, atomically; coverage is saved
+BEFORE the optional cert), and (2) walltime padded to 24h (NERSC max is 48h; user said just
+pad, don't speed up). Re-launched: **55202438 (lcdm) + 55202439 (lcdm_neff)**, 2 nodes, full
+defaults (GN_MAXIT=12, WK_VALIDATE=16).
+1. **Watch them**: `squeue -j 55202438,55202439`; logs `logs/abcmb_wilks_<jobid>.out`. Each
+   slurm runs `wilks_collect.py` on completion → `scan/results/wilks_<config>_merged.npz` +
+   per-POI + summary PNGs; the WK_VALIDATE=16 cert (gate b) is produced at scale. If a job is
+   ever killed/preempted, just resubmit the SAME command — it resumes from the per-rank npz
+   (keep the node count = 2 fixed so the mock slice matches).
 2. Headline sentence to produce: "empirical coverage of the Δχ² intervals is XX% (1σ) /
    YY% (2σ) vs nominal 68.3% / 95% over 500 mocks" per config = review gap #4 closed.
 

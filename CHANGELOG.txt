@@ -9,6 +9,41 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-28 — Wilks coverage production: attempt 1 timed out (6h too short); resumable + re-launched at 24h
+--------------------------------------------------------------------------------------------------------
+Session "Wilks2" (cont.). The two 500-mock coverage jobs launched 2026-06-26 (55084287 lcdm,
+55084289 lcdm_neff, 2 nodes, --time=06:00:00) sat ~2 DAYS in the regular queue, then both hit
+the 6h walltime mid-run and saved nothing (the old wilks.py saved once at the very end).
+
+ROOT CAUSE -- 6h was far too short. Measured per-fit cost at l=2508, 250 mocks/rank, 2 nodes:
+~67 min/fit (12 GN iters; the chi2-plateau early-stop does not fire at l=2508, confirmed
+earlier). lcdm = 1 global + 6 conditional = 7 fits ~7.8h; lcdm_neff = 8 fits ~8.9h; + the
+WK_VALIDATE=16 per-mock-J cert ~1.5-2h. Both exceed 6h. (User then clarified: NERSC max
+walltime is 48h -- the fix is simply to PAD the walltime, not to speed anything up.)
+
+GOOD NEWS -- gate (a) coverage came through IN THE LOGS at full N=500 and is well calibrated
+(t med vs the chi2_1 median 0.4549):
+  lcdm  (r0/r1): h 0.500/0.482, omega_b 0.501/0.548, omega_cdm 0.459/0.471, n_s 0.472/0.419
+                 (ln10As, tau_reion cut off by the timeout)
+  lcdm_neff:     h 0.296/0.279, omega_b 0.413/0.297, omega_cdm 0.430/0.523 (rest cut off)
+LCDM medians sit right on 0.455 -> the coverage is correct at scale; the runs only failed to
+SAVE the full t arrays (needed for the headline coverage FRACTIONS).
+
+FIX (committed 2c8b3d8) -- made wilks.py resumable + incremental-save: the per-rank output npz
+is now re-saved (atomic tmp+rename) after the global fit and after EACH conditional POI, and a
+restart reloads the global fit + completed POIs and only does what remains. Behavior-preserving
+on a fresh run (resume-load is dormant with no checkpoint). Crucially the conditional fits (the
+coverage deliverable) are all saved BEFORE the optional cert, so a slow/over-running cert can
+never cost the headline. This also makes the run cheaply chainable across short debug jobs if
+the regular queue is ever intolerable.
+
+RE-LAUNCHED 2026-06-28 with the walltime padded to 24h (~2x the ~9-11h expected), 2 nodes,
+full defaults (GN_MAXIT=12, WK_VALIDATE=16): 55202438 (lcdm) + 55202439 (lcdm_neff). On
+completion each slurm runs wilks_collect.py -> wilks_<config>_merged.npz + coverage tables/PNGs
+(review gap #4). Mail-on-ALL is set. No theory change; the only code change is the wilks.py
+checkpoint/resume.
+
+
 2026-06-26 — Wilks fix #3 (WK_JAC_REF=warmstart) validated on GPU (debug); coverage gate (a) passes
 ---------------------------------------------------------------------------------------------------
 Session "Wilks2". Goal: run the one short GPU job the previous session left pending --
