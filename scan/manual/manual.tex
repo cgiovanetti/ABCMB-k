@@ -102,8 +102,8 @@ delivered in $2\,\mathrm{h}\,58\,\mathrm{m}$ on six GPU nodes.
 \textsc{ABCMB} computes the lensed CMB temperature/polarization power
 spectra $\Cl^{TT},\Cl^{TE},\Cl^{EE}$ and the linear matter power spectrum
 $P_m(k)$ for a given cosmology, fully differentiably in JAX, and agrees
-with CLASS at the sub-percent level (the published accuracy gate is
-$\sim0.2\%$ on TT at $\Lmax=2508$). The solver is the \emph{forward
+with CLASS to $\sim0.2\%$ on TT at $\Lmax=2508$ --- comfortably inside the
+published $1\%$ accuracy gate. The solver is the \emph{forward
 model}. This manual documents the \emph{inverse} layer built on top of
 it: machinery that, given data, returns parameter estimates with
 uncertainties.
@@ -113,7 +113,8 @@ The design goal, stated by the user verbatim, was:
 ``\emph{I want a tool where I can give it a new cosmology
 \textsc{ABCMB}-style and in a few hours I have the optimum $\pm\,1/2\,\sigma$.}''
 \end{quote}
-The \textbf{competitive bar} is concrete: a CLASS forward model driven by
+(Here ``$\pm\,1/2\,\sigma$'' means the $\pm1\sigma$ and $\pm2\sigma$
+confidence intervals.) The \textbf{competitive bar} is concrete: a CLASS forward model driven by
 Metropolis--Hastings (MH) takes roughly $22$~h to map
 $\Lambda\mathrm{CDM}+\Neff$ against Planck. A toolkit that needs
 node-\emph{days} is not interesting; one that finishes in a few node-hours
@@ -145,11 +146,12 @@ the differentiable engine enables lockstep batched profiling that is
 normally too expensive to run. A third demonstration ---
 on-the-batch-axis coverage (Feldman--Cousins/Wilks) mocks, the rigorous
 verification that the $\dchisq$ intervals have correct frequentist
-coverage --- is described in Section~\ref{sec:coverage}. It is now
-\emph{implemented and validated}: the batched coverage validator is built
-(\file{scan/wilks.py}), its fitter has been checked on GPU, and the
-production $500$-mock runs are underway; an $N\!=\!500$ preview already
-shows the empirical test statistic tracking its $\chisq_1$ reference.
+coverage --- is described in Section~\ref{sec:coverage}. The batched
+coverage validator is \emph{built and GPU-checked} (\file{scan/wilks.py});
+as of 2026-06-29 the production $500$-mock $\Lambda$CDM and
+$\Lambda\mathrm{CDM}+\Neff$ runs are \emph{queued} (no coverage table
+written yet), and the preliminary numbers in Section~\ref{sec:coverage} are
+log-scraped from a partial pass, not from a saved table.
 
 \subsection{The single idea that makes it fast}
 
@@ -195,8 +197,9 @@ Section~\ref{sec:improve} lists directions for more precision or speed.
 All code lives in the standalone \textsc{ABCMB} checkout
 (\file{/pscratch/sd/c/carag/ABCMB-k}); the tool sources are under
 \file{scan/}. The engine changes (the batched pipeline, the
-\code{expmkappa\_tab} keystone, the sharding helper) live on branch
-\code{perk-perf}. Hard constraints honoured throughout, set by the user:
+\code{expmkappa\_tab} keystone, the sharding helper) were developed on
+branch \code{perk-perf} and are now merged into \code{main}, the canonical
+branch to check out. Hard constraints honoured throughout, set by the user:
 permille-level theory accuracy (no tolerance loosening, no \code{float32},
 no mixed precision); production perturbation tolerance
 $\mathtt{rtol\_large\_k\_PE}=10^{-5}$; no tight-coupling/regime-switching
@@ -285,15 +288,16 @@ $\bar\theta$ & Fiducial centre vector (config \code{cen}; the array
 $\sigma$ & Per-parameter prior-scale widths (config \code{sig}; the array
 \code{SIGMA}). $\sigma$ non-dimensionalises the optimiser; it also
 \emph{defaults} as the grid half-extent unit, but the grid half-span is
-replaced by the MLE Fisher errors when the MLE pre-pass is enabled
-(Section~\ref{sec:mle}). \\
+replaced by the MLE Fisher errors (defined in Section~\ref{sec:profvsmarg})
+when the MLE pre-pass is enabled (Section~\ref{sec:mle}). \\
 $\bm{x}$ & Scaled (dimensionless) optimisation coordinates,
 $x_k=(\theta_{i_k}-\bar\theta_{i_k})/\sigma_{i_k}$ for the $k$-th
 co-profiled parameter; $\bm{x}\in\R^{P}$, box-constrained to
 $[-x_{\mathrm{box}},x_{\mathrm{box}}]$ with $x_{\mathrm{box}}=5$. \\
 $\nu$ & Instrumental/foreground \emph{nuisance} parameters of the
-likelihood; $\nu\in\R^{21}$ for full Planck \code{plik}, or the single
-calibration $A_{\mathrm{planck}}$ for \code{plik\_lite}. \\
+likelihood ($\nu$ here is nuisances, \emph{not} neutrinos --- the effective
+neutrino number is $\Neff$); $\nu\in\R^{21}$ for full Planck \code{plik}, or
+the single calibration $A_{\mathrm{planck}}$ for \code{plik\_lite}. \\
 $\mathcal{D}$ & Data (the binned bandpowers / low-$\ell$ likelihood
 inputs); $\bm{\mathcal{D}}$ is the \code{plik\_lite} data bandpower
 vector. \\
@@ -316,8 +320,9 @@ $\bm{g}=\nabla_{\bm x}\,\chisq_{\mathrm{prof}}$; $\ginf$ is its
 $\ell_\infty$ norm, the stationarity certificate. \\
 $\bm{H}^{-1}$ & The BFGS inverse-Hessian estimate (the array \code{Hinv}). \\
 $\bm{d}$ & Optimiser search direction, $\bm d=-\bm H^{-1}\bm g$. \\
-$\sigma_1$ & The $\dchisq=1$ profile interval half-width for a POI;
-the quantity the early-stop monitors. \\
+$\sigma_1$ & The $\dchisq=1$ profile interval half-width for a POI (the
+$1\sigma$ confidence half-width --- \emph{not} a component of the
+prior-scale array $\sigma$ above); the quantity the early-stop monitors. \\
 $\mathrm{GTOL}$ & Gradient-norm convergence threshold,
 $\ginf<\mathrm{GTOL}$ (default $3\times10^{-2}$). \\
 $\beta$ & SMC inverse temperature, $\beta:0\!\to\!1$. \\
@@ -325,11 +330,14 @@ $N$ & Number of SMC particles (fixed for a run; default $512$). \\
 $M$ & SMC random-walk moves per stage ($M=3$ for \code{plik\_lite};
 $M_{\mathrm{slow}}=2$, $M_{\mathrm{fast}}=20$ for the full-\code{plik}
 fast/slow split). \\
-$w_i,\ \bm{W}$ & $w_i$ the normalised SMC weight of particle $i$
-($\mathrm{ESS}=1/\sum_i w_i^2$); $\bm W$ the cumulative (un-normalised)
-importance weights, so $\log\bm W$ is the running log-weight array. \\
-$Z$ & Bayesian evidence; $\log Z$ is accumulated from the SMC normalising
-constants. \\
+$w_i,\ \bm{W}$ & $w_i$ the normalised SMC weight of particle $i$ (the
+effective sample size is $\mathrm{ESS}=1/\sum_i w_i^2$); $\bm W$ the
+cumulative (un-normalised) importance weights, so $\log\bm W$ is the
+running log-weight array. \\
+$Z$ & Bayesian \emph{evidence} $Z=\int L\,\pi\,\mathrm d\theta\,\mathrm d\nu$,
+the prior-averaged likelihood (the normaliser of the posterior and the
+basis of model comparison; Section~\ref{sec:smcbg}); $\log Z$ is accumulated
+from the SMC normalising constants. \\
 $B$ & Batch size: number of cosmologies in one
 \code{call\_batched}. For the profile tool a batch \emph{row} is one
 $(\theta_a,\text{grid value})$ pair, so $B$ is also the number of profile
@@ -369,6 +377,25 @@ Given a likelihood $L(\theta,\nu)=\exp[-\tfrac12\chisq(\theta,\nu)]$, two
 philosophies reduce the high-dimensional surface to a statement about one
 parameter $\theta_a$.
 
+First, the vocabulary this section (and the rest of the manual) leans on.
+The \emph{maximum-likelihood estimate} (MLE) is the parameter point that
+maximises $L$, equivalently minimises $\chisq$. A \emph{prior}
+$\pi(\theta,\nu)$ is a probability density encoding what is assumed about
+the parameters \emph{before} seeing data; the \emph{posterior}
+$p(\theta,\nu\mid\mathcal D)\propto L\,\pi$ is the corresponding density
+\emph{after} conditioning on data $\mathcal D$. The \emph{Fisher
+(information) matrix} is the Hessian of $\tfrac12\chisq=-\ln L$ at the
+optimum; its inverse approximates the parameter covariance, so its
+square-rooted diagonal gives the ``Fisher errors'' (used to size grids,
+Section~\ref{sec:mle}) and its inverse preconditions the optimiser
+(Section~\ref{sec:bfgs}). The ``Fisher regime'' is the neighbourhood of the
+optimum where $\chisq$ is well approximated by this quadratic. Finally the
+$\chisq_1$ distribution is the distribution of the square of a single
+standard Gaussian: $68\%$ of its mass lies below $1$ and $95\%$ below
+$3.84\approx4$, which is why the profile thresholds $\dchisq\le1$ and
+$\le4$ define the $1\sigma$ and $2\sigma$ intervals
+(Wilks' theorem, Section~\ref{sec:wilks}).
+
 \emph{Frequentist profiling} maximises out the other parameters:
 \begin{equation}
 \hat\chisq(\theta_a)=\min_{\theta_{\setminus a},\,\nu}
@@ -380,7 +407,8 @@ $\dchisq(\theta_a)\equiv\hat\chisq(\theta_a)-\min_{\theta_a}\hat\chisq$
 [Eq.~\eqref{eq:profdef}] is asymptotically $\chisq$-distributed with one
 degree of freedom, so the $1\sigma$ ($2\sigma$) confidence interval is the
 set where $\dchisq\le1$ ($\le4$). Profiling makes no prior assumption on
-the co-profiled parameters and is reparametrisation-covariant in the POI.
+the co-profiled parameters and is reparametrisation-covariant in the POI
+(a smooth change of POI variable maps its interval consistently).
 
 \emph{Bayesian marginalisation} integrates them out:
 $p(\theta_a\mid\mathcal D)\propto\int
@@ -475,9 +503,11 @@ and is what lets BFGS descend the valley rather than oscillate across it.
 \label{sec:spgbg}
 
 The \emph{inner} foreground profiler (Section~\ref{sec:spg}) is a
-different optimiser, because its objective (clipy) supplies a reliable
-first derivative but \emph{not} a usable Hessian, and several nuisances
-sit against hard bounds. The right tool is a \textbf{Spectral Projected
+different optimiser, because its objective (clipy --- the JAX-native
+re-implementation of the Planck full-\code{plik} likelihood,
+Section~\ref{sec:plikfull}) supplies a reliable first derivative but
+\emph{not} a usable Hessian, and several nuisances sit against hard bounds.
+The right tool is a \textbf{Spectral Projected
 Gradient} (SPG) method, which needs only gradients and respects a box.
 Its three ingredients:
 \begin{itemize}[leftmargin=1.5em,itemsep=2pt]
@@ -499,8 +529,9 @@ objective values. This lets the BB step take occasional uphill moves that
 accelerate convergence on curved valleys --- the practical key to SPG's
 speed over a monotone backtracking search.
 \end{itemize}
-SPG converges like a bound-constrained L-BFGS-B but uses only first
-derivatives, which is exactly the regime the clipy foreground profile
+SPG converges like a bound-constrained L-BFGS-B (limited-memory
+bound-constrained BFGS, the reference \code{scipy} solver) but uses only
+first derivatives, which is exactly the regime the clipy foreground profile
 lives in.
 
 \subsection{Automatic differentiation: forward vs.\ reverse mode}
@@ -558,15 +589,24 @@ particle $i$ is
 \begin{equation}
 \log w^{\mathrm{incr}}_i=-\tfrac12\,\Delta\beta\,\chisq_i .
 \end{equation}
+(An \emph{importance weight} re-weights a particle drawn from one
+distribution to represent another --- here the ratio of consecutive
+tempered targets; as the weights become uneven the population represents
+the target with fewer \emph{effective} particles, quantified by the
+\emph{effective sample size} $\mathrm{ESS}=1/\sum_i w_i^2$, between $1$ and
+$N$.)
 $\Delta\beta$ is chosen \emph{adaptively} by bisection so that the
 effective sample size after reweighting equals a target fraction of $N$
 (here $\tfrac12N$): too large a step collapses the weights, too small a
 step wastes compute. When the ESS of the cumulative weights falls below
-the target we \textbf{resample} (systematic resampling) to refresh the
-population, then \textbf{move} each particle with a few random-walk
-Metropolis steps that leave $\pi_\beta$ invariant, using a proposal
-covariance scaled by the optimal factor $2.38^2/d$ (for a block of
-dimension $d$) times the weighted particle covariance. The
+the target we \textbf{resample} --- \emph{systematic resampling}: duplicate
+high-weight particles, drop low-weight ones, reset the weights to uniform
+--- to refresh the population, then \textbf{move} each particle with a few
+random-walk \emph{Metropolis} steps (propose a perturbed particle, accept
+it with the Metropolis probability, so the move leaves $\pi_\beta$
+invariant), using a proposal covariance scaled by the Gelman--Roberts
+optimal factor $2.38^2/d$ (optimal for a $d$-dimensional Gaussian target)
+times the weighted particle covariance. The
 \textbf{evidence} comes for free: with $\bm W$ the cumulative
 (un-normalised) weights (so $\log\bm W$ is the running log-weight array),
 each stage multiplies the population by its mean incremental weight, and
@@ -665,7 +705,8 @@ for p in params\_list]}. This stays a Python loop --- it contains
 \code{jnp.array} so a new physics parameter does not trigger a
 recompilation.
 \item \code{\_build\_bgs\_batched}: builds the stacked \code{Background}.
-Internally it runs three vmapped sub-stages with two device transfers:
+Internally it runs three vmapped sub-stages with three device transfers
+(two arrays out to the CPU backend, one back):
 \code{\_pre\_recomb\_batched} (GPU, \code{vmap} of
 \code{BackgroundPreRecomb}); the HyRex \code{RecModel} (CPU, \code{vmap},
 via a \emph{cached} \code{filter\_jit} wrapper \code{\_recmodel\_cpu} ---
@@ -991,7 +1032,8 @@ steps, and \code{profile\_batched} its \code{vmap} over the batch. The
 nonmonotone reference was the key $\sim10\times$ speedup over a monotone
 Armijo crawl. It matches \code{scipy}'s L-BFGS-B to a worst $\chisq$ gap
 of $0.017$ (validated against a \code{scipy} L-BFGS-B reference solve),
-well under the solver roughness floor. The profiled $\chisq$ is differentiable in $\Cl$
+well under the $\sim0.1$ $\chisq$ solver roughness floor (the $k$-chunking
+/ discretisation roughness, Section~\ref{sec:cert}). The profiled $\chisq$ is differentiable in $\Cl$
 through the final \code{penalized\_chi2} evaluation only, with the $\Cl$
 input to the SPG loop \code{stop\_gradient}'d --- so the envelope theorem
 keeps the cosmology gradient exact without back-propagating through $800$
@@ -1008,8 +1050,10 @@ graph). Both operate on the padded $\Dl$ (and clip their inputs to the
 table validity range before evaluating).
 \begin{itemize}[leftmargin=1.5em,itemsep=2pt]
 \item \code{LowLEE} (SRoll2/SimAll): a tabulated per-multipole
-log-probability surface in $\Dl^{EE}$; the EE $\chisq$ is
-$-2\sum_\ell\ln P_\ell(\Dl^{EE})$ via cubic interpolation, with
+\emph{log}-probability surface $\ln P_\ell$ in $\Dl^{EE}$; the EE $\chisq$
+is $-2\sum_\ell\ln P_\ell(\Dl^{EE})$, reading the tabulated $\ln P_\ell$ by
+cubic interpolation (a single logarithm --- the table already holds
+$\ln P_\ell$), with
 $\Dl^{EE}$ clipped to the table range. This \emph{replaces} the usual
 $\tau\sim\mathcal N(0.0544,0.0073)$ prior --- $\tau$ is constrained by
 fitting the actual low-$\ell$ EE data.
@@ -1160,7 +1204,7 @@ inconsistent and stalled the optimiser; the consistency rule fixed it.
 
 \paragraph{Preconditioner}
 With \code{PA\_PRECOND} on (default), $\bm H^{-1}_0$ for each POI is the
-inverse of the PD-regularised co-profiled submatrix of the $D\times D$
+inverse of the positive-definite-regularised (PD) co-profiled submatrix of the $D\times D$
 $\chisq$ Hessian at the warm-start point, computed by central FD of the
 exact AD gradient and disk-cached (the cache loads in $\sim0$~s vs.\ the
 $\sim18$~min to recompute it). Co-profiled-submatrix condition numbers are
@@ -1229,7 +1273,9 @@ forming makes the check wait one more window. The post-loop AD
 certificate runs regardless. Demonstrated on $\mathcal A_s$ (the POI used
 as the early-stop calibration stress test) at $\Lmax=2508$, this fires at
 iteration~5 (vs.\ $\ge18$ for the $\ginf$ gate), matching the converged
-interval to $0.0001\sigma$ --- a $\sim2.6\times$ wall-clock saving. A
+interval to $0.0001\sigma$ --- a $\sim2.6\times$ wall-clock saving (less
+than the $18/5$ iteration ratio, because the fixed JIT compile and the
+always-run post-loop AD certificate are not saved). A
 legacy $\chisq$-plateau trigger (\code{PA\_FTOL}, default off) also exists
 in the same loop but needs solver-floor tuning, so the $\sigma_1$-stability
 trigger is preferred.
@@ -1276,15 +1322,24 @@ degeneracy valley, not across it.
 \end{enumerate}
 This decouples grid placement (\code{GRID\_CEN}/\code{GRID\_SIG}) from the
 optimiser scaling (\code{CENTER}/\code{SIGMA}), and is the recommended
-default for any new-physics run. The $\sigma_1$ early-stop is additionally
-hardened so a single NaN/off-grid POI cannot run the batch to the wall.
+default for \code{plik\_lite} new-physics runs. \emph{Caveat for
+full-\code{plik}:} the pre-pass's first jitted call is a single-point,
+full-$D$ AD-through-SPG gradient --- a compile signature absent from the
+warm batched-path cache, which at $\Lmax=2508$ monster-compiles and hangs
+(it stalled the full-\code{plik} $\Neff$ run for two $10$~h walltimes with
+zero iterations). For full-\code{plik} extensions, prefer a hand-recentered
+config (grids placed on the joint MLE, e.g.\ \code{lcdm\_neff\_plikfull\_rc.py})
+with \code{PA\_WARM\_FROM\_CEN=1} instead of the pre-pass. The $\sigma_1$
+early-stop is additionally hardened so a single NaN/off-grid POI cannot run
+the batch to the wall.
 
 \subsection{Interval extraction}
 \label{sec:intervals}
 
 From each POI's $(\mathrm{grid},\hat\chisq)$ the deliverable intervals are
-the $\dchisq=1$ and $\dchisq=4$ crossings, found by a
-shape-preserving \textbf{PCHIP} interpolant of $\hat\chisq-\min\hat\chisq$
+the $\dchisq=1$ and $\dchisq=4$ crossings, found by a shape-preserving
+\textbf{PCHIP} (Piecewise Cubic Hermite Interpolating Polynomial)
+interpolant of $\hat\chisq-\min\hat\chisq$
 evaluated on a dense ($40001$-point) grid (PCHIP is justified because the
 in-batch $\chisq$ noise floor is measured to be exactly zero --- the
 solve is deterministic at fixed shapes). A parabola fit to the points with
@@ -1366,7 +1421,9 @@ $6$ (or $7$) cosmological parameters \emph{and} the $21$ floated
 $\bar\theta\pm5\sigma$ (with $\tau$ floored at $0.01$), and each nuisance
 at its Planck uniform bounds where finite, else
 $\mathrm{start}\pm6\cdot\mathrm{scale}$. At $\beta=1$ the flat box times
-$\exp(-\chisq/2)$ is exactly the nuisance-marginalised posterior. The
+$\exp(-\chisq/2)$ is exactly the joint posterior
+$p(\theta,\nu\mid\mathcal D)$; the $21$ nuisances are marginalised only when
+the $\theta$-marginals are read off. The
 Gaussian and joint-SZ nuisance priors are folded into the \emph{tempered}
 likelihood (added to the data $\chisq$ before the $\beta$ multiply), so
 they are annealed alongside the data; only the flat box is
@@ -1376,8 +1433,10 @@ $\beta$-independent.
 \label{sec:fastslow}
 
 The key efficiency lever in \code{smc\_plikfull.py} is a
-Metropolis-within-Gibbs split, exactly the fast/slow oversampling Cobaya
-uses, hand-rolled around \code{call\_batched}:
+Metropolis-within-Gibbs split (\emph{Gibbs}: cycle through disjoint blocks
+of parameters, updating one block at a time with the others held fixed ---
+here a slow cosmology block and a fast nuisance block), exactly the
+fast/slow oversampling Cobaya uses, hand-rolled around \code{call\_batched}:
 \begin{itemize}[leftmargin=1.5em,itemsep=2pt]
 \item \textbf{Slow block} (the $D_c=6$--$7$ cosmological parameters,
 $M_{\mathrm{slow}}=2$ moves/stage): a proposal changes the theory $\Cl$,
@@ -1398,7 +1457,8 @@ essentially free, so they are heavily oversampled ($20$ vs.\ $2$). The
 cost per stage is $\sim M_{\mathrm{slow}}\cdot N$ theory solves;
 \textbf{marginalising the $21$ nuisances costs about the same \textsc{ABCMB}
 time as the \code{plik\_lite} run}, while delivering a genuine
-$27$-dimensional nuisance-marginalised posterior.
+nuisance-marginalised cosmology posterior sampled in the full
+$27$-dimensional space.
 
 \paragraph{The caching invariant}
 Three per-particle caches travel with the particles: \code{cls\_clik}
@@ -1472,17 +1532,22 @@ The throughput and $\sim0.33$~GB/cosmo figures were measured on
 repeatedly OOM-killed there before the chunk caps were added. The
 production defaults \code{PA\_FD\_CHUNK=128} and \code{SMC\_EVAL\_CHUNK=128}
 are sized for 40\,GB; a single $B=512$ \code{call\_batched} OOMs on a
-40\,GB node (and at $\Lmax=2508$+lensing OOMs even on 80\,GB, $\sim49$~GB,
-Table~\ref{tab:throughput}). Size $\Bloc$ for 40\,GB unless you know the
-allocation is 80\,GB.
+40\,GB node (and at $\Lmax=2508$+lensing OOMs even on 80\,GB: the
+$\sim49$~GB in Table~\ref{tab:throughput} is the persistent footprint, and
+transient XLA scratch pushes the peak past 80\,GB). Size $\Bloc$ for 40\,GB
+unless you know the allocation is 80\,GB.
 
 \subsection{Compilation caching and walltime sizing}
 Each new $(B,\Lmax)$ abstract shape triggers a fresh compile ($\sim5$~min
 for the staged-jvp gradient); the driver therefore keeps batch shapes
 \emph{stable} (padding and masking rather than shrinking to the active
 count). A persistent on-disk compilation cache
-($\mathtt{JAX\_COMPILATION\_CACHE\_DIR}$) is set so warm restarts skip
-recompiles. Both tools checkpoint per iteration/stage and auto-resume, so
+($\mathtt{JAX\_COMPILATION\_CACHE\_DIR}$) is set so warm restarts reuse the
+cached XLA executables for the primal stages; note, though, that the
+assembled staged-jvp gradient program is re-traced once per SLURM job (it
+does not persist across jobs, Section~\ref{sec:gradcost}), so a resume
+re-pays its $\sim5$~min build. Both tools checkpoint per iteration/stage
+and auto-resume, so
 production jobs are sized to finish in one shot where possible (the
 full-\code{plik} SMC runs were given $24$~h --- the \code{plik\_lite} SMC
 SLURM script is $12$~h --- because a resume's \emph{queue} wait can exceed
@@ -1541,8 +1606,10 @@ agrees to a worst $\chisq$ gap of $0.017$ (Section~\ref{sec:spg}), well
 below the solver roughness floor.
 
 \paragraph{SMC}
-The tempered SMC sampler is a consistent estimator of the posterior (Del
-Moral, Doucet \& Jasra), with an \emph{unbiased} evidence estimator from
+The tempered SMC sampler is a consistent estimator of the posterior
+(\emph{consistent}: its estimates converge to the true posterior as the
+particle count grows; Del Moral, Doucet \& Jasra), with an \emph{unbiased}
+evidence estimator (its expectation equals the true $Z$) from
 the product of incremental normalising constants (Eq.~\eqref{eq:logz}); the
 adaptive ESS-controlled tempering and systematic resampling are standard
 variance-control devices. Its independent agreement with the profile
@@ -1565,27 +1632,31 @@ parameters against Planck these hold well --- the parameters are tightly
 and near-Gaussianly constrained, far from any boundary --- which is
 \emph{independently corroborated} by the profile-vs-SMC agreement to
 $|0.33\sigma|$ (Table~\ref{tab:headline}): were Wilks badly violated, the
-frequentist interval and the Bayesian credible region would not coincide.
+frequentist interval and the Bayesian credible region (the posterior
+analogue of a confidence interval --- the smallest set holding a given
+posterior probability) would not coincide.
 
 Wilks is \emph{asymptotic}, and it is known to fail in exactly the cases
 frequentist methods are most often deployed for: parameters bounded against
-a physical edge ($\Neff$, $\sum m_\nu$, $f_{\mathrm{EDE}}\ge0$, $r\ge0$) or
-strongly non-Gaussian directions. For those the honest tool is not Wilks
+a physical edge ($\Delta\Neff\ge0$, $\sum m_\nu\ge0$, $f_{\mathrm{EDE}}\ge0$,
+$r\ge0$) or strongly non-Gaussian directions. For those the honest tool is not Wilks
 but an explicit \textbf{Neyman construction} of the confidence belt ---
 measuring the actual distribution of $\dchisq$ from mock data and reading
 off the threshold that gives correct coverage (Feldman--Cousins). That is
-the coverage-mock study (Section~\ref{sec:coverage}), now \emph{built and
-validated}: the batched validator regenerates the $\dchisq$ distribution
-from mocks and tests it against $\chisq_1$ directly. A first $N\!=\!500$
-$\Lambda$CDM pass already puts the per-mock median test statistic on the
-$\chisq_1$ median ($0.455$) for every parameter it reached, so the
-$\Lambda$CDM intervals of Section~\ref{sec:results} are corroborated as
-correctly covering rather than merely Wilks-approximation intervals --- now
-on three independent legs (the profile-vs-SMC agreement, the near-Gaussian
-parameter structure, and the direct mock coverage). The full $68\%/95\%$
-coverage table, and the Feldman--Cousins thresholds for the bounded
-directions where Wilks is expected to fail, are produced by the production
-runs now in flight.
+the coverage-mock study (Section~\ref{sec:coverage}), with the batched
+validator \emph{built and GPU-validated}: it regenerates the $\dchisq$
+distribution from mocks and tests it against $\chisq_1$ directly. A
+preliminary, partial pass (4 of the 6 $\Lambda$CDM POIs; the medians are
+log-scraped, not yet from a saved table, Section~\ref{sec:coverage}) puts
+the per-mock median test statistic on the $\chisq_1$ median ($0.455$) for
+every parameter it reached, so the $\Lambda$CDM intervals of
+Section~\ref{sec:results} are corroborated as correctly covering rather than
+merely Wilks-approximation intervals --- on three independent legs (the
+profile-vs-SMC agreement, the near-Gaussian parameter structure, and the
+direct mock coverage). The full $68\%/95\%$ coverage table, and the
+Feldman--Cousins thresholds for the bounded directions where Wilks is
+expected to fail, will come from the production runs (queued as of
+2026-06-29; Section~\ref{sec:coverage}).
 
 \subsection{Coverage validation: the Wilks check}
 \label{sec:coverage}
@@ -1622,12 +1693,18 @@ parameters and the conditional fit fixes the POI at its true value and frees
 the other $D{-}1$. Wilks gives $\{t_k\}\sim\chisq_1$, so the empirical
 coverage $\mathrm{frac}(t<1)=0.683$, $\mathrm{frac}(t<3.84)=0.95$ \emph{is}
 the coverage of the $\dchisq$ intervals ($\theta^{\mathrm{true}}$ is inside
-the $\dchisq<\ell$ interval iff $t<\ell$).
+the $\dchisq<\ell$ interval iff $t<\ell$). (The coverage test uses the exact
+$95\%$ threshold $3.84$; the deliverable $\dchisq\le4$ interval is the
+nominal $2\sigma$, i.e.\ $95.45\%$.)
 
 \paragraph{The batched fitter}
 Re-fitting hundreds of mocks with the AD/FD BFGS driver (per-mock gradients,
 $\sim$tens of node-hours) is unaffordable, so the validator uses a dedicated
-\textbf{shared-Jacobian Gauss--Newton} on the batch axis: the entire mock
+\textbf{shared-Jacobian Gauss--Newton} on the batch axis (\emph{Gauss--Newton}
+approximates the Hessian of a least-squares objective by $\bm J^\top\bm J$,
+the ``normal matrix,'' and solves $\bm J^\top\bm J\,\Delta\theta=-\bm
+J^\top\bm r$ for the step, with $\bm J$ the model Jacobian and $\bm r$ the
+residuals): the entire mock
 population is \emph{one} \code{call\_batched} primal per GN iteration, with
 the model Jacobian $\partial\bm m_0/\partial\theta$ shared across mocks and
 \emph{anchored at the fixed warm-start reference} ($=\theta^{\mathrm{true}}$,
@@ -1733,15 +1810,16 @@ $\tau$         & $0.05878$ & $0.00738$ & $0.00606$ & $2.48$ & $+0.60\sigma$ & $-
 \end{table}
 
 All six minima lie within $+0.60\sigma$ of Planck~2018, and all lie within
-$|0.33\sigma|$ of the SMC posterior mode --- the frequentist optimum and
-the Bayesian mode agree, which is the cross-check that matters. The
+$|0.33\sigma|$ of the SMC posterior mean --- the frequentist optimum and
+the Bayesian posterior agree (mean and mode coincide here because the
+marginals are near-Gaussian), which is the cross-check that matters. The
 profiles are clean parabolas (Figure~\ref{fig:headline}) whose $11$-point
 grids bracket both $\dchisq=1$ and $\dchisq=4$ with shoulder points, and
 the real asymmetry is captured (e.g.\ $h$ has $-0.0037/+0.0080$, a flatter
 upper wing). The early-stop fired cleanly on \emph{all six} POIs with no
 premature stops (worst interval drift $5.2\times10^{-3}\sigma$, far inside
 the $0.02\sigma$ bar), at iterations $3$--$6$; $\omega_c$ --- the POI with
-the largest co-profiled-Hessian condition number ($\sim158$) --- correctly
+the largest co-profiled-Hessian condition number ($\sim159$) --- correctly
 fired latest. The converged fraction ($0$--$2/11$ per POI) reflects the AD
 $\ginf$ roughness floor (Section~\ref{sec:cert}), not unconverged science
 --- the intervals are good to $\sim0.02$--$0.03\sigma$.
@@ -1773,12 +1851,17 @@ $4\,\mathrm{h}\,21\,\mathrm{m}$ on four nodes and reproduces the
 inner-profile path is consistent with the analytically marginalised
 \code{plik\_lite} path. The $\Lambda\mathrm{CDM}+\Neff$ extension exposed
 the static-grid degeneracy failure (Section~\ref{sec:mle}): the
-full-\code{plik} $\Neff$ run timed out at $10$~h on four nodes, and its
+full-\code{plik} $\Neff$ run timed out (twice, $10$~h) and its
 $\Neff$ profile was salvaged from the iteration-15 checkpoint, giving
 $\Neff=2.804$ with $1\sigma=[2.705,3.002]$ (the joint optimum sits near
-$h\approx0.666$, $\omega_c\approx0.1165$, $\Neff\approx2.83$). The
-definitive intervals come from the re-run through the joint-MLE pre-pass,
-which was launched to produce clean $1\sigma$ and $2\sigma$ bounds.
+$h\approx0.666$, $\omega_c\approx0.1165$, $\Neff\approx2.83$, still drifting
+in the unconverged salvaged checkpoint). The joint-MLE pre-pass was
+\emph{not} the fix --- it monster-compiles at full-\code{plik} $\Lmax=2508$
+(Section~\ref{sec:mle}); the definitive intervals instead come from a
+hand-recentered, pre-pass-disabled re-run on the proven compile path
+(config \code{lcdm\_neff\_plikfull\_rc.py}, \code{PA\_WARM\_FROM\_CEN=1},
+$48$~h; launched 2026-06-29, job 55235706, in flight), which will produce
+clean $1\sigma$ and $2\sigma$ bounds.
 
 \subsection{The Bayesian anchor (SMC)}
 
@@ -1794,7 +1877,7 @@ marginalising all $21$ foreground/calibration nuisances at roughly the
 $C_\ell$ (Section~\ref{sec:fastslow}) --- the $27$-dimensional $\Lambda$CDM run
 in $5\,\mathrm{h}\,37\,\mathrm{m}$ and the $28$-dimensional $+\Neff$ run in
 $6\,\mathrm{h}\,49\,\mathrm{m}$, each on a single four-GPU node. Both reached
-$\beta=1$ with a healthy effective sample size (ESS $=437$ and $511$ of $512$)
+$\beta=1$ with a healthy effective sample size (ESS $=437$ and $512$ of $512$)
 and left no particles stranded at the out-of-box $\chisq$ wall. Their cosmology
 marginals (Table~\ref{tab:smc}) reproduce Planck~2018: every shared parameter of
 the $\Lambda$CDM full-\code{plik} run lies within
@@ -1837,7 +1920,7 @@ two are not in tension once the geometry is read correctly: the
 $\Neff$--$h$--$\omega_c$ degeneracy is a \emph{skewed} ridge, so the marginal
 mean (which integrates the banana) and the profile optimum (which follows its
 floor) separate. The same skew moves $h$ --- the SMC marginal
-$h=0.682\pm0.011$ sits above the profile MLE $h\approx0.660$, with the profile
+$h=0.682\pm0.011$ sits above the profile MLE $h\approx0.666$, with the profile
 optimum the closer match to Planck's own $+\Neff$ marginals. This is the
 expected Bayesian-vs-frequentist divergence under a strong degeneracy, not a
 defect of either route; it is precisely the comparison the two tools exist to
@@ -1845,13 +1928,18 @@ make, and the triangle plot that exhibits the banana is in
 \file{scan/analyze\_smc.ipynb}.
 
 The evidence mildly prefers the base model:
-$\Delta\log Z(\Lambda\mathrm{CDM}-{+}\Neff)=+2.79$ on the full \code{plik}
-(a Bayes factor $\approx16$, ``positive'' on the Jeffreys scale), consistent
-with $\Neff$ being within $1\sigma$ of $3.044$. This number is
+$\Delta\log Z(\Lambda\mathrm{CDM}-{+}\Neff)=+2.79$ on the full \code{plik}.
+The \emph{Bayes factor} --- the ratio of model evidences,
+$\exp\Delta\log Z\approx16$ --- ranks ``positive'' on the \emph{Jeffreys
+scale} (the conventional ladder: barely / positive / strong / decisive),
+consistent with $\Neff$ being within $1\sigma$ of $3.044$. This number is
 \emph{indicative only}: the $+\Neff$ cosmology prior box was recentred and
-widened on the joint MLE (Section~\ref{sec:mle}), so its prior volume --- and
-hence the Occam factor --- differs from the $\Lambda$CDM run; a clean model
-comparison would re-run both under an identical box. The plik-lite
+widened on the joint MLE (Section~\ref{sec:mle}), so its prior volume ---
+and hence the \emph{Occam factor} (the automatic penalty a Bayesian
+evidence assigns for spreading prior probability over a larger volume: a
+wider box dilutes the evidence even at fixed best fit) --- differs from the
+$\Lambda$CDM run; a clean model comparison would re-run both under an
+identical box. The plik-lite
 $\log Z=-509.92$ lives in a different parameter and likelihood space and is
 \emph{not} comparable to the full-\code{plik} values.
 
@@ -1874,7 +1962,7 @@ $\chisq$ gap $0.017$, under the solver roughness floor
 analytically-marginalised \code{plik\_lite} headline
 (Section~\ref{sec:results}).
 \item \textbf{Profile vs.\ SMC}: the frequentist optimum agrees with the
-Bayesian posterior mode to $|0.33\sigma|$ across all six $\Lambda$CDM
+Bayesian posterior mean to $|0.33\sigma|$ across all six $\Lambda$CDM
 parameters (Table~\ref{tab:headline}).
 \item \textbf{Coverage / Wilks mocks}: the batched coverage validator
 (Section~\ref{sec:coverage}) returns a per-mock median test statistic on the
@@ -1890,8 +1978,9 @@ make a full $\Lambda$CDM six-POI profile a few node-hours (measured:
 $2\,\mathrm{h}\,58\,\mathrm{m}$ on six nodes, plik-lite; $4\,\mathrm{h}\,21\,\mathrm{m}$
 on four nodes, full plik). A seven-POI $\Lambda\mathrm{CDM}+\Neff$ profile
 is \emph{projected} (from the measured 6-POI runs and the cost model) to
-land well under the $22$~h CLASS+MH bar on four nodes --- the
-definitive Neff timing awaits the joint-MLE-pre-pass re-run --- and it
+land well under the $22$~h CLASS+MH bar --- the definitive $\Neff$ timing
+awaits the pre-pass-disabled, hand-recentered re-run
+(Section~\ref{sec:mle}; job 55235706, $48$~h) --- and it
 carries a per-point AD stationarity certificate MH does not provide.
 
 % =====================================================================
@@ -1921,11 +2010,11 @@ scripts run verbatim.
 import jax; jax.config.update("jax_enable_x64", True)
 from abcmb.main import Model
 
+# Base LCDM with a massless neutrino background:
 params = {
     "h": 0.6736, "omega_b": 0.02237, "omega_cdm": 0.1200,
     "n_s": 0.9649, "A_s": 2.1e-9, "tau_reion": 0.0544,
     "Neff": 3.044, "YHe": 0.2454, "TCMB0": 2.34865418e-4,
-    "N_nu_massive": 1, "T_nu_massive": 0.71611, "m_nu_massive": 0.06,
     "Delta_z_reion": 0.5, "z_reion_He": 3.5,
     "Delta_z_reion_He": 0.5, "exp_reion": 1.5,
 }
@@ -1936,11 +2025,24 @@ out = model(params)                       # -> Output (eqx.Module)
 print(out.ClTT.shape, out.l.shape, out.Pk.shape)   # (n_l,), (n_l,), (n_k,)
 \end{lstlisting}
 Notes: \code{A\_s} is the linear amplitude (the tools sample
-$\mathcal A_s=\ln(10^{10}A_s)$ and convert); massive neutrinos are enabled
-by \code{N\_nu\_massive>0} (which adds a \code{MassiveNeutrino} species ---
-pass it to \code{Model} via the \code{user\_species} tuple for a massive
-run); and \code{model.add\_derived\_parameters(params)} returns the dict
-with all derived keys filled, if you want to inspect them.
+$\mathcal A_s=\ln(10^{10}A_s)$ and convert), and
+\code{model.add\_derived\_parameters(params)} returns the dict with all
+derived keys filled if you want to inspect them. A \code{MassiveNeutrino} is
+\emph{not} added by setting \code{N\_nu\_massive>0} alone --- the species
+list is built from the $\Lambda$CDM defaults (a \emph{massless} neutrino)
+plus whatever you pass in \code{user\_species}
+(\file{abcmb/model\_specs.py}, \code{populate\_species}). A massive run
+needs both the species \emph{and} its parameters:
+\begin{lstlisting}
+from abcmb import species
+mnu_params = dict(params,
+    N_nu_massive=1, T_nu_massive=0.71611, m_nu_massive=0.06)
+model_mnu = Model(output_Cl=True, l_max=2508, lensing=True,
+                  output_Pk=True, output_k_max=0.5,
+                  l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+                  user_species=(species.MassiveNeutrino,))
+out_mnu = model_mnu(mnu_params)
+\end{lstlisting}
 
 \subsection{Many cosmologies at once (the new batched call)}
 \begin{lstlisting}
@@ -2006,9 +2108,15 @@ python scan/collect_profiles.py _mn6   # -> summary table + overlay plot
 
 \paragraph{A new-physics extension (robust grids)}
 \begin{lstlisting}
-PA_CONFIG=scan/configs/lcdm_neff.py PA_MLE_PREPASS=1 PA_TAG=_neff \
+PA_CONFIG=scan/configs/lcdm_neff.py PA_POI_SLICE=1 PA_MLE_PREPASS=1 PA_TAG=_neff \
   sbatch --nodes=7 --ntasks-per-node=1 scan/profile_prod_ad.slurm
 \end{lstlisting}
+(\code{PA\_POI\_SLICE=1} is required to spread the $7$ POIs across the $7$
+nodes --- without it all POIs run on rank~0 and the other six nodes idle.
+The MLE pre-pass is safe here because \code{lcdm\_neff.py} is
+\code{plik\_lite}; for a full-\code{plik} extension use a hand-recentered
+config with \code{PA\_WARM\_FROM\_CEN=1} instead --- the pre-pass
+monster-compiles at full-\code{plik} $\Lmax=2508$, Section~\ref{sec:mle}.)
 
 \paragraph{Full Planck plik}
 Use a \code{plik\_full} config (\code{high\_ell="plik\_full"}); everything
@@ -2088,8 +2196,8 @@ POI list (\code{PA\_POI\_SLICE}, Section~\ref{sec:poislice}); $n$ nodes are
 $\approx n\times$ faster up to the POI count. (SMC does not node-slice ---
 Section~\ref{sec:spmd}.)
 \item \textbf{Keep the $\sigma_1$ early-stop on} (default;
-$\sim2.3$--$2.6\times$, Section~\ref{sec:earlystop}). For a model you trust
-to be smooth you can loosen \code{PA\_SIGTOL} above $10^{-2}$ for a further
+$\sim2.6\times$ on the headline, Section~\ref{sec:earlystop}). For a model
+you trust to be smooth you can loosen \code{PA\_SIGTOL} above $10^{-2}$ for a further
 cut --- at the risk of a slightly under-converged interval, so validate
 once.
 \item \textbf{Warm-start the inner SPG across outer BFGS iterations}
@@ -2112,11 +2220,12 @@ compile is paid once and the persistent compile cache is hit on restart
 The validator is built and validated and the $\Lambda$CDM /
 $\Lambda\mathrm{CDM}+\Neff$ production runs are in flight; what remains is
 collecting the full $68\%/95\%$ tables and extending the study to the
-\emph{bounded} directions ($\Neff$, $\sum m_\nu$, $r$, $f_{\mathrm{EDE}}$),
+\emph{bounded} directions ($\Delta\Neff$, $\sum m_\nu$, $r$, $f_{\mathrm{EDE}}$),
 where Wilks is expected to fail and the Feldman--Cousins thresholds it
 measures are the actual deliverable.
 \item \textbf{Denser grids: raise \code{PA\_NPTS}.} More points (e.g.\
-$25$--$31$ vs $11$) reduce the PCHIP spline's interpolation error and better
+$25$--$31$; the default is $25$, but the headline used walltime-driven
+$11$-point grids) reduce the PCHIP spline's interpolation error and better
 bracket $\dchisq=1,4$ --- nearly free on the batch axis.
 \item \textbf{Use the MLE pre-pass and multistart}
 (\code{PA\_MLE\_PREPASS}, \code{PA\_MULTISTART}; Sections~\ref{sec:mle},
@@ -2138,7 +2247,7 @@ $\ln a$ grid (\emph{not} the ODE tolerance). This does \emph{not} bias the
 interval (it averages out, Section~\ref{sec:errbudget}), so it only matters
 if you want the certificate itself to reach GTOL. To reduce it:
 \begin{itemize}[leftmargin=1.5em,itemsep=1pt]
-\item Increase the save-grid resolution: revert the round-4 engine default
+\item Increase the save-grid resolution: revert the engine default
 to \code{n\_lna\_PE=500} with \code{lna\_grid\_mode="uniform"} (the current
 $300$/visibility default traded a sub-permille $\ell<5$ quadrupole
 regression and $\sim1.65\times$ memory for speed). This is also the lever
@@ -2147,14 +2256,14 @@ for better low-$\ell$ precision (EE at $\ell=2$).
 runtime, so they trade directly against the speed levers above; pursue them
 only if a GTOL-level certificate is required.
 \end{itemize}
-The tension is real: the round-3/round-4 work cut per-call memory
+The tension is real: two earlier rounds of memory work cut per-call memory
 $\sim2\times$ then $\sim1.65\times$ precisely to \emph{enable} larger $B$
 (speed), partly by \emph{lowering} grid resolution. Pushing the certificate
 precision here gives that memory back.
 
 \subsection{Larger refactors (higher effort, on the table)}
 \begin{itemize}[leftmargin=1.5em,itemsep=1pt]
-\item \textbf{Stream the perturbation table per $k$-chunk} (``Idea~A2'')
+\item \textbf{Stream the perturbation table per $k$-chunk}
 instead of holding the full $(B,N_y,N_{\ln a},N_k)$ tensor: it would cut
 the binding per-device memory $\propto N_k$, directly enabling larger $B$
 (hence speed). It is blocked by the spectrum's global cubic spline over the
@@ -2181,7 +2290,7 @@ goal & effort & lever \\
 \midrule
 faster & trivial & larger $B$ (chunk knobs); more nodes (POI-slice); keep $\sigma_1$ early-stop \\
 faster (full plik) & low & warm-start SPG across outer iters; precompute+broadcast the Hessian \\
-faster & high & stream PT per $k$-chunk (Idea~A2); hybrid FD/AD \\
+faster & high & stream PT per $k$-chunk; hybrid FD/AD \\
 more rigorous & low & coverage mocks; multistart; MLE pre-pass \\
 tighter interval & trivial & denser grid (\code{PA\_NPTS}) \\
 tighter certificate & medium & \code{n\_lna\_PE=500}+uniform grid; denser $k$-axis (costs memory/speed) \\
@@ -2194,20 +2303,21 @@ tighter certificate & medium & \code{n\_lna\_PE=500}+uniform grid; denser $k$-ax
 \label{sec:future}
 
 \paragraph{Coverage mocks (Feldman--Cousins / Wilks validation)}
-\emph{Implemented and validated} since the introduction was first drafted
-(Section~\ref{sec:coverage}): the batched validator is built, its
-shared-Jacobian fitter is GPU-checked, and the $\Lambda$CDM and
-$\Lambda\mathrm{CDM}+\Neff$ production runs are in flight. What remains is
-collecting the final $68\%/95\%$ coverage tables and extending the
-construction to the bounded-parameter directions ($\Neff$, $\sum m_\nu$,
-$r$, $f_{\mathrm{EDE}}$), where the measured Feldman--Cousins thresholds ---
-not Wilks --- are the deliverable.
+The batched validator is \emph{built and GPU-checked} (its shared-Jacobian
+fitter is validated, Section~\ref{sec:coverage}); what is genuinely
+\emph{planned} is the production output. As of 2026-06-29 the $\Lambda$CDM
+and $\Lambda\mathrm{CDM}+\Neff$ $500$-mock runs are queued (no table on disk
+yet); when they finish, what remains is collecting the final $68\%/95\%$
+coverage tables and extending the construction to the bounded-parameter
+directions ($\Delta\Neff$, $\sum m_\nu$, $r$, $f_{\mathrm{EDE}}$), where the
+measured Feldman--Cousins thresholds --- not Wilks --- are the deliverable.
 
 \paragraph{Other open items}
-LINX under \code{vmap} for large-$B$ \code{bbn\_type="linx"} scans (LINX
+(These also appear in Section~\ref{sec:improve} as larger refactors.) LINX
+under \code{vmap} for large-$B$ \code{bbn\_type="linx"} scans (LINX
 currently runs per-cosmology in the eager \code{add\_derived\_parameters}
-loop, fine at $\sim$ms/cosmo); and an intra-POI row-slice for $>$6-way
-parallelism (needs an MPI gather).
+loop, fine at $\sim$ms/cosmo); and an intra-POI row-slice beyond the $6$-way
+ceiling set by the $6$ base-$\Lambda$CDM POIs (needs an MPI gather).
 
 % =====================================================================
 \appendix
@@ -2216,7 +2326,7 @@ parallelism (needs an MPI gather).
 
 The principal \code{PA\_*} knobs read by \file{scan/profile\_prod\_ad.py}
 (the script exposes additional debug/legacy variables --- e.g.\
-\code{PA\_FD\_CHUNK}, \code{PA\_HESS\_CACHE}, \code{PA\_FTOL}/\code{PA\_FTOL\_PATIENCE},
+\code{PA\_FD\_CHUNK}, \code{PA\_USE\_PLIK}, \code{PA\_HESS\_CACHE}, \code{PA\_FTOL}/\code{PA\_FTOL\_PATIENCE},
 \code{PA\_MLE\_MAXITER}, \code{PA\_MS\_K}, \code{PA\_HIGH\_ELL},
 \code{PA\_RANK\_SLICE}, \code{PA\_WARM\_DIR}, \code{PA\_BF\_TRACE} --- not
 listed here):
@@ -2225,7 +2335,7 @@ listed here):
 env var & default & meaning \\
 \midrule
 \endhead
-\code{PA\_CONFIG} & \code{configs/lcdm.py} & config module \\
+\code{PA\_CONFIG} & \code{scan/configs/lcdm.py} & config module \\
 \code{PA\_POIS} & config \code{pois} & POIs to profile (csv) \\
 \code{PA\_NPTS} & $25$ & grid points per POI \\
 \code{PA\_NSIG} & $3.0$ & grid half-extent in $\sigma$ \\
@@ -2247,6 +2357,7 @@ env var & default & meaning \\
 \code{PA\_MLE\_PREPASS} & $0$ & joint-MLE auto-centering pre-pass \\
 \code{PA\_MULTISTART} & $0$ & multistart global-min check \\
 \code{PA\_POI\_SLICE} & $0$ & multi-node POI striping \\
+\code{PA\_SHARD} & \code{auto} & shard the batch axis when $>1$ GPU (\code{auto}/\code{0}/\code{1}) \\
 \code{PA\_USE\_LOWTT} & config (True) & include low-$\ell$ TT \\
 \code{PA\_USE\_LOWEE} & config (True) & include low-$\ell$ EE \\
 \code{PA\_TAG} & \texttt{""} & output filename suffix \\
@@ -2270,10 +2381,13 @@ env var & default & meaning \\
 \code{SMC\_ESS\_TARGET} & $0.5$ & ESS target fraction of $N$ \\
 \code{SMC\_MAXSTAGES} & $80$/$120$ & max tempering stages (lite/full) \\
 \code{SMC\_PRIOR\_NSIG} & $5.0$ & cosmology flat-box half-width ($\sigma$) \\
-\code{SMC\_NUIS\_BOX\_NSIG} & $6.0$ & unbounded-nuisance box half-width ($\times$scale) \\
+\code{SMC\_NUIS\_BOX\_NSIG} & $6.0$ & unbounded-nuisance box half-width ($\times$scale; full plik) \\
 \code{SMC\_TAU\_FLOOR} & $0.01$ & $\tau$ lower-edge floor \\
 \code{SMC\_LMAX} & $2508$ & theory $\Lmax$ \\
 \code{SMC\_RTOL} & $10^{-5}$ & perturbation tolerance \\
+\code{SMC\_USE\_LOWTT} & config (True) & include low-$\ell$ TT \\
+\code{SMC\_USE\_LOWEE} & config (True) & include low-$\ell$ EE \\
+\code{SMC\_RESUME} & \texttt{""} & resume checkpoint path (auto-detects \code{<out>\_state.npz}) \\
 \code{SMC\_SEED} & $0$ & RNG seed \\
 \code{SMC\_SHARD} & auto & shard if $>1$ GPU \\
 \code{SMC\_CONFIG} & lite/full config & config module \\
