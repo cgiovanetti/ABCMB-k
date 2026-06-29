@@ -9,6 +9,44 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-29 — Neff full-plik profile: diagnose 2nd timeout, relaunch (proven path, 48h), analysis nb
+----------------------------------------------------------------------------------------------------
+Session "neff-relaunch". The 7-POI LCDM+Neff FULL-plik headline timed out a 2nd time
+(job 55017292, 10h). DIAGNOSIS (treated as a bug, not slowness): with PA_MLE_PREPASS=1
+the run made ZERO forward progress for the full 10h -- all 7 ranks printed the rank line
++ "is compiling..." and then nothing: no [mle] milestone, no iterations, no checkpoints,
+and ZERO new JAX compile-cache entries in the run window (cache last written 03:20, job
+started 11:55). python -u confirms prints are flushed, so the silence is real. Root cause:
+the MLE pre-pass's FIRST jitted call is a single-point full-D AD-through-SPG gradient -- a
+NEW compile signature absent from the warm (batched-path) cache -> a monster compile / hang
+that the proven (no-prepass) path never hits (the prior run 54980729 reached iterations
+fine). The pre-pass (the extensibility auto-centering feature) is the regression.
+
+FIX = relaunch on the PROVEN compile path + the centering fix already in hand + padding,
+NOT the pre-pass (per user: "opt for padding runtime rather than code changes, max 48h"):
+  * scan/profile_prod_plikfull_neff48.slurm (NEW): --time=48:00:00, --nodes=7 (1 POI/node),
+    PA_CONFIG=configs/lcdm_neff_plikfull_rc.py (grids RECENTERED on the joint MLE -> no edge
+    railing), PA_WARM_FROM_CEN=1 (warm start + BFGS preconditioner at that center = the MLE),
+    PA_MLE_PREPASS=0 (explicit), PA_TAG=_pfrc (FRESH tag so RESUME does not skip the stale
+    mis-centered _pf npz from Jun25). The hardened sigma1 early-stop (off-grid POI no longer
+    blocks the stop, driver L682-698) is already in profile_prod_ad.py. Four independent
+    fixes vs the 1st timeout: recentered grids, hardened stop, 1 POI/node, 5x walltime.
+  * Submitted as job 55235706 (PENDING; queued behind the 2 pre-existing wilks jobs by the
+    user's choice to keep all three). Resumable: resubmit the SAME slurm on a timeout.
+
+scan/analyze_profile_neff.ipynb (NEW): CPU-only (numpy+matplotlib) analysis notebook for
+the _pfrc results. Loads the 7 per-POI npz live, prints a best-fit +/-1sig (+2sig) table
+with the AD ||g|| convergence certificate, overlays the 7 Delta-chi2 profiles, a Neff-zoom
+headline panel, and a per-POI in-band convergence gate. Primary cross-check = the finished
+same-model SMC posterior (smc_plikfull_neff.npz, loaded live: Neff=3.045+/-0.142); secondary
+= editable Planck18 base_nnu dict (flagged verify). Robust to POIs still pending. JSON
+validated (jq). NOTE the expected profile-vs-marginal Neff gap (profile min ~2.8 < SMC mean
+3.045) from the skewed Neff-H0 degeneracy -- documented in the notebook, not a bug.
+
+Both SMC jobs from the prior session COMPLETED on schedule (54988847 LCDM 5h38m; 54988849
+Neff 6h50m, used the hardcoded prior-box recenter).
+
+
 2026-06-28 — SMC analysis notebook (scan/analyze_smc.ipynb) + result sanity check
 ---------------------------------------------------------------------------------
 Session "SMC-analyze". Built a reusable, CPU-only Jupyter notebook to analyze the three
