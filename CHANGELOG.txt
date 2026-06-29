@@ -9,6 +9,35 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-06-28 — SMC analysis notebook (scan/analyze_smc.ipynb) + result sanity check
+---------------------------------------------------------------------------------
+Session "SMC-analyze". Built a reusable, CPU-only Jupyter notebook to analyze the three
+finished SMC posteriors (smc_lcdm = plik-lite 6-POI; smc_plikfull = full-plik 6-POI, 21
+nuisances marginalised; smc_plikfull_neff = full-plik +Neff). Notebook =
+numpy/scipy/matplotlib/getdist/pandas only (no JAX/GPU) -> runs anywhere the npz are
+visible. Source-of-truth generator is scan/make_analyze_smc_nb.py (edit + rerun rather
+than hand-editing the .ipynb). Validated end-to-end by executing all 8 code cells through
+a real ipykernel (jupyter_client) on an allocation -- ALL CELLS PASS.
+
+Sections: (1) run health/convergence (β-ladder, ESS, acceptance, logZ accumulation),
+(2) cosmo marginals SMC-vs-Planck18-vs-our-frequentist-profile, (3) getdist triangle
+(degeneracies), (4) 21-nuisance pulls + prior-box-edge check, (5) evidence / Neff Bayes
+factor (caveated).
+
+Sanity verdict on the results (all checks pass):
+  * all three: done=True, β=1, ESS/N = 0.60 / 0.85 / 1.00, zero railed particles,
+    acceptance healthy, chi2_min ~ expected data count (997 plik-lite, 2766/2768 full).
+  * ΛCDM runs reproduce Planck18 to <=0.6σ AND agree with their own profile MLEs to
+    ~0.1σ (h: SMC 0.6760 vs profile 0.67684 for full-plik) -> engine self-consistent
+    across Bayesian + frequentist routes.
+  * +Neff: SMC marginal (h=0.682±0.011, Neff=3.045±0.142) sits ~1.3σ above the profile
+    MLE (h≈0.660, Neff≈2.80). FLAGGED as the expected Bayesian-marginal vs profile-MLE
+    divergence along the skewed h–Neff degeneracy (volume/projection), amplified by the
+    wide recentered prior box; the profile MLE is the closer match to Planck's own +Neff
+    marginals. Understood, not a bug -- but worth a sentence in any write-up.
+  * full-plik Δln Z (ΛCDM − +Neff) = +2.79 -> mild preference for ΛCDM, but prior-volume-
+    caveated (the +Neff cosmo box was recentered/widened, different Occam factor).
+
 2026-06-28 — Wilks coverage production: attempt 1 timed out (6h too short); resumable + re-launched at 24h
 --------------------------------------------------------------------------------------------------------
 Session "Wilks2" (cont.). The two 500-mock coverage jobs launched 2026-06-26 (55084287 lcdm,
