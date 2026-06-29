@@ -38,6 +38,14 @@ Sanity verdict on the results (all checks pass):
   * full-plik Δln Z (ΛCDM − +Neff) = +2.79 -> mild preference for ΛCDM, but prior-volume-
     caveated (the +Neff cosmo box was recentered/widened, different Occam factor).
 
+Also recorded these in the manual (scan/manual/manual.tex, untracked): rewrote §10.3 "The
+Bayesian anchor (SMC)" from the pre-run placeholder to the completed results -- added a
+3-run marginals table (tab:smc), the headline profile-vs-marginal Neff comparison with the
+degeneracy explanation, and the evidence/Bayes-factor paragraph with the prior-volume
+caveat; added analyze_smc.ipynb to the File-map appendix. Rebuilt manual.pdf (texlive/2024,
+clean, no undefined refs). Aligned the notebook's Jeffreys-scale bins to the standard lnB
+scale (1-3 positive) so notebook + manual agree on Δln Z=2.79 = "positive".
+
 2026-06-28 — Wilks coverage production: attempt 1 timed out (6h too short); resumable + re-launched at 24h
 --------------------------------------------------------------------------------------------------------
 Session "Wilks2" (cont.). The two 500-mock coverage jobs launched 2026-06-26 (55084287 lcdm,

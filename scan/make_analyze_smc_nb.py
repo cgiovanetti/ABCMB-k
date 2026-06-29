@@ -381,8 +381,8 @@ if "plikfull" in RUNDATA and "plikfull_neff" in RUNDATA:
     dlnz = RUNDATA["plikfull"]["logZ"] - RUNDATA["plikfull_neff"]["logZ"]
     B = np.exp(dlnz)
     jeff = ("inconclusive (|Δ|<1)" if abs(dlnz) < 1 else
-            "positive (1–2.5)" if abs(dlnz) < 2.5 else
-            "strong (2.5–5)" if abs(dlnz) < 5 else "decisive (>5)")
+            "positive (1–3)" if abs(dlnz) < 3 else
+            "strong (3–5)" if abs(dlnz) < 5 else "very strong (>5)")
     favored = "ΛCDM" if dlnz > 0 else "ΛCDM+Neff"
     print(f"\nΔ ln Z (ΛCDM − ΛCDM+Neff, full plik) = {dlnz:+.3f}")
     print(f"Bayes factor exp(Δ ln Z) = {B:.2f}   ->  favors {favored};  "
