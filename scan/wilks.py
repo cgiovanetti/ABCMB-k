@@ -511,19 +511,76 @@ def main():
     B = len(mine)
     print(f"[slice] rank {RANK} fits {B}/{NMOCK} mocks", flush=True)
 
-    # ---- global fit (all D cosmo dims free) ----
+    # ---- resumable checkpoint: the per-rank output npz IS the checkpoint. A chained
+    # job (e.g. across short debug-queue allocations, which schedule far faster than a
+    # multi-day multi-node regular slot) reloads the global fit + any completed POIs and
+    # only fits what remains, re-saving after each POI so a walltime timeout never loses
+    # finished work. The mock slice is deterministic in (NMOCK, SEED, NPROC, RANK), so keep
+    # the node count fixed across a chain or the loaded t arrays won't match the slice.
     free_all = list(range(D))
-    theta0_g = np.tile(theta_true, (B, 1))
-    tG = time.perf_counter()
-    chi2_glob, theta_glob, info_g = gn_fit(theta0_g, free_all, D_data, tau_obs, A_obs,
-                                           label="global")
-    print(f"[global] done {time.perf_counter()-tG:.0f}s iters={info_g['iters']} "
-          f"max||g||={info_g['gnorm'].max():.2e} chi2 med={np.median(chi2_glob):.2f}",
-          flush=True)
+    suffix = f"_r{RANK}" if (RANK_SLICE and NPROC > 1) else ""
+    out = os.path.join(OUTDIR, f"wilks_{CONFIG_NAME}{TAG}{suffix}.npz")
+    results = {}
+    cert = {}
+    chi2_glob = theta_glob = gnorm_glob = None
+    if os.path.exists(out):
+        ck = np.load(out, allow_pickle=True)
+        if "chi2_global" in ck.files and int(ck["nmock"]) == NMOCK and int(ck["seed"]) == SEED:
+            chi2_glob = np.asarray(ck["chi2_global"], float)
+            theta_glob = np.asarray(ck["theta_global"], float)
+            gnorm_glob = np.asarray(ck["gnorm_global"], float)
+            for poi in POIS:
+                if f"t_{poi}" in ck.files:
+                    results[poi] = dict(t=np.asarray(ck[f"t_{poi}"], float),
+                                        z=np.asarray(ck[f"z_{poi}"], float),
+                                        chi2_cond=np.asarray(ck[f"chi2cond_{poi}"], float),
+                                        gnorm_cond=np.asarray(ck[f"gnorm_{poi}"], float))
+                    if f"cert_maxdt_{poi}" in ck.files:
+                        cert[poi] = dict(idx=np.asarray(ck[f"cert_idx_{poi}"]),
+                                         t_shared=np.asarray(ck[f"cert_tshared_{poi}"]),
+                                         t_exact=np.asarray(ck[f"cert_texact_{poi}"]),
+                                         max_abs_dt=float(ck[f"cert_maxdt_{poi}"]),
+                                         med_abs_dt=float("nan"))
+            print(f"[resume] loaded global + POIs {sorted(results)} from {out}", flush=True)
+        ck.close()
+
+    def _save_state():
+        save = dict(config=CONFIG_ABS, order=np.array(ORDER), pois=np.array(POIS),
+                    theta_true=theta_true, sigma=SIGMA, nmock=NMOCK, seed=SEED,
+                    mock_idx=mine, tau_sig=TAU_SIG, sigma_A=SIGMA_A,
+                    mock_aplanck=MOCK_APLANCK, lmax=LMAX, rtol=RTOL,
+                    chi2_global=chi2_glob, gnorm_global=gnorm_glob, theta_global=theta_glob)
+        for p in results:
+            save[f"t_{p}"] = results[p]["t"]; save[f"z_{p}"] = results[p]["z"]
+            save[f"chi2cond_{p}"] = results[p]["chi2_cond"]
+            save[f"gnorm_{p}"] = results[p]["gnorm_cond"]
+            if p in cert:
+                save[f"cert_idx_{p}"] = cert[p]["idx"]
+                save[f"cert_tshared_{p}"] = cert[p]["t_shared"]
+                save[f"cert_texact_{p}"] = cert[p]["t_exact"]
+                save[f"cert_maxdt_{p}"] = cert[p]["max_abs_dt"]
+        tmp = out + ".tmp.npz"               # atomic: never leave a half-written checkpoint
+        np.savez(tmp, **save); os.replace(tmp, out)
+
+    # ---- global fit (all D cosmo dims free) ----
+    if chi2_glob is None:
+        theta0_g = np.tile(theta_true, (B, 1))
+        tG = time.perf_counter()
+        chi2_glob, theta_glob, info_g = gn_fit(theta0_g, free_all, D_data, tau_obs, A_obs,
+                                               label="global")
+        gnorm_glob = info_g["gnorm"]
+        print(f"[global] done {time.perf_counter()-tG:.0f}s iters={info_g['iters']} "
+              f"max||g||={gnorm_glob.max():.2e} chi2 med={np.median(chi2_glob):.2f}", flush=True)
+        _save_state()
+    else:
+        print(f"[global] reused from checkpoint chi2 med={np.median(chi2_glob):.2f}", flush=True)
 
     # ---- per-POI conditional fits (POI fixed at truth; warm-start at TRUTH, symmetric) ----
-    results = {}
     for poi in POIS:
+        if poi in results:
+            print(f"[cond:{poi}] skip (in checkpoint) t med={np.median(results[poi]['t']):.3f}",
+                  flush=True)
+            continue
         pidx = ORDER.index(poi)
         free_c = [i for i in range(D) if i != pidx]
         # Warm-start the conditional fit at TRUTH (POI already = truth), the SAME start as
@@ -542,53 +599,37 @@ def main():
         # calibration check (no reliance on a fiducial profile sigma).
         z_pull = np.sign(theta_glob[:, pidx] - theta_true[pidx]) * np.sqrt(np.clip(t_stat, 0, None))
         results[poi] = dict(t=t_stat, z=z_pull, chi2_cond=chi2_cond,
-                            theta_cond=theta_cond, gnorm_cond=info_c["gnorm"],
-                            iters=info_c["iters"])
+                            gnorm_cond=info_c["gnorm"])
         print(f"[cond:{poi}] done {time.perf_counter()-tC:.0f}s iters={info_c['iters']} "
               f"max||g||={info_c['gnorm'].max():.2e} "
-              f"t med={np.median(t_stat):.3f} (neg {int(np.sum(t_stat < -1e-3))})",
-              flush=True)
+              f"t med={np.median(t_stat):.3f} (neg {int(np.sum(t_stat < -1e-3))})", flush=True)
+        _save_state()
 
     # ---- per-mock-Jacobian certificate on a subsample (exact-Jacobian fixed point) ----
-    cert = {}
+    # Resume-aware: only POIs without a saved cert are (re)done. Skipped entirely when
+    # WK_VALIDATE=0 (the default for the large coverage runs -- gate (a) is the deliverable).
     if VALIDATE > 0:
-        K = min(VALIDATE, B)
-        sub = np.linspace(0, B - 1, K).astype(int)
-        print(f"[cert] per-mock-Jacobian GN on {K} mocks (exact-J fixed point) ...",
-              flush=True)
-        cG, _ = gn_fit_permock(np.tile(theta_true, (K, 1)), free_all,
-                               D_data[sub], tau_obs[sub], A_obs[sub], label="cert:global")
-        for poi in POIS:
-            pidx = ORDER.index(poi)
-            free_c = [i for i in range(D) if i != pidx]
-            cC, _ = gn_fit_permock(np.tile(theta_true, (K, 1)), free_c,
-                                   D_data[sub], tau_obs[sub], A_obs[sub], label=f"cert:{poi}")
-            t_exact = cC - cG
-            dt = np.abs(t_exact - results[poi]["t"][sub])
-            cert[poi] = dict(idx=sub, t_shared=results[poi]["t"][sub], t_exact=t_exact,
-                             max_abs_dt=float(np.max(dt)), med_abs_dt=float(np.median(dt)))
-            print(f"[cert:{poi}] shared-J vs per-mock-J: max|dt|={cert[poi]['max_abs_dt']:.3f} "
-                  f"med|dt|={cert[poi]['med_abs_dt']:.3f}", flush=True)
+        todo = [p for p in POIS if p not in cert]
+        if todo:
+            K = min(VALIDATE, B)
+            sub = np.linspace(0, B - 1, K).astype(int)
+            print(f"[cert] per-mock-Jacobian GN on {K} mocks for {todo} (exact-J) ...", flush=True)
+            cG, _ = gn_fit_permock(np.tile(theta_true, (K, 1)), free_all,
+                                   D_data[sub], tau_obs[sub], A_obs[sub], label="cert:global")
+            for poi in todo:
+                pidx = ORDER.index(poi)
+                free_c = [i for i in range(D) if i != pidx]
+                cC, _ = gn_fit_permock(np.tile(theta_true, (K, 1)), free_c,
+                                       D_data[sub], tau_obs[sub], A_obs[sub], label=f"cert:{poi}")
+                t_exact = cC - cG
+                dt = np.abs(t_exact - results[poi]["t"][sub])
+                cert[poi] = dict(idx=sub, t_shared=results[poi]["t"][sub], t_exact=t_exact,
+                                 max_abs_dt=float(np.max(dt)), med_abs_dt=float(np.median(dt)))
+                print(f"[cert:{poi}] shared-J vs per-mock-J: max|dt|={cert[poi]['max_abs_dt']:.3f} "
+                      f"med|dt|={cert[poi]['med_abs_dt']:.3f}", flush=True)
+                _save_state()
 
-    # ---- save (per-rank under rank-slice; merged by wilks_collect.py) ----
-    suffix = f"_r{RANK}" if (RANK_SLICE and NPROC > 1) else ""
-    out = os.path.join(OUTDIR, f"wilks_{CONFIG_NAME}{TAG}{suffix}.npz")
-    save = dict(config=CONFIG_ABS, order=np.array(ORDER), pois=np.array(POIS),
-                theta_true=theta_true, sigma=SIGMA, nmock=NMOCK, seed=SEED,
-                mock_idx=mine, tau_sig=TAU_SIG, sigma_A=SIGMA_A,
-                mock_aplanck=MOCK_APLANCK, lmax=LMAX, rtol=RTOL,
-                chi2_global=chi2_glob, gnorm_global=info_g["gnorm"], theta_global=theta_glob)
-    for poi in POIS:
-        save[f"t_{poi}"] = results[poi]["t"]
-        save[f"z_{poi}"] = results[poi]["z"]
-        save[f"chi2cond_{poi}"] = results[poi]["chi2_cond"]
-        save[f"gnorm_{poi}"] = results[poi]["gnorm_cond"]
-        if poi in cert:
-            save[f"cert_idx_{poi}"] = cert[poi]["idx"]
-            save[f"cert_tshared_{poi}"] = cert[poi]["t_shared"]
-            save[f"cert_texact_{poi}"] = cert[poi]["t_exact"]
-            save[f"cert_maxdt_{poi}"] = cert[poi]["max_abs_dt"]
-    np.savez(out, **save)
+    _save_state()
     print(f"[save] {out}", flush=True)
 
     # ---- single-rank (or whole-population) stats + plots inline; multi-rank -> collect ----
