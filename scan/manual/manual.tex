@@ -1237,7 +1237,9 @@ random co-profiled starts at two POI values; agreement of the converged
 $\chisq$ (spread $\ll1$) certifies the global minimum.
 \end{itemize}
 An honest caveat the code reports faithfully: at $\Lmax=2508$ the AD
-$\ginf$ floors at $\sim1$--$5$ (above $\mathrm{GTOL}=0.03$) because of a
+$\ginf$ floors at $\sim1$--$7$ (above $\mathrm{GTOL}=0.03$; full-\code{plik},
+with its SPG inner profile, sits at the upper end --- $\sim6.9$ measured on
+$\tau$) because of a
 $\sim0.1$ $\chisq$ discretisation roughness (from the $k$-chunking and the
 visibility-driven $\ln a$ grid, \emph{not} the ODE tolerance --- proven
 \code{rtol}-independent). This roughness averages out in the multi-point
@@ -1546,7 +1548,12 @@ count). A persistent on-disk compilation cache
 cached XLA executables for the primal stages; note, though, that the
 assembled staged-jvp gradient program is re-traced once per SLURM job (it
 does not persist across jobs, Section~\ref{sec:gradcost}), so a resume
-re-pays its $\sim5$~min build. Both tools checkpoint per iteration/stage
+re-pays its $\sim5$~min build. The full-\code{plik} \code{"ad"} iteration
+gradient is far heavier: its AD-through-SPG compile is $\sim53$~min at
+$\Lmax=2508$, and the multi-GPU \emph{sharded} program is not captured by the
+on-disk cache at all, so every job --- and every POI-slice rank --- re-pays
+it; negligible against the multi-hour solves, but not amortised. Both tools
+checkpoint per iteration/stage
 and auto-resume, so
 production jobs are sized to finish in one shot where possible (the
 full-\code{plik} SMC runs were given $24$~h --- the \code{plik\_lite} SMC
@@ -1970,6 +1977,13 @@ $\chisq_1$ median for the parameters checked --- on GPU at small $N$
 ($0.530$/$0.358$ vs $0.455$) and in a first $N{=}500$ pass ($0.42$--$0.55$
 across $\Lambda$CDM) --- directly corroborating the $\dchisq$ interval
 coverage; the full $68\%/95\%$ table is in production.
+\item \textbf{Full-\code{plik} relaunch path} (single-POI dry run, job
+55244960): the recentred \code{lcdm\_neff\_plikfull\_rc.py} grid with
+\code{PA\_WARM\_FROM\_CEN=1} compiles ($\sim53$~min at $\Lmax=2508$),
+iterates ($\sim19$~min/iter), and returns a finite $\tau$ interval
+$0.0593^{+0.0046}_{-0.0068}$ agreeing with the full-\code{plik} SMC
+($0.0632\pm0.0054$) to $\sim0.7\sigma$ --- validating the pre-pass-free
+recentred path before the full $\Neff$ run.
 \end{enumerate}
 
 \subsection{Performance summary}
@@ -1980,7 +1994,9 @@ on four nodes, full plik). A seven-POI $\Lambda\mathrm{CDM}+\Neff$ profile
 is \emph{projected} (from the measured 6-POI runs and the cost model) to
 land well under the $22$~h CLASS+MH bar --- the definitive $\Neff$ timing
 awaits the pre-pass-disabled, hand-recentered re-run
-(Section~\ref{sec:mle}; job 55235706, $48$~h) --- and it
+(Section~\ref{sec:mle}; job 55235706, $48$~h; a single-POI dry run of that
+exact path measured $\sim53$~min compile $+\sim19$~min/iter, comfortably
+inside budget) --- and it
 carries a per-point AD stationarity certificate MH does not provide.
 
 % =====================================================================
