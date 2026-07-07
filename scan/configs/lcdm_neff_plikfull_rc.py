@@ -20,6 +20,8 @@ Run with PA_WARM_FROM_CEN=1 so the warm start (and warm-Hessian preconditioner) 
 this center (= the joint MLE) rather than the stale LCDM-only profile npz.
 """
 
+# varies each parameter within 5 sigma of its Planck mean, one sigma at a time --> 10 pts each.
+
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
     "cen": {
@@ -27,8 +29,8 @@ CONFIG = {
         "n_s": 0.95986, "ln10As": 3.0446, "tau_reion": 0.05933, "Neff": 2.8268,
     },
     "sig": {
-        "h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0012,
-        "n_s": 0.0042, "ln10As": 0.014, "tau_reion": 0.0073, "Neff": 0.2,
+        "h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0013, # CG changed from 0.0012
+        "n_s": 0.0042, "ln10As": 0.014, "tau_reion": 0.0073, "Neff": 0.1, # CG changed manually from 0.2
     },
     "pois": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
     "fixed": {

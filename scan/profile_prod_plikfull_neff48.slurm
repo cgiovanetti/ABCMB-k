@@ -6,9 +6,9 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=64
-#SBATCH --time=48:00:00
-#SBATCH --job-name=abcmb_pf_neff48
-#SBATCH --output=logs/abcmb_pf_neff48_%j.out
+#SBATCH --time=24:00:00
+#SBATCH --job-name=abcmb_pf_neff
+#SBATCH --output=logs/abcmb_pf_neff_%j.out
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=cgiovanetti@lbl.gov
 #
@@ -48,7 +48,8 @@ mkdir -p logs scan/results
 export PA_CONFIG=scan/configs/lcdm_neff_plikfull_rc.py
 export PA_WARM_FROM_CEN=1          # warm start + preconditioner at the config center (= joint MLE)
 export PA_MLE_PREPASS=0            # explicit: do NOT run the pre-pass (it hung run #2)
-export PA_TAG=_pfrc                # fresh tag; do not resume-skip the stale _pf npz
+# export PA_TAG=_pfrc                # fresh tag; do not resume-skip the stale _pf npz
+export PA_TAG=_widecdm             # widened CDM prior
 export PA_POI_SLICE=1              # 1 disjoint POI per node
 export PA_LMAX=2508
 export PA_NPTS=11
