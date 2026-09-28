@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=64
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --job-name=abcmb_pf_neff
 #SBATCH --output=logs/abcmb_pf_neff_%j.out
 #SBATCH --mail-type=ALL
@@ -23,6 +23,11 @@
 #      gradient is a NEW compile signature absent from the warm cache; all 7 ranks printed
 #      "is compiling..." and produced ZERO output / ZERO cache writes / ZERO checkpoints
 #      for the full 10h (monster compile or hang). The pre-pass is NOT used here.
+#   3) 55661112 (_widecdm, 8h, completed but unconverged): the cached warm Hessian was
+#      garbage (FD step 0.05 sigma on a rough gradient -> eig -5.4, wrong degeneracy valley),
+#      shifted to cond ~1e6 -> rows railed at the +/-5 sigma box. Fixed 2026-09-28: Hessian
+#      recomputed at PA_FDH=0.5 (matches the valley of converged rows), Hinv0 floors |eig|
+#      at 1.0, cache keyed on SIGMA + FD step. Tag _fixprec.
 #
 # THIS RUN = the PROVEN compile path (no pre-pass) + the two centering fixes + padding:
 #   - PA_CONFIG = lcdm_neff_plikfull_rc.py : grids RECENTERED on the joint MLE (no railing).
@@ -48,13 +53,12 @@ mkdir -p logs scan/results
 export PA_CONFIG=scan/configs/lcdm_neff_plikfull_rc.py
 export PA_WARM_FROM_CEN=1          # warm start + preconditioner at the config center (= joint MLE)
 export PA_MLE_PREPASS=0            # explicit: do NOT run the pre-pass (it hung run #2)
-# export PA_TAG=_pfrc                # fresh tag; do not resume-skip the stale _pf npz
-export PA_TAG=_widecdm             # widened CDM prior
+export PA_TAG=_fixprec             # fixed warm-Hessian preconditioner (was _widecdm)
 export PA_POI_SLICE=1              # 1 disjoint POI per node
 export PA_LMAX=2508
 export PA_NPTS=11
 export PA_NSIG=3.0
-export PA_MAXIT=18
+export PA_MAXIT=30              # was 18; the 1-sigma trust radius (PA_STEP_MAX) needs a few extra iters on far rows
 export PA_GTOL=0.03
 export PA_RTOL=1e-5
 export PA_SIGTOL=1e-2              # sigma1-stability early-stop (default)

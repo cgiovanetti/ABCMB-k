@@ -227,8 +227,14 @@ POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out:
 # writing only its own per-POI npz -> no shared-file clobber, no MPI gather. This is
 # the node-scaling lever for few-hours wall-clock (the embarrassingly-parallel POI axis).
 XBOX = 5.0                                            # nuisance box (sigma units)
+STEP_MAX = float(os.environ.get("PA_STEP_MAX", "1.0"))   # BFGS trust radius (sigma, max-norm)
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
-FDH = 0.05                                            # FD step (sigma) for the AD Fisher Hessian
+# FD step (sigma) for the AD Fisher Hessian. 0.05 amplified the full-plik gradient roughness
+# into a garbage LCDM+Neff Hessian (eig -5.4; degeneracy valley wrong); 0.5 reproduces the
+# valley traced by converged profile rows. Entry noise at 0.5 is still ~1 (0.25-vs-0.5 diff),
+# so Hinv0 floors |eig| at 1.0: never amplify a direction the Hessian cannot resolve.
+FDH = float(os.environ.get("PA_FDH", "0.5"))
+HINV0_EIGFLOOR = 1.0                                  # min |eig| (scaled chi2 curvature) in Hinv0
 # Inverse-Fisher BFGS preconditioner: init Hinv from the (per-POI) nuisance
 # Hessian at the warm-start global best fit. Turns the early steepest-descent
 # steps into near-Newton steps -> converges in a few iters on the ill-conditioned
@@ -628,6 +634,13 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         gd = (g * d).sum(1)
         bad = gd >= 0
         d[bad] = -g[bad]; Hinv[bad] = np.eye(P); gd[bad] = (g[bad] * d[bad]).sum(1)
+        # trust region: cap each row's step at STEP_MAX sigma (max-norm). A far row's
+        # gradient is dominated by the stiff theta_s mismatch; a small error in the FD
+        # Hessian's stiff eigenvector leaks it into the soft directions -> multi-sigma
+        # steps to cosmologies where an ODE solve hits max_steps, which aborts every
+        # sharded replica. Converging Newton steps are << STEP_MAX, so they are untouched.
+        dmax = np.abs(d).max(1); big = dmax > STEP_MAX
+        d[big] *= (STEP_MAX / dmax[big])[:, None]; gd[big] = (g[big] * d[big]).sum(1)
         # Armijo backtracking with FAST values, per-row alpha
         alpha = np.ones(N); accept = ~active
         x_new = x.copy(); f_new = f.copy()
@@ -759,6 +772,18 @@ def _warm_hessian_cache_path():
                         f"{'' if USE_PLIK else '_noplik'}.npz")
 
 
+def _rescale_hessian(H, sigma_cached, tag):
+    """A cached Hessian is in the scaled coords of the SIGMA it was built with
+    (xs = (theta - CENTER)/SIGMA). Map it to the current SIGMA: H_now = S H S with
+    S = SIGMA / sigma_cached (exact; a congruence, so definiteness is unchanged)."""
+    S = SIGMA / np.asarray(sigma_cached, float)
+    if np.allclose(S, 1.0, rtol=1e-12):
+        return H
+    print(f"{tag} cached Hessian built with a different SIGMA -> rescaled "
+          f"(SIGMA/sigma_cached = {np.round(S, 4).tolist()})", flush=True)
+    return H * np.outer(S, S)
+
+
 def _setup_plik_full_precond(theta_ref=None):
     """No-op retained for call-site stability. The full-plik inner profile is now
     self-contained: it computes its OWN per-cosmology Hessian each call (a fixed
@@ -780,9 +805,10 @@ def _warm_precond_hessian(theta_warm, h=FDH):
             d = np.load(cache)
             if (d["H"].shape == (D, D) and np.allclose(d["theta_warm"], theta_w, atol=1e-9)
                     and int(d["lmax"]) == LMAX and bool(d["lowtt"]) == USE_LOWTT
-                    and bool(d["lowee"]) == USE_LOWEE):
+                    and bool(d["lowee"]) == USE_LOWEE and "sigma" in d.files
+                    and "fdh" in d.files and float(d["fdh"]) == h):
                 print(f"[precond] loaded cached warm Hessian ({cache})", flush=True)
-                return np.array(d["H"], float)
+                return _rescale_hessian(np.array(d["H"], float), d["sigma"], "[precond]")
             print(f"[precond] cache present but mismatched -> recompute", flush=True)
         except Exception as ex:
             print(f"[precond] cache load failed ({ex}) -> recompute", flush=True)
@@ -798,7 +824,7 @@ def _warm_precond_hessian(theta_warm, h=FDH):
         try:
             tmp = cache + f".tmp.r{RANK}.npz"                # per-rank tmp -> safe atomic
             np.savez(tmp, H=H, theta_warm=theta_w, lmax=LMAX,
-                     lowtt=USE_LOWTT, lowee=USE_LOWEE)
+                     lowtt=USE_LOWTT, lowee=USE_LOWEE, sigma=SIGMA, fdh=h)
             os.replace(tmp, cache)
             print(f"[precond] saved warm Hessian cache ({cache})", flush=True)
         except Exception as ex:
@@ -808,14 +834,16 @@ def _warm_precond_hessian(theta_warm, h=FDH):
 
 def _hinv0_for_poi(H, poi_idx):
     """Per-POI initial inverse-Hessian (P,P): invert the nuisance submatrix of the
-    full warm Hessian (drop the POI row/col), regularised to PD."""
+    full warm Hessian (drop the POI row/col), regularised to PD by replacing each
+    eigenvalue with max(|lambda|, HINV0_EIGFLOOR). Not a spectral shift: the FD-of-AD
+    full-plik Hessian can be indefinite (lcdm_neff_plikfull_rc: -5.4), and shifting
+    that eigenvalue to 1e-3 gave cond ~1e6 -> ~1000x steps along its eigenvector ->
+    rows railed at XBOX (job 55661112)."""
     nuis = nuis_idx_of(poi_idx)
     sub = 0.5 * (H[np.ix_(nuis, nuis)] + H[np.ix_(nuis, nuis)].T)
-    ev = np.linalg.eigvalsh(sub)
-    lo = float(ev.min())
-    if lo <= 1e-6:                                   # floor to PD
-        sub = sub + (abs(min(lo, 0.0)) + 1e-3) * np.eye(P)
-    return np.linalg.inv(sub)
+    ev, V = np.linalg.eigh(sub)
+    ev = np.maximum(np.abs(ev), HINV0_EIGFLOOR)
+    return (V / ev) @ V.T
 
 
 # ======================================================================
@@ -859,9 +887,11 @@ def _joint_mle(theta_start):
             if (d["theta_mle"].shape == (D,) and d["H"].shape == (D, D)
                     and int(d["lmax"]) == LMAX and bool(d["lowtt"]) == USE_LOWTT
                     and bool(d["lowee"]) == USE_LOWEE
-                    and np.allclose(d["center"], CENTER, atol=1e-9)):
+                    and np.allclose(d["center"], CENTER, atol=1e-9)
+                    and "sigma" in d.files):
                 print(f"[mle] loaded cached joint MLE ({cache})", flush=True)
-                return (np.array(d["theta_mle"], float), np.array(d["H"], float),
+                return (np.array(d["theta_mle"], float),
+                        _rescale_hessian(np.array(d["H"], float), d["sigma"], "[mle]"),
                         float(d["chi2_min"]))
             print(f"[mle] cache present but mismatched -> recompute", flush=True)
         except Exception as ex:
@@ -887,7 +917,8 @@ def _joint_mle(theta_start):
         try:
             tmp = cache + f".tmp.r{RANK}.npz"
             np.savez(tmp, theta_mle=theta_mle, H=H, chi2_min=float(res.fun),
-                     center=CENTER, lmax=LMAX, lowtt=USE_LOWTT, lowee=USE_LOWEE)
+                     center=CENTER, lmax=LMAX, lowtt=USE_LOWTT, lowee=USE_LOWEE,
+                     sigma=SIGMA)
             os.replace(tmp, cache)
             print(f"[mle] saved joint-MLE cache ({cache})", flush=True)
         except Exception as ex:
@@ -1123,6 +1154,10 @@ def profile_lockstep(pois, outdir):
             # reuse the MLE-pre-pass Hessian (computed AT the MLE) when available;
             # else compute the warm Hessian at theta_warm (legacy path)
             Hwarm = H_prepass if H_prepass is not None else _warm_precond_hessian(theta_warm)
+            evw = np.linalg.eigvalsh(0.5 * (Hwarm + Hwarm.T))
+            print(f"[precond] warm Hessian eig (scaled): {np.array2string(evw, precision=3)}"
+                  + (f"  -- INDEFINITE ({int((evw <= 0).sum())} <= 0); Hinv0 uses |eig|"
+                     if evw.min() <= 0 else ""), flush=True)
             by_poi = {ORDER.index(p): _hinv0_for_poi(Hwarm, ORDER.index(p))
                       for p in pois}
             Hinv0 = np.stack([by_poi[int(Ps[b])] for b in range(len(Ps))])

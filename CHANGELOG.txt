@@ -9,6 +9,24 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-09-28 — Fix the warm-Hessian preconditioner (LCDM+Neff full plik); relaunch _fixprec
+------------------------------------------------------------------------------------------
+Follow-up to the entry below. Changes in scan/profile_prod_ad.py:
+  * _hinv0_for_poi: |eig| floored at HINV0_EIGFLOOR=1.0 (was: shift so lambda_min=1e-3).
+  * Warm-Hessian + MLE caches store SIGMA and are rescaled (S H S) when it changes; the
+    warm cache also stores the FD step and recomputes on mismatch. Eigenvalues printed.
+  * FDH default 0.05 -> 0.5 (PA_FDH). Recomputed the rc Hessian: at 0.05 the Neff valley
+    it implies was wrong ([0.08,-1.29,1.52,...] vs [1.20,0.41,1.10,0.72,0.27,0.02] sigma per
+    +0.1 Neff from converged rows); 0.25 still wrong; 0.5 gives [1.09,0.47,1.24,0.66,0.18,
+    -0.11]. Entries still carry ~1 of noise (0.25 vs 0.5), hence the floor of 1.0.
+  * Trust region in bfgs_rows: per-row step capped at PA_STEP_MAX=1.0 sigma (max-norm).
+    Without it the first step of a far h row went to a cosmology where an ODE solve hit
+    max_steps; under sharding XLA aborts every replica (not catchable).
+GPU validation (interactive 59026310, h+Neff, 2 iters): no crash, no pinned rows, far rows
+walking the valley at 1 sigma/iter. Relaunch: scan/profile_prod_plikfull_neff48.slurm, tag
+_fixprec, MAXIT 30, 48h. Rescaled/recomputed cache: warm_hessian_lcdm_neff_plikfull_rc_*.npz.
+
+
 2026-09-28 — Analysis of job 55661112 (_widecdm Neff full-plik profile): NOT converged
 -------------------------------------------------------------------------------------
 Job COMPLETED in 8h (7 nodes, all POIs early-stopped), but the intervals are not usable:
