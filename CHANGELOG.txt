@@ -9,6 +9,28 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-09-28 — Analysis of job 55661112 (_widecdm Neff full-plik profile): NOT converged
+-------------------------------------------------------------------------------------
+Job COMPLETED in 8h (7 nodes, all POIs early-stopped), but the intervals are not usable:
+  * _pfrc and _widecdm share the grid for h/omega_b/n_s/ln10As/tau, yet disagree by 1-3
+    in chi2 at the same grid point. The h profile is jagged (PCHIP +/-0.0055 is spurious).
+  * Neff rows 2.527/2.587 and h row 0.650 have ALL/most nuisances pinned at the +/-5 sigma
+    box (dchi2 129-1064). The same Neff=2.587 row converged in _pfrc.
+  * Root cause: the cached warm Hessian for lcdm_neff_plikfull_rc is INDEFINITE (eig
+    -5.43 ... 1267). _hinv0_for_poi shifts it to lambda_min=1e-3 -> cond ~1.2e6 (the
+    log's "nuis-Hessian cond"), so one direction gets ~1000x steps and rows overshoot
+    into the box corner. It hit _pfrc as well (its far Neff rows failed at dchi2 ~2000-5500).
+    The LCDM Hessians are PD (cond ~160), and those profiles have RMS 0.1-0.2 about a
+    parabola; both +Neff runs have 0.3-0.8.
+  * Second bug: the warm-Hessian cache key omits SIGMA, so the Jul 7 sig edit (omega_cdm
+    0.0012->0.0013, Neff 0.2->0.1) loaded a Hessian in the wrong scaled units.
+  * The centre row gives 2757.33 in both runs vs 2757.110 for the unrounded _pf row it was
+    copied from (0.01 sigma away) -> ~0.2 chi2 surface roughness near the minimum.
+Added scan/compare_profile_runs.py: overlays _pf/_pfrc/_widecdm, parabola to the lower
+envelope -> results/profile_neff_runs_compared.png. Indicative: Neff 2.86 +/- 0.22,
+h 0.668 +/- 0.013 (SMC: 3.045 +/- 0.142, 0.682 +/- 0.011). No code fixes applied.
+
+
 2026-06-29 — Neff full-plik profile: diagnose 2nd timeout, relaunch (proven path, 48h), analysis nb
 ----------------------------------------------------------------------------------------------------
 Session "neff-relaunch". The 7-POI LCDM+Neff FULL-plik headline timed out a 2nd time
