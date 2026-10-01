@@ -58,7 +58,8 @@ mkdir -p logs scan/results
 export PA_CONFIG=scan/configs/lcdm_neff_plikfull_rc.py
 export PA_WARM_FROM_CEN=1          # warm start + preconditioner at the config center (= joint MLE)
 export PA_MLE_PREPASS=0            # explicit: do NOT run the pre-pass (it hung run #2)
-export PA_TAG=_fixprec             # fixed warm-Hessian preconditioner (was _widecdm)
+export PA_TAG=${PA_TAG:-_fixprec}  # fixed warm-Hessian preconditioner (was _widecdm)
+# PA_POIS (csv POI subset) passes through from the submit env if set; keep --nodes = #POIs
 export PA_POI_SLICE=1              # 1 disjoint POI per node
 export PA_LMAX=2508
 export PA_NPTS=11
