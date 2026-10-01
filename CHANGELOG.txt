@@ -9,6 +9,20 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-01 — 59149970 (_fixprec) done: 5 POIs usable, h + n_s frozen by a NaN gradient; guard
+--------------------------------------------------------------------------------------------
+Completed in 5h11m. tau/ln10As/omega_b/omega_cdm/Neff profiles are clean and agree with the
+earlier runs (Neff 2.827 [2.634, 2.913], upper side a ~1.2 plateau; far row 2.527 at the box).
+h and n_s never moved: the AD gradient was NaN (EQX_ON_ERROR=nan) for h row 9 / n_s row 1 at
+x0 -> NaN trial point -> the whole batch non-finite (-> 1e6 for all 11 rows) -> no step ever
+accepted -> sigma1 "stable" at it2. Same x0 points were finite in July and in 59149057, so
+the ABCMB failure is run-dependent (root cause under investigation, scan/.diag_nan/).
+Fix in profile_prod_ad.py: _safe_grad (central-FD value-path fallback, step 0.1, for rows
+with a non-finite gradient; g=0 if that fails too), non-finite search dirs -> steepest
+descent, and a POI with active rows but no accepted step restarts its sigma1 window.
+Rerunning h + n_s as _fixprec2 on interactive 59164538 (m5403_g).
+
+
 2026-09-30 — _fixprec 59041065 aborted at 26 min (ODE max_steps); relaunched on m5403_g
 --------------------------------------------------------------------------------------
 After 2 days queued, rank 0 (h) hit "maximum number of solver steps" ~26 min in (first

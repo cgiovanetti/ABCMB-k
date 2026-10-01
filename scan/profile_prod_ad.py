@@ -180,6 +180,7 @@ else:
     GRADMETHOD = _CFG_GRADMETHOD
 GRAD_KCHUNK = int(os.environ.get("PA_GRAD_KCHUNK", "100"))   # k_chunk for batched AD grad
 FD_STEP = float(os.environ.get("PA_FD_STEP", "1e-2"))        # central FD step (scaled coords)
+FD_FALLBACK_STEP = float(os.environ.get("PA_FD_FALLBACK_STEP", "0.1"))  # FD step where AD gives NaN
 FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "128"))        # cosmologies per primal call_batched (B_local=FD_CHUNK/n_dev)
 FD_CALTOL = float(os.environ.get("PA_FD_CALTOL", "1e-2"))   # it0 fd-vs-ad max-rel target
 FD_CALMIN = int(os.environ.get("PA_FD_CALMIN", "32"))       # min rows in the it0 calibration sample
@@ -579,6 +580,26 @@ if TRACE_EVALS:
     ad_grad_rows = _traced(ad_grad_rows, "adgrad")
 
 
+def _safe_grad(POI_IDX, X, PV, fd_step=None):
+    """iterate_grad, with a central-FD (value-path) fallback for rows whose gradient is
+    non-finite. Under EQX_ON_ERROR=nan an ABCMB solve that fails in the AD program
+    returns NaN for that row (59149970: h row 9, n_s row 1 at x0); a NaN gradient gives
+    a NaN trial point, and one NaN cosmology made the whole batch non-finite, so the
+    entire POI froze. Rows still non-finite after the fallback get g=0 (frozen, logged)."""
+    G = np.array(iterate_grad(POI_IDX, X, PV, GRADMETHOD, fd_step=fd_step), float)
+    bad = np.where(~np.isfinite(G).all(1))[0]
+    if len(bad):
+        print(f"  [grad] non-finite gradient on rows {bad.tolist()} -> central-FD fallback "
+              f"(step {FD_FALLBACK_STEP})", flush=True)
+        G[bad] = fdbatch_grad(POI_IDX[bad], X[bad], PV[bad], step=FD_FALLBACK_STEP)
+        still = np.where(~np.isfinite(G).all(1))[0]
+        if len(still):
+            print(f"  [grad] FD fallback also non-finite on rows {still.tolist()} -> g=0 "
+                  f"(row frozen)", flush=True)
+            G[still] = 0.0
+    return G
+
+
 def _interval_halfwidth(x, chi2):
     """1-sigma (dchi2=1) interval half-width of a single POI's profile, via the SAME
     PCHIP `interval` the final result uses. NaN if no clean dchi2=1 crossing yet (early
@@ -614,7 +635,7 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
               f"||g||max={gnorm.max():.2e}", flush=True)
     else:
         x = np.zeros((N, P)) if x0 is None else np.array(x0, float)
-        g = iterate_grad(POI_IDX, x, PV, GRADMETHOD, fd_step=fd_step)
+        g = _safe_grad(POI_IDX, x, PV, fd_step=fd_step)
         f = fast_values_rows(POI_IDX, x, PV)              # value (fast path)
         best_f = f.copy(); best_x = x.copy()
         Hinv = np.tile(np.eye(P), (N, 1, 1)) if Hinv0 is None \
@@ -656,7 +677,7 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
             break
         d = -np.einsum('bij,bj->bi', Hinv, g)
         gd = (g * d).sum(1)
-        bad = gd >= 0
+        bad = ~(gd < 0)                                  # not a descent dir, or non-finite
         d[bad] = -g[bad]; Hinv[bad] = np.eye(P); gd[bad] = (g[bad] * d[bad]).sum(1)
         # trust region: cap each row's step at STEP_MAX sigma (max-norm). A far row's
         # gradient is dominated by the stiff theta_s mismatch; a small error in the FD
@@ -681,7 +702,7 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
             xt = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)
             x_new[stuck] = xt[stuck]
             f_new[stuck] = fast_values_rows(POI_IDX, x_new, PV)[stuck]
-        g_new = iterate_grad(POI_IDX, x_new, PV, GRADMETHOD, fd_step=fd_step)
+        g_new = _safe_grad(POI_IDX, x_new, PV, fd_step=fd_step)
         s = x_new - x; y = g_new - g; sy = (s * y).sum(1)
         # RELATIVE curvature condition (standard BFGS safeguard): only update when
         # the (s,y) pair is meaningfully positive-curvature. The old absolute
@@ -713,7 +734,17 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         # ---- sigma1-STABILITY early-stop (preferred): stop when EVERY POI's interval
         # half-width has moved < SIGTOL*sigma(POI) over the window (the interval has
         # converged to SIGTOL sigmas). Model-agnostic; no per-model tuning. ----
-        sig1_hist.append(_cur_sig1())
+        # a POI with active rows that accepted NO step did not converge, it stalled:
+        # restart its stability window rather than let 'nothing moved' read as stable
+        # (59149970: h and n_s 'converged' at it2 with every row still at x0).
+        stalled = [ORDER[p] for p, r in poi_rows.items()
+                   if active[r].any() and not (active[r] & accept[r]).any()]
+        if stalled:
+            print(f"  {log_prefix} no accepted step for {stalled} at it{it}; "
+                  f"sigma1 window restarted", flush=True)
+            sig1_hist = [_cur_sig1()]
+        else:
+            sig1_hist.append(_cur_sig1())
         if SIGTOL > 0 and len(sig1_hist) > SIGTOL_PATIENCE:
             prev = sig1_hist[-1 - SIGTOL_PATIENCE]; cur = sig1_hist[-1]
             worst = 0.0; ready = True; n_finite = 0; n_offgrid = 0
