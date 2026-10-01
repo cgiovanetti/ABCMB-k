@@ -229,6 +229,7 @@ POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out:
 # the node-scaling lever for few-hours wall-clock (the embarrassingly-parallel POI axis).
 XBOX = 5.0                                            # nuisance box (sigma units)
 STEP_MAX = float(os.environ.get("PA_STEP_MAX", "1.0"))   # BFGS trust radius (sigma, max-norm)
+LS_BATCH = int(os.environ.get("PA_LS_BATCH", "4"))      # step lengths per batched line-search call
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
 # FD step (sigma) for the AD Fisher Hessian. 0.05 amplified the full-plik gradient roughness
 # into a garbage LCDM+Neff Hessian (eig -5.4; degeneracy valley wrong); 0.5 reproduces the
@@ -686,17 +687,28 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         # sharded replica. Converging Newton steps are << STEP_MAX, so they are untouched.
         dmax = np.abs(d).max(1); big = dmax > STEP_MAX
         d[big] *= (STEP_MAX / dmax[big])[:, None]; gd[big] = (g[big] * d[big]).sum(1)
-        # Armijo backtracking with FAST values, per-row alpha
-        alpha = np.ones(N); accept = ~active
+        # Armijo backtracking with FAST values, batched over step lengths: each call tries
+        # LS_BATCH successive halvings of every row at once (the batch axis is cheap: 4x
+        # the rows costs ~1.6x the time, 2026-10-01 bench), and a row takes its lowest-chi2
+        # trial that passes Armijo. Sequential halving made one stubborn row cost all 11
+        # rows up to MAXLS calls per iteration. LS_BATCH=1 is the old sequential search.
+        accept = ~active
         x_new = x.copy(); f_new = f.copy()
-        for _ls in range(MAXLS):
+        a0 = 1.0
+        for _ls in range(-(-MAXLS // LS_BATCH)):
             if accept.all():
                 break
-            xt = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)
-            ft = fast_values_rows(POI_IDX, xt, PV)
-            ok = (ft <= f + C1 * alpha * gd) & ~accept
-            x_new[ok] = xt[ok]; f_new[ok] = ft[ok]; accept |= ok
-            alpha[~accept] *= 0.5
+            alphas = a0 * 0.5 ** np.arange(LS_BATCH)                              # (K,)
+            xt = np.clip(x[None] + alphas[:, None, None] * d[None], -XBOX, XBOX)  # (K,N,P)
+            ft = fast_values_rows(np.tile(POI_IDX, LS_BATCH), xt.reshape(-1, P),
+                                  np.tile(PV, LS_BATCH)).reshape(LS_BATCH, N)
+            ok = (ft <= f[None] + C1 * alphas[:, None] * gd[None]) & ~accept[None]
+            kbest = np.where(ok, ft, np.inf).argmin(0)
+            got = np.where(ok.any(0))[0]
+            x_new[got] = xt[kbest[got], got]; f_new[got] = ft[kbest[got], got]
+            accept[got] = True
+            a0 *= 0.5 ** LS_BATCH
+        alpha = np.full(N, a0)
         stuck = active & ~accept
         if stuck.any():
             xt = np.clip(x + alpha[:, None] * d, -XBOX, XBOX)

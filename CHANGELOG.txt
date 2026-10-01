@@ -9,6 +9,32 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-01 — Batch-axis benchmark at production shape; batched line search (branch spg-fix)
+----------------------------------------------------------------------------------------
+LCDM+Neff full plik, l_max 2508, lensing on, 4x A100-40GB (hbm40g), sharded, fixed SPG at
+PLF_MAXIT=3000, h rows +-3 sigma, nuisances +-1 sigma (scan/bench_batch.py):
+  value path (fast_values_rows)        AD gradient (ad_grad_rows, P=6 jvp directions)
+  B    warm    s/row  peakGB/GPU       B    warm     s/row  peakGB/GPU
+  12    68 s   5.6    1.5              11   846 s*   77     -
+  48   106 s   2.2    1.9              24  1140 s    47.5   3.0
+  96   171 s   1.8    3.6              48  1687 s    35.1   8.5
+  192  310 s   1.6    7.1              64  2053 s    32.1  12.1
+  (* production trace of 59164538, SPG maxit 800.) Fits: T_val ~ 38 s + 1.4 s/row,
+  T_ad ~ 590 s + 23 s/row; no throughput knee or memory limit up to B=64 (the June P=2
+  sweep's knee at B_local 32 does not appear at P=6/B_local<=16). First call per new
+  shape adds ~9 min of compile. PLF_MAXIT 800 -> 3000 costs +11% on the value path (B=48).
+At B=11 an iteration was ~14 min AD + ~13 min line search (11-13 sequential 1.1-min value
+calls: one stubborn row held every row through up to MAXLS halvings). New PA_LS_BATCH
+(default 4): each line-search call tries 4 halvings of every row at once, a row takes its
+lowest-chi2 Armijo trial; LS_BATCH=1 is the old search. Smoke (tau, 11 rows): 3 rounds of
+44 cosmologies, ~1.7 min each warm, vs ~13 min sequential; the 2nd/3rd rounds were for the
+centre row only (already at its minimum).
+Projected per-iteration cost with batched LS: ~628 s + 29 s/row -> B=48: ~33 min,
+B=64: ~41 min for 4-6x the rows of today's 27-min B=11 iteration (3.6-3.9x per node).
+OPEN (user, 2026-10-01): once this settles, retry a computed Hessian (Newton) instead of
+BFGS -- the roughness that made the FD-of-AD Hessian unusable was the SPG, now fixed.
+
+
 2026-10-01 — plik_full SPG fix (branch spg-fix): bounded nuisances, no blind moves
 -------------------------------------------------------------------------------------
 Fixes the NaN-nuisance root cause in scan/.diag_nan/FINDINGS.md. Every floated nuisance is
