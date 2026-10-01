@@ -63,7 +63,10 @@ FIXED_NUIS = {
 
 # ---- the 21 FLOATED nuisances: (name, start, scale, gauss_prior(mean,sigma)|None, (lo,hi)) ----
 # scale = characteristic step for conditioning (prior sigma where Gaussian; ref-dist scale
-# otherwise). lo/hi = the cobaya uniform-prior box (None = unbounded).
+# otherwise). lo/hi = Planck's CosmoMC sampling ranges (plc_3.0 cosmomc/batch3
+# plik_rd12_HM_v22_{TT,TTTEEE}.ini); cobaya gives the Gaussian-prior ones no hard range.
+# A_planck uses CosmoMC's planck_calibration.ini range [0.9, 1.1] (not in this bundle).
+# Every floated nuisance must be bounded: the SPG step is only bounded by the box.
 _F = [
     # name                start    scale   gauss(mean,sigma)        bounds
     ("A_cib_217",          67.0,   10.0,   None,                    (0.0, 200.0)),
@@ -74,19 +77,19 @@ _F = [
     ("ps_A_143_143",       47.0,   10.0,   None,                    (0.0, 400.0)),
     ("ps_A_143_217",       40.0,   12.0,   None,                    (0.0, 400.0)),
     ("ps_A_217_217",      104.0,   13.0,   None,                    (0.0, 400.0)),
-    ("gal545_A_100",        8.6,    2.0,   (8.6,    2.0),           (0.0, None)),
-    ("gal545_A_143",       10.6,    2.0,   (10.6,   2.0),           (0.0, None)),
-    ("gal545_A_143_217",   23.5,    8.5,   (23.5,   8.5),           (0.0, None)),
-    ("gal545_A_217",       91.9,   20.0,   (91.9,  20.0),           (0.0, None)),
-    ("galf_TE_A_100",       0.130,  0.042, (0.130,  0.042),         (0.0, None)),
-    ("galf_TE_A_100_143",   0.130,  0.036, (0.130,  0.036),         (0.0, None)),
-    ("galf_TE_A_100_217",   0.46,   0.09,  (0.46,   0.09),          (0.0, None)),
-    ("galf_TE_A_143",       0.207,  0.072, (0.207,  0.072),         (0.0, None)),
-    ("galf_TE_A_143_217",   0.69,   0.09,  (0.69,   0.09),          (0.0, None)),
-    ("galf_TE_A_217",       1.938,  0.54,  (1.938,  0.54),          (0.0, None)),
-    ("calib_100T",          1.0002, 0.0007,(1.0002, 0.0007),        (None, None)),
-    ("calib_217T",          0.99805,0.00065,(0.99805,0.00065),      (None, None)),
-    ("A_planck",            1.0,    0.0025,(1.0,    0.0025),        (None, None)),
+    ("gal545_A_100",        8.6,    2.0,   (8.6,    2.0),           (0.0, 50.0)),
+    ("gal545_A_143",       10.6,    2.0,   (10.6,   2.0),           (0.0, 50.0)),
+    ("gal545_A_143_217",   23.5,    8.5,   (23.5,   8.5),           (0.0, 100.0)),
+    ("gal545_A_217",       91.9,   20.0,   (91.9,  20.0),           (0.0, 400.0)),
+    ("galf_TE_A_100",       0.130,  0.042, (0.130,  0.042),         (0.0, 10.0)),
+    ("galf_TE_A_100_143",   0.130,  0.036, (0.130,  0.036),         (0.0, 10.0)),
+    ("galf_TE_A_100_217",   0.46,   0.09,  (0.46,   0.09),          (0.0, 10.0)),
+    ("galf_TE_A_143",       0.207,  0.072, (0.207,  0.072),         (0.0, 10.0)),
+    ("galf_TE_A_143_217",   0.69,   0.09,  (0.69,   0.09),          (0.0, 10.0)),
+    ("galf_TE_A_217",       1.938,  0.54,  (1.938,  0.54),          (0.0, 10.0)),
+    ("calib_100T",          1.0002, 0.0007,(1.0002, 0.0007),        (0.0, 3.0)),
+    ("calib_217T",          0.99805,0.00065,(0.99805,0.00065),      (0.0, 3.0)),
+    ("A_planck",            1.0,    0.0025,(1.0,    0.0025),        (0.9, 1.1)),
 ]
 FLOAT_NAMES = [f[0] for f in _F]
 
@@ -247,28 +250,43 @@ class PlikFull:
         AMIN, AMAX = 1e-10, 1e10
         MNM = 10                                                 # GLL nonmonotone window
 
+        # Robustness (scan/.diag_nan/FINDINGS.md): the textbook sy<=0 -> AMAX rule plus an
+        # unconditional move after a failed line search sent calib_217T < 0 -> NaN, and the
+        # same junk moves made the profiled chi2 chaotic in the Cls. So: a failed line search
+        # (or a non-finite trial/gradient) leaves z where it is and shrinks alpha; sy<=0 keeps
+        # alpha; and the best iterate, not the last (GLL is nonmonotone), is returned.
         def outer(carry, _):
-            z, g, alpha, fbuf = carry
+            z, g, alpha, fbuf, zb, fb = carry
             fref = jnp.max(fbuf)                                 # GLL: compare vs max of last MNM f's
             d = jnp.clip(z - alpha * g, zlo, zhi) - z            # spectral projected-gradient dir
             gd = jnp.dot(g, d)
             def ls(carry, _):                                    # NONMONOTONE Armijo: first accepted lam
-                lam, accepted, z_acc = carry
+                lam, accepted, z_acc, f_acc = carry
                 zt = z + lam * d
-                ok = (f(zt) <= fref + c1 * lam * gd) & (~accepted)
-                return (lam * 0.5, accepted | ok, jnp.where(ok, zt, z_acc)), None
-            z_tiny = z + (0.5 ** maxls) * d
-            (_, accepted, z_acc), _ = jax.lax.scan(ls, (1.0, False, z_tiny), None, length=maxls)
-            z_new = jnp.where(accepted, z_acc, z_tiny)
-            g_new = gradf(z_new)
+                ft = f(zt)
+                ok = jnp.isfinite(ft) & (ft <= fref + c1 * lam * gd) & (~accepted)
+                return (lam * 0.5, accepted | ok, jnp.where(ok, zt, z_acc),
+                        jnp.where(ok, ft, f_acc)), None
+            (_, accepted, z_acc, f_acc), _ = jax.lax.scan(
+                ls, (1.0, False, z, fbuf[-1]), None, length=maxls)
+            g_acc = gradf(z_acc)
+            good = accepted & jnp.all(jnp.isfinite(g_acc))
+            z_new = jnp.where(good, z_acc, z)
+            g_new = jnp.where(good, g_acc, g)
+            f_new = jnp.where(good, f_acc, fbuf[-1])
             s = z_new - z; y = g_new - g
             sy = jnp.dot(s, y); ss = jnp.dot(s, s)
-            alpha_new = jnp.where(sy > 1e-30, jnp.clip(ss / sy, AMIN, AMAX), AMAX)  # BB step
-            fbuf_new = jnp.concatenate([fbuf[1:], f(z_new)[None]])
-            return (z_new, g_new, alpha_new, fbuf_new), None
+            alpha_bb = jnp.where(sy > 1e-30, ss / jnp.where(sy > 1e-30, sy, 1.0), alpha)  # BB step
+            alpha_new = jnp.clip(jnp.where(good, alpha_bb, alpha * 0.5 ** maxls), AMIN, AMAX)
+            fbuf_new = jnp.concatenate([fbuf[1:], f_new[None]])
+            better = f_new < fb
+            return (z_new, g_new, alpha_new, fbuf_new,
+                    jnp.where(better, z_new, zb), jnp.where(better, f_new, fb)), None
 
-        fbuf0 = jnp.full(MNM, f(z))
-        (z_star, _, _, _), _ = jax.lax.scan(outer, (z, g, jnp.asarray(1.0), fbuf0), None, length=maxit)
+        f0 = f(z)
+        fbuf0 = jnp.full(MNM, f0)
+        carry0 = (z, g, jnp.asarray(1.0), fbuf0, z, f0)
+        (_, _, _, _, z_star, _), _ = jax.lax.scan(outer, carry0, None, length=maxit)
         nu_star = self.start + self.scale * z_star
         return self.penalized_chi2(cls2d, nu_star), nu_star
 
