@@ -9,6 +9,21 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-01 — plik_full SPG fix (branch spg-fix): bounded nuisances, no blind moves
+-------------------------------------------------------------------------------------
+Fixes the NaN-nuisance root cause in scan/.diag_nan/FINDINGS.md. Every floated nuisance is
+now bounded with Planck's CosmoMC ranges (plc_3.0 cosmomc/batch3: calib_100T/217T [0,3],
+gal545 [0,50/50/100/400], galf_TE [0,10]; A_planck [0.9,1.1] from CosmoMC's
+planck_calibration.ini, not in the bundle). A failed line search or non-finite trial/gradient
+leaves z in place and shrinks alpha; sy<=0 keeps alpha; the best iterate is returned.
+Tested on the stashed 59149970 Cls (1 A100): matches a scipy L-BFGS-B reference to 1e-4 on
+h rows 0/5/9 (old code +0.006 on row 5); other rows within 0.008 of the old code.
+The residual roughness is NOT the junk moves: near the best fit (h rows 4-7) the profiled
+chi2 still moves up to 0.03-0.08 under 1e-12 Cl noise at maxit=800, but ~1e-9 at
+PLF_MAXIT=3000 -> incomplete inner convergence. Cost 4.0 -> 14.8 s per 11-row batched profile.
+Not merged to main yet: the h+n_s _fixprec2 resume (59166910) must keep the old SPG.
+
+
 2026-10-01 — 59149970 (_fixprec) done: 5 POIs usable, h + n_s frozen by a NaN gradient; guard
 --------------------------------------------------------------------------------------------
 Completed in 5h11m. tau/ln10As/omega_b/omega_cdm/Neff profiles are clean and agree with the
