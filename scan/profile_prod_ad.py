@@ -555,6 +555,30 @@ def iterate_grad(POI_IDX, X, PV, method, fd_step=None):
     return G
 
 
+TRACE_EVALS = os.environ.get("PA_TRACE_EVALS", "0") != "0"   # debug: log every batched eval
+if TRACE_EVALS:
+    # Print each row's physical parameters BEFORE every batched evaluation (flushed), so a
+    # run that aborts inside ABCMB leaves the offending batch + phase as the last log lines.
+    def _traced(fn, tag):
+        def wrapper(POI_IDX, X, PV, *a, **k):
+            print(f"[eval] {tag} BEGIN {time.strftime('%H:%M:%S')} N={len(PV)} "
+                  f"({' '.join(ORDER)})", flush=True)
+            for b in range(len(PV)):
+                th = assemble_phys(int(POI_IDX[b]), X[b], PV[b])
+                print(f"[eval]   row{b:2d} " + " ".join(f"{v:.7g}" for v in th), flush=True)
+            out = fn(POI_IDX, X, PV, *a, **k)
+            if tag == "value":
+                msg = "chi2 " + " ".join(f"{v:.3f}" for v in np.asarray(out))
+            else:
+                msg = ("chi2 " + " ".join(f"{v:.3f}" for v in np.asarray(out[0]))
+                       + " | |g|max " + " ".join(f"{v:.3g}" for v in np.abs(out[1]).max(1)))
+            print(f"[eval] {tag} END {time.strftime('%H:%M:%S')} {msg}", flush=True)
+            return out
+        return wrapper
+    fast_values_rows = _traced(fast_values_rows, "value")
+    ad_grad_rows = _traced(ad_grad_rows, "adgrad")
+
+
 def _interval_halfwidth(x, chi2):
     """1-sigma (dchi2=1) interval half-width of a single POI's profile, via the SAME
     PCHIP `interval` the final result uses. NaN if no clean dchi2=1 crossing yet (early

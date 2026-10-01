@@ -9,6 +9,21 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-09-30 — _fixprec 59041065 aborted at 26 min (ODE max_steps); relaunched on m5403_g
+--------------------------------------------------------------------------------------
+After 2 days queued, rank 0 (h) hit "maximum number of solver steps" ~26 min in (first
+value evals) and XLA aborted all 7 nodes. Not yet explained:
+  * Background + HyRex step counts over 231 cosmologies (h +/-3 sigma, rest +/-1.5 sigma) are
+    far from their caps (optical depth 1294-1620/2048, nearly parameter-independent; HyRex
+    <=343/4096; its res=9 is event_occurred). "CpuCallback" is jaxlib's generic message, so
+    the failing solve may be on GPU (perturbations, cap 16384) -- not isolated.
+  * Same inputs passed in the 09-28 validation and in a traced 4-node rerun (interactive
+    59149057, PA_TRACE_EVALS=1, log scan/.diag_maxsteps/diagrun.log) -> intermittent.
+Added PA_TRACE_EVALS (logs every batched eval's cosmologies + chi2). Launcher: account
+m5403_g, EQX_ON_ERROR=nan (failed solve -> NaN chi2, rejected by the line search; tested
+under jit/vmap/jvp with ForwardMode), tracing on. grep the log for 'nan' afterwards.
+
+
 2026-09-28 — Fix the warm-Hessian preconditioner (LCDM+Neff full plik); relaunch _fixprec
 ------------------------------------------------------------------------------------------
 Follow-up to the entry below. Changes in scan/profile_prod_ad.py:

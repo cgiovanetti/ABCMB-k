@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=m3166_g
+#SBATCH --account=m5403_g
 #SBATCH --constraint=gpu
 #SBATCH --qos=regular
 #SBATCH --nodes=7
@@ -48,6 +48,11 @@ export OMP_NUM_THREADS=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export MPICH_GPU_SUPPORT_ENABLED=1
 export JAX_COMPILATION_CACHE_DIR=${JAX_COMPILATION_CACHE_DIR:-$SCRATCH/.jax_cache_abcmb}
+# 59041065 aborted all 7 nodes at 26 min: one ODE solve hit max_steps (not reproduced in a
+# traced rerun). NaN mode turns a failed solve into a NaN chi2 the line search rejects;
+# the trace logs every evaluated cosmology so a recurrence can be pinned down (grep nan).
+export EQX_ON_ERROR=nan
+export PA_TRACE_EVALS=1
 mkdir -p logs scan/results
 
 export PA_CONFIG=scan/configs/lcdm_neff_plikfull_rc.py
