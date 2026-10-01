@@ -582,8 +582,8 @@ if TRACE_EVALS:
 
 def _safe_grad(POI_IDX, X, PV, fd_step=None):
     """iterate_grad, with a central-FD (value-path) fallback for rows whose gradient is
-    non-finite. Under EQX_ON_ERROR=nan an ABCMB solve that fails in the AD program
-    returns NaN for that row (59149970: h row 9, n_s row 1 at x0); a NaN gradient gives
+    non-finite. The full-plik inner SPG profile can return NaN nuisances for a row
+    (scan/.diag_nan/FINDINGS.md; 59149970: h row 9, n_s row 1 at x0); a NaN gradient gives
     a NaN trial point, and one NaN cosmology made the whole batch non-finite, so the
     entire POI froze. Rows still non-finite after the fallback get g=0 (frozen, logged)."""
     G = np.array(iterate_grad(POI_IDX, X, PV, GRADMETHOD, fd_step=fd_step), float)

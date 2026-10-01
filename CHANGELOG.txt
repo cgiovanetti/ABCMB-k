@@ -20,7 +20,15 @@ the ABCMB failure is run-dependent (root cause under investigation, scan/.diag_n
 Fix in profile_prod_ad.py: _safe_grad (central-FD value-path fallback, step 0.1, for rows
 with a non-finite gradient; g=0 if that fails too), non-finite search dirs -> steepest
 descent, and a POI with active rows but no accepted step restarts its sigma1 window.
-Rerunning h + n_s as _fixprec2 on interactive 59164538 (m5403_g).
+Rerunning h + n_s as _fixprec2 on interactive 59164538 (m5403_g); resume job 59166910 queued
+afterany:59164538.
+Root cause (subagent, scan/.diag_nan/FINDINGS.md): not ABCMB. The full-plik inner SPG
+(plik_full.py) sets alpha=1e10 when sy<=0 and moves unconditionally after a failed line
+search; with unbounded calibrations this can drive calib_217T < 0 -> clipy 1/sqrt -> NaN
+nuisances. Which compile hits it depends on XLA GPU autotuning (1/4 fresh compiles). A NaN
+trial cosmology then hits max_steps in background.py:303, and raise mode aborts all replicas
+(the 59041065 crash, reproduced). Equinox error checks reduce over the batch, which is why one
+NaN row poisoned all 11. SPG fix proposed, not applied (it changes chi2 for every POI).
 
 
 2026-09-30 — _fixprec 59041065 aborted at 26 min (ODE max_steps); relaunched on m5403_g
