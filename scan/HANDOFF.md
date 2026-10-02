@@ -1,3 +1,53 @@
+# HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
+
+**Read this block first.** Branch `method-v2` (checked out in this tree, a979c4b, NOT merged
+to main). User's instruction: do NOT relaunch production until all fixes are in and the BFGS
+question is answered; present results and ask before launching.
+
+## State
+- Final-so-far 7-POI results: `_fixprec` (tau, ln10As, omega_b, omega_cdm, Neff) + `_fixprec2`
+  (h, n_s) in scan/results; caveats + table in CHANGELOG 2026-10-01 entries. h is still noisy
+  (+-1 dchi2 per row, old inner fit); Neff upper side fragile.
+- On main (merged): SPG fix (bounded nuisances, Planck CosmoMC ranges, no blind moves), batched
+  line search PA_LS_BATCH=4, NaN-gradient FD fallback, stalled-POI early-stop guard.
+- On method-v2 (a979c4b): PLF_MAXIT default 3000; interval_fit (quartic, dchi2<=9; PA_INTERVAL);
+  sigma_parabola sqrt(2) bug fixed (old "parab" values were sqrt(2) too small); config grid_sig
+  (grid span) separate from sig (scaling); PA_XBOX; PA_WARM_LR (linear-response warm start,
+  per-row guard); PA_BFGS_UPDATE toggle; v2 launcher scan/profile_prod_plikfull_neff48.slurm
+  (4 nodes, 21 pts x +-2.5 grid_sig, tag _v2) -- written, never run.
+- Warm-Hessian cache scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz was
+  REPLACED with the fixed-SPG FDH=0.5 Hessian (old one: scan/.v2test/H_oldspg_fdh0.5.npz).
+
+## Running when this was written (detached; finish on their own)
+A/B "is BFGS still necessary": BFGS (PA_BFGS_UPDATE=1) vs fixed warm Hessian (=0), v2 settings,
+21 rows, PA_MAXIT=8. Logs scan/.v2test/ab{1,0}.log (Neff, interactive 59177465, ends ~20:50)
+and ab{1,0}_h.log (h, interactive 59176649, ends ~19:45). Results (if a run reaches its
+early-stop + cert): scan/results/profile_prod_ad_{Neff_ab1,Neff_ab0,h_ab1_h,h_ab0_h}.npz;
+otherwise checkpoints profile_prod_ad_STATE_ab*_r0.npz. Compare per-iteration ||g||max and
+min chi2 ([lock] lines) and the final dchi2 profiles; grep '[warm-lr]' for the warm start.
+So far: LR warm start kept for 20/21 rows (median start chi2 3948 -> 2760.6 Neff; 3146 ->
+2759.6 h); Neff it0 ||g||max 2.81 in both (vs ~350 in the old runs).
+
+## Findings this session (evidence: CHANGELOG + scan/.v2test logs)
+- Batch-axis bench (40GB, l2508, lensing): value 38 s + 1.4 s/row; AD (P=6) 590 s + 23 s/row,
+  no knee to B=64 (12 GB/GPU). Batched LS: ~5 min/iter vs ~13 sequential.
+- Hessian at the centre: FDH 0.5 vs 0.2 still disagree with the FIXED SPG (min eig -0.25 vs
+  -0.79; 0.2 gets the Neff valley wrong) -> gradient non-smoothness is not (only) the SPG:
+  ODE step sequences and/or active-set kinks in the profiled chi2. 0.5 is usable.
+- Row Hessians (AD grads, step 0.3) at 4 far rows: PD (min eig 0.23-0.65), within 3-7% of the
+  centre block -> curvature nearly constant along the profile; the old converged rows were
+  0.002-0.32 chi2 above their Newton optimum (Neff=3.127 worst, soft direction).
+
+## Next steps
+1. Read the A/B logs; pick PA_BFGS_UPDATE (keep BFGS unless fixed-Hessian is clearly as fast
+   and as converged); report to the user.
+2. Merge method-v2 -> main; shakeout the v2 launcher (interactive, 4 nodes, 1-2 iterations;
+   debug 30 min cannot fit the l2508 compile) -> ask the user before the regular submission.
+3. Later (user TODO, memory project_abcmb_k_try_hessian_newton): Hessian/Newton instead of BFGS.
+Allocations: m5403_g only. scratch dirs: scan/.v2test (this work), scan/.diag_nan (NaN root
+cause, FINDINGS.md), scan/.diag_maxsteps (h/n_s rerun logs).
+
+────────────────────────────────────────────────────────────────────────
 # HANDOFF — frequentist tool, 2026-06-22 (night)
 
 > Note (2026-06-25 cleanup): this work now lives on `main`. The `bench/` directory
