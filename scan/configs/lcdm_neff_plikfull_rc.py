@@ -32,6 +32,14 @@ CONFIG = {
         "h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0013, # CG changed from 0.0012
         "n_s": 0.0042, "ln10As": 0.014, "tau_reion": 0.0073, "Neff": 0.1, # CG changed manually from 0.2
     },
+    # grid half-span unit per POI (grid = cen +- NSIG*grid_sig), decoupled from the optimizer
+    # scaling `sig`: the profile widths from the lower envelope of the _pf/_pfrc/_widecdm/
+    # _fixprec runs (scan/compare_profile_runs.py, 2026-10-01). `sig` is the LCDM Planck sigma
+    # and is 2-3x too small for h/omega_cdm/n_s/Neff once Neff is free.
+    "grid_sig": {
+        "h": 0.0145, "omega_b": 0.00021, "omega_cdm": 0.0032,
+        "n_s": 0.0072, "ln10As": 0.0154, "tau_reion": 0.0062, "Neff": 0.225,
+    },
     "pois": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
     "fixed": {
         "YHe": 0.2454, "TCMB0": 2.34865418e-4,

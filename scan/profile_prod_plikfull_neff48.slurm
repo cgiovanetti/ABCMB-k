@@ -2,7 +2,7 @@
 #SBATCH --account=m5403_g
 #SBATCH --constraint=gpu
 #SBATCH --qos=regular
-#SBATCH --nodes=7
+#SBATCH --nodes=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=64
@@ -13,6 +13,11 @@
 #SBATCH --mail-user=cgiovanetti@lbl.gov
 #
 # FINAL relaunch of the 7-POI LCDM+Neff FULL-plik headline profile.
+#
+# v2 (2026-10-01, method tuned to the batch axis -- CHANGELOG): inner SPG fixed + converged
+# (PLF_MAXIT default 3000); batched line search (PA_LS_BATCH); 21-point grids over +-2.5
+# grid_sig (config) instead of 11 over +-3 LCDM sigma; linear-response warm start; polynomial-
+# fit intervals (PA_INTERVAL=fit). 4 nodes with 2 POIs each (n_s alone): 21-42 rows per node.
 #
 # WHY THIS FILE EXISTS (the two prior timeouts):
 #   1) 54980729 (10h): static LCDM-centered grids. Freeing Neff pulls Neff->~2.83 and
@@ -58,13 +63,19 @@ mkdir -p logs scan/results
 export PA_CONFIG=scan/configs/lcdm_neff_plikfull_rc.py
 export PA_WARM_FROM_CEN=1          # warm start + preconditioner at the config center (= joint MLE)
 export PA_MLE_PREPASS=0            # explicit: do NOT run the pre-pass (it hung run #2)
-export PA_TAG=${PA_TAG:-_fixprec}  # fixed warm-Hessian preconditioner (was _widecdm)
-# PA_POIS (csv POI subset) passes through from the submit env if set; keep --nodes = #POIs
-export PA_POI_SLICE=1              # 1 disjoint POI per node
+export PA_TAG=${PA_TAG:-_v2}
+# POIs are dealt round-robin to ranks (POIS[RANK::NPROC]); this order pairs a hard POI with
+# an easy one on each of the 4 nodes: h+omega_b, omega_cdm+ln10As, Neff+tau, n_s.
+export PA_POIS=${PA_POIS:-h,omega_cdm,Neff,n_s,omega_b,ln10As,tau_reion}
+export PA_POI_SLICE=1
 export PA_LMAX=2508
-export PA_NPTS=11
-export PA_NSIG=3.0
-export PA_MAXIT=30              # was 18; the 1-sigma trust radius (PA_STEP_MAX) needs a few extra iters on far rows
+export PA_NPTS=21
+export PA_NSIG=2.5              # x grid_sig from the config
+export PA_XBOX=10                 # wide grids push h/Neff valley shifts past 5 scaling-sigma
+export PA_WARM_LR=1               # rows start on the warm-Hessian valley
+export PA_LS_BATCH=4
+export PA_FD_CHUNK=256            # one value call per line-search round (4 x <=42 rows)
+export PA_MAXIT=30
 export PA_GTOL=0.03
 export PA_RTOL=1e-5
 export PA_SIGTOL=1e-2              # sigma1-stability early-stop (default)

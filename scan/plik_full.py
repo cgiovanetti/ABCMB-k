@@ -236,11 +236,11 @@ class PlikFull:
         gradient. Differentiable in cls2d only through the final eval; callers wanting the
         gradient stop_gradient the cls input to the SPG, then differentiate penalized_chi2
         at the fixed optimum. eigfloor accepted but unused."""
-        # default 800 (SPG: worst gap 0.017 chi^2 vs scipy across a B=8 spread;
-        # 600->0.067, 400->0.13). PLF_MAXIT env override is for cheap debug smoke tests
-        # only -- leave it unset in production so the inner profile stays at 800.
+        # default 3000: at 800 the profile is not converged near the best fit, and the
+        # profiled chi2 moves by 0.03-0.08 under 1e-12 Cl noise; at 3000 it is smooth to
+        # ~1e-9 for +11% on the value path (CHANGELOG 2026-10-01). PLF_MAXIT overrides.
         if maxit is None:
-            maxit = int(os.environ.get("PLF_MAXIT", "800"))
+            maxit = int(os.environ.get("PLF_MAXIT", "3000"))
         maxls = self.maxls if maxls is None else maxls
         zlo, zhi, c1 = self.zlo, self.zhi, self.c1
         f = lambda zz: self._obj_z(cls2d, zz)

@@ -61,8 +61,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # ======================================================================
 def interval(x, y, level):
     """Delta-chi2 = level crossings of a profile, via shape-preserving (PCHIP)
-    interpolation and dense-grid root finding. The chi2 is deterministic and
-    smooth, so the crossings are sub-grid accurate. Returns (lo, min_x, hi)."""
+    interpolation and dense-grid root finding. Passes through every point, so per-row
+    optimizer scatter becomes bumps in the curve. Returns (lo, min_x, hi)."""
     x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
     if m.sum() < 4:
         return np.nan, np.nan, np.nan
@@ -73,6 +73,30 @@ def interval(x, y, level):
         xs = np.linspace(x[0], x[-1], 40001); ys = p(xs)
     except Exception:                                   # fallback: dense linear
         xs = np.linspace(x[0], x[-1], 40001); ys = np.interp(xs, x, y - y.min())
+    return _crossings(xs, ys, level)
+
+
+def interval_fit(x, y, level, deg=None, dmax=None):
+    """Delta-chi2 = level crossings and best fit from a least-squares polynomial of
+    degree `deg` fitted to the points within `dmax` of the minimum. Unlike `interval`
+    it averages per-row scatter instead of passing through it, and its minimum is not
+    pinned to a grid node; a quartic still follows the skew of tau / Neff. Falls back
+    to `interval` with fewer than deg+3 points. Returns (lo, min_x, hi)."""
+    deg = FIT_DEG if deg is None else deg
+    dmax = FIT_DCHI2 if dmax is None else dmax
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    x, y = x[m], y[m]
+    sel = (y - y.min()) <= dmax if len(y) else np.zeros(0, bool)
+    if sel.sum() < deg + 3:
+        return interval(x, y, level)
+    xs_, ys_ = x[sel], y[sel]; xc = xs_.mean()
+    c = np.polyfit(xs_ - xc, ys_, deg)
+    xs = np.linspace(xs_.min(), xs_.max(), 40001); ys = np.polyval(c, xs - xc)
+    return _crossings(xs, ys - ys.min(), level)
+
+
+def _crossings(xs, ys, level):
+    """level crossings either side of the minimum of a dense curve (xs, ys)."""
     i = int(np.argmin(ys)); x0 = xs[i]; t = ys[i] + level
     def cross(side):
         seg, vs = (xs[:i + 1][::-1], ys[:i + 1][::-1]) if side < 0 else (xs[i:], ys[i:])
@@ -84,9 +108,14 @@ def interval(x, y, level):
     return cross(-1), x0, cross(+1)
 
 
+def _primary_interval(x, y, level):
+    return interval_fit(x, y, level) if INTERVAL == "fit" else interval(x, y, level)
+
+
 def sigma_parabola(x, y):
     """Symmetric Gaussian sigma from a parabola fit to the points within
-    Delta-chi2 <= 4 of the minimum (sigma = 1/sqrt(2a) for chi2 ~ a x^2)."""
+    Delta-chi2 <= 4 of the minimum (sigma = 1/sqrt(a) for chi2 ~ a x^2: Delta-chi2 = 1
+    at |x - x0| = 1/sqrt(a). Was 1/sqrt(2a) before 2026-10-01, i.e. sqrt(2) too small)."""
     x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
     x, y = x[m], y[m]
     if len(x) < 3:
@@ -95,7 +124,7 @@ def sigma_parabola(x, y):
     if sel.sum() < 3:
         sel = np.argsort(d)[:max(3, len(x) // 2)]
     a = np.polyfit(x[sel], y[sel], 2)[0]                 # chi2 ~ a x^2 + ...
-    return np.nan if a <= 0 else 1.0 / np.sqrt(2.0 * a)
+    return np.nan if a <= 0 else 1.0 / np.sqrt(a)
 
 
 # ======================================================================
@@ -130,7 +159,10 @@ SIGMA = np.array([CFG["sig"][k] for k in ORDER])
 # the joint MLE + its Fisher errors so every POI grid is centered on the actual optimum
 # with a span matched to the real uncertainty -- the model-agnostic fix for new physics.
 GRID_CEN = CENTER.copy()
-GRID_SIG = SIGMA.copy()
+# optional config 'grid_sig': grid half-span unit per POI (else the scaling SIGMA). For LCDM+Neff
+# the true sigmas of h/omega_cdm/n_s/Neff are 2-3x the LCDM-based SIGMA, so +-NSIG*SIGMA grids
+# barely reached the dchi2=1 crossings.
+GRID_SIG = np.array([CFG.get("grid_sig", CFG["sig"])[k] for k in ORDER], float)
 FIXED = dict(CFG["fixed"])
 USER_SPECIES = CFG.get("user_species", None)
 
@@ -227,7 +259,12 @@ POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out:
 # rank owns a DISJOINT subset of POIs (POIS[RANK::NPROC]) and runs its own lockstep,
 # writing only its own per-POI npz -> no shared-file clobber, no MPI gather. This is
 # the node-scaling lever for few-hours wall-clock (the embarrassingly-parallel POI axis).
-XBOX = 5.0                                            # nuisance box (sigma units)
+XBOX = float(os.environ.get("PA_XBOX", "5.0"))         # nuisance box (sigma units)
+INTERVAL = os.environ.get("PA_INTERVAL", "fit")       # fit (interval_fit) | pchip (interval)
+FIT_DEG = int(os.environ.get("PA_FIT_DEG", "4"))       # interval_fit polynomial degree
+FIT_DCHI2 = float(os.environ.get("PA_FIT_DCHI2", "9"))  # interval_fit: points within this of the min
+BFGS_UPDATE = os.environ.get("PA_BFGS_UPDATE", "1") != "0"  # 0: fixed Hinv0 (Newton w/ warm Hessian)
+WARM_LR = os.environ.get("PA_WARM_LR", "0") != "0"     # rows start at the warm-Hessian linear response
 STEP_MAX = float(os.environ.get("PA_STEP_MAX", "1.0"))   # BFGS trust radius (sigma, max-norm)
 LS_BATCH = int(os.environ.get("PA_LS_BATCH", "4"))      # step lengths per batched line-search call
 C1, MAXLS = 1e-4, 12                                  # Armijo c1, max backtracks
@@ -603,9 +640,9 @@ def _safe_grad(POI_IDX, X, PV, fd_step=None):
 
 def _interval_halfwidth(x, chi2):
     """1-sigma (dchi2=1) interval half-width of a single POI's profile, via the SAME
-    PCHIP `interval` the final result uses. NaN if no clean dchi2=1 crossing yet (early
-    iters, min at an edge) -- the sigma1-stability trigger holds until it is finite."""
-    lo, _, hi = interval(x, chi2, 1.0)
+    interval the final result uses (PA_INTERVAL). NaN if no clean dchi2=1 crossing yet
+    (early iters, min at an edge) -- the sigma1-stability trigger holds until it is finite."""
+    lo, _, hi = _primary_interval(x, chi2, 1.0)
     return 0.5 * (hi - lo) if (np.isfinite(lo) and np.isfinite(hi)) else np.nan
 
 
@@ -722,7 +759,7 @@ def bfgs_rows(POI_IDX, PV, x0=None, Hinv0=None, maxit=MAXIT, gtol=GTOL,
         # noisy pair corrupts Hinv (the it2 ||g|| bounce seen in validation).
         snorm = np.linalg.norm(s, axis=1); ynorm = np.linalg.norm(y, axis=1)
         curv_ok = sy > 1e-8 * snorm * ynorm
-        for b in np.where(active & curv_ok)[0]:
+        for b in (np.where(active & curv_ok)[0] if BFGS_UPDATE else []):
             rho = 1.0 / sy[b]; I = np.eye(P)
             V = I - rho * np.outer(s[b], y[b])
             Hinv[b] = V @ Hinv[b] @ V.T + rho * np.outer(s[b], s[b])
@@ -1237,6 +1274,27 @@ def profile_lockstep(pois, outdir):
             print(f"[precond] failed ({ex}) -> identity Hinv0", flush=True)
             Hinv0 = None
 
+    # ---- linear-response warm start (PA_WARM_LR): start each row at the Gaussian conditional
+    # optimum x0 - Hinv0 H_np delta of the warm Hessian instead of at the centre, so rows far out
+    # along a degeneracy (wide Neff/h grids) need not walk there at STEP_MAX per iteration. One
+    # batched value call (padded to the line-search shape) scores both starts; each row keeps
+    # the lower chi2, so a poor Hessian cannot make a start worse.
+    if WARM_LR and Hinv0 is not None and resume_state is None:
+        n = len(Ps); Xlr = Xs.copy()
+        for b in range(n):
+            i = int(Ps[b]); nuis = nuis_idx_of(i)
+            delta = (Vs[b] - CENTER[i]) / SIGMA[i]
+            Xlr[b] = np.clip(Xs[b] - Hinv0[b] @ (Hwarm[nuis, i] * delta), -XBOX, XBOX)
+        k = max(LS_BATCH, 2)
+        fk = fast_values_rows(np.tile(Ps, k), np.concatenate([Xs, Xlr] + [Xs] * (k - 2)),
+                              np.tile(Vs, k))
+        f_c, f_lr = fk[:n], fk[n:2 * n]
+        use = f_lr < f_c
+        Xs = np.where(use[:, None], Xlr, Xs)
+        print(f"[warm-lr] linear-response start kept for {int(use.sum())}/{n} rows; chi2 "
+              f"centre-start median {np.median(f_c):.1f} -> {np.median(np.minimum(f_c, f_lr)):.1f}",
+              flush=True)
+
     # ---- lockstep BFGS over the (sliced) row set ----
     t0 = time.perf_counter()
     bf, bx, gn_iter = bfgs_rows(Ps, Vs, x0=Xs, Hinv0=Hinv0, fd_step=fd_step,
@@ -1275,15 +1333,17 @@ def profile_lockstep(pois, outdir):
         chi2 = best_f[sl]; xstar = best_x[sl]; gnorm = gnorm_full[sl]
         conv = conv_full[sl]; pd = pd_full[sl]; cond = cond_full[sl]
         nuis = [ORDER[i] for i in nuis_idx_of(ORDER.index(poi))]
-        lo1, mid, hi1 = interval(grid, chi2, 1.0)
-        lo2, _, hi2 = interval(grid, chi2, 4.0)
+        lo1, mid, hi1 = _primary_interval(grid, chi2, 1.0)
+        lo2, _, hi2 = _primary_interval(grid, chi2, 4.0)
+        pc1 = np.array(interval(grid, chi2, 1.0)); ft1 = np.array(interval_fit(grid, chi2, 1.0))
         sig_p = sigma_parabola(grid, chi2)
         npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
         np.savez(npz, poi=poi, poi_grid=grid, chi2=chi2, xstar=xstar,
                  gnorm=gnorm, converged=conv, hess_pd=pd, hess_cond=cond,
                  nuis=np.array(nuis), done=True,
                  sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
-                 sigma_parab=sig_p, gtol=GTOL, gradmethod=GRADMETHOD,
+                 sigma_parab=sig_p, sigma1_pchip=pc1, sigma1_fit=ft1, interval_mode=INTERVAL,
+                 gtol=GTOL, gradmethod=GRADMETHOD,
                  fd_step=fd_step, cal_maxrel=cal_maxrel, cal_n=cal_n,
                  use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS)
         j = int(np.nanargmin(chi2))
@@ -1304,7 +1364,8 @@ def profile_lockstep(pois, outdir):
                     + ("; rerun with PA_MLE_PREPASS=1 to auto-center" if not MLE_PREPASS
                        else "; pre-pass ran -- profile may be non-Gaussian, widen PA_NSIG"))
         print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; "
-              f"1sig=[{lo1:.5f},{hi1:.5f}] (PCHIP +/-{(hi1-lo1)/2:.5f}; "
+              f"1sig=[{lo1:.5f},{hi1:.5f}] ({INTERVAL} +/-{(hi1-lo1)/2:.5f}, best {mid:.5f}; "
+              f"pchip [{pc1[0]:.5f},{pc1[2]:.5f}]; "
               f"parab={sig_p:.5f}); converged {nconv}/{npt_valid}; "
               f"max||g||_AD={np.nanmax(gnorm):.2e}; "
               f"PD {int(np.nansum(pd))}/{npt_valid} -> {npz}{warn}", flush=True)
