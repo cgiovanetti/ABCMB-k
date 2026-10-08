@@ -9,6 +9,21 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-08 — method-v2 A/B: BFGS updates are not needed; v2 profiles are smooth
+--------------------------------------------------------------------------------
+A/B on 2026-10-01 (scan/.v2test/ab*.log), v2 settings (21 pts x +-2.5 grid_sig, SPG maxit 3000,
+batched LS, linear-response warm start), BFGS (PA_BFGS_UPDATE=1) vs the fixed warm Hessian (=0):
+  Neff: BFGS  6 iters, fit 1sig [2.673, 3.074] +-0.201, best 2.868
+        fixed 4 iters, fit 1sig [2.685, 3.071] +-0.193, best 2.874
+  h (from checkpoints; both runs hit the allocation end during the cert):
+        BFGS  [0.6478, 0.6763] +-0.0143, best 0.6615;  fixed [0.6476, 0.6767] +-0.0145, best 0.6616
+Same intervals (0.04 / 0.002 sigma); the fixed Hessian converged in fewer iterations on Neff.
+v2 profiles are smooth and monotone (h dchi2 5.5 -> 0 -> 5.9; the +-1 per-row bumps are gone);
+h = 0.6615 +- 0.0143 (parabola 0.0147), Neff = 2.87 +- 0.20 (parabola 0.20-0.21). The warm
+start put 20/21 rows on the valley (it0 ||g||max 2.8-7 vs ~350 before). Launcher: PA_BFGS_UPDATE=0,
+account m3166_g (m5403 depleted 2026-10-08).
+
+
 2026-10-01 — Batch-axis benchmark at production shape; batched line search (branch spg-fix)
 ----------------------------------------------------------------------------------------
 LCDM+Neff full plik, l_max 2508, lensing on, 4x A100-40GB (hbm40g), sharded, fixed SPG at

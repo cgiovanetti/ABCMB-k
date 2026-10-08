@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=m5403_g
+#SBATCH --account=m3166_g
 #SBATCH --constraint=gpu
 #SBATCH --qos=regular
 #SBATCH --nodes=4
@@ -75,7 +75,8 @@ export PA_XBOX=10                 # wide grids push h/Neff valley shifts past 5 
 export PA_WARM_LR=1               # rows start on the warm-Hessian valley
 export PA_LS_BATCH=4
 export PA_FD_CHUNK=256            # one value call per line-search round (4 x <=42 rows)
-export PA_MAXIT=30
+export PA_MAXIT=${PA_MAXIT:-30}
+export PA_BFGS_UPDATE=0           # fixed warm-Hessian Newton: same intervals as BFGS, fewer iters (A/B 2026-10-01)
 export PA_GTOL=0.03
 export PA_RTOL=1e-5
 export PA_SIGTOL=1e-2              # sigma1-stability early-stop (default)

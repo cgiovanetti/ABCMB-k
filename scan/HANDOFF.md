@@ -39,12 +39,11 @@ So far: LR warm start kept for 20/21 rows (median start chi2 3948 -> 2760.6 Neff
   0.002-0.32 chi2 above their Newton optimum (Neff=3.127 worst, soft direction).
 
 ## Next steps
-1. Read the A/B logs; pick PA_BFGS_UPDATE (keep BFGS unless fixed-Hessian is clearly as fast
-   and as converged); report to the user.
+1. DONE 2026-10-08: A/B read (CHANGELOG 2026-10-08) -> PA_BFGS_UPDATE=0 in the launcher.
 2. Merge method-v2 -> main; shakeout the v2 launcher (interactive, 4 nodes, 1-2 iterations;
    debug 30 min cannot fit the l2508 compile) -> ask the user before the regular submission.
 3. Later (user TODO, memory project_abcmb_k_try_hessian_newton): Hessian/Newton instead of BFGS.
-Allocations: m5403_g only. scratch dirs: scan/.v2test (this work), scan/.diag_nan (NaN root
+Allocations: m3166_g (m5403 depleted 2026-10-08). scratch dirs: scan/.v2test (this work), scan/.diag_nan (NaN root
 cause, FINDINGS.md), scan/.diag_maxsteps (h/n_s rerun logs).
 
 ────────────────────────────────────────────────────────────────────────
