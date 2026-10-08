@@ -1,5 +1,12 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-08: v2 production SUBMITTED** as job 59561865 (m3166_g, 4 nodes, 48h, tag _v2,
+PA_BFGS_UPDATE=0), user-approved. Log: logs/abcmb_pf_neff_59561865.out. method-v2 is merged into
+main (a501895, pushed). Shakeout (interactive 59557071, tag _v2shake, PA_MAXIT=1, log
+scan/.v2test/shake.log) ran the real launcher on 4 nodes: correct 4-rank shape, warm-lr kept
+~95% of rows, n_s rank completed it0. On completion: python scan/compare_profile_runs.py after
+adding '_v2' to its RUNS (grid differs: 21 pts x +-2.5 grid_sig) and read sigma1/sigma1_fit.
+
 **Read this block first.** Branch `method-v2` (checked out in this tree, a979c4b, NOT merged
 to main). User's instruction: do NOT relaunch production until all fixes are in and the BFGS
 question is answered; present results and ask before launching.
