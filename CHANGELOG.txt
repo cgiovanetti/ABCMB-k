@@ -9,6 +9,26 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-11 — The Cl discontinuity: two non-smooth pieces of the LoS integral (branch xe-c1)
+------------------------------------------------------------------------------------------
+Not fixed upstream: public ABCMB main (508a15e) and open PRs #35/#36/#38/#39/#45 have the same
+code. PR #45's fix5 (dtmax_PE step ceiling, ported on branch dtmax-fix) leaves the jump unchanged.
+Localization (scan/.v2analysis/*_test.py, *.log): Background and PerturbationTable change
+smoothly across the jump; it travels with PT.lna alone, and one node (44, lna -6.8627, z~955)
+moving 2e-9 across an x_e table knot gives the whole +3.0e-3 in ClTT(l=2).
+1) g' = grad(visibility) goes through x_e, read by LINEAR fast_interp: d x_e/d lna is piecewise
+   constant, so g' jumps 0.6% at every knot (5e-4 in lna) and the cosmology-dependent LoS grid
+   crossing one steps low-l TT/TE (EE uses g only). Same mechanism the expmkappa comment fixed.
+2) lna_transfer_start = argmin on a 1.8e-3 grid: a snap shifts all 300 LoS nodes at once
+   (0.17 chi2, tstart_swap.log). lna_rec (lensing window start) is argmax-snapped the same way.
+Prototype on branch xe-c1 (2 commits): Catmull-Rom x_e (tools.fast_interp_c1), interpolated
+lna_transfer_start, parabolic lna_rec. Pit step gone (chi2 jitter +-0.002); both v2 trap
+segments smooth on 120/40-point scans (largest excursion 0.017 vs 0.164; fine_seg_v2.log);
+Neff row 4's slice is 1.63 below the v2 row. vs CLASS (halofit-fix class_mnu reference, profile
+settings): linear and C1 both <=3.7e-3 at l<=12, <=1.7e-3 above (class_check_*.log).
+Not done: pytests (accuracy/snapshots), AD-vs-FD gradient check on xe-c1, v2 re-run.
+
+
 2026-10-11 — v2 production (59561865) done; rows trapped by a Cl discontinuity
 ------------------------------------------------------------------------------
 59561865 COMPLETED in 5h47m (4 nodes); sigma1 early-stop fired on every POI (it3-it7).
