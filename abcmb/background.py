@@ -568,14 +568,20 @@ class Background(BackgroundPreRecomb):
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
         vis_vals = vmap(self.visibility, in_axes=[0, None])(lna_vals, params)
-        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
+        # Parabolic vertex around the grid argmax: a bare argmax snaps lna_rec (the lensing-window
+        # grid start) to this 2.7e-3 grid and steps the lensed Cls as parameters move.
+        i_rec = jnp.clip(jnp.argmax(vis_vals), 1, lna_vals.shape[0] - 2)
+        v0, v1, v2 = vis_vals[i_rec - 1], vis_vals[i_rec], vis_vals[i_rec + 1]
+        self.lna_rec = lna_vals[i_rec] + 0.5 * (lna_vals[1] - lna_vals[0]) * (v0 - v2) / (v0 - 2. * v1 + v2)
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
 
         # Find approximate early time when aH x tau_c = 0.008
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH, in_axes=[0, None])(lna_vals, params) * self.tau_c(lna_vals, params)
-        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
+        # Interpolated crossing (aH tau_c increases monotonically here): an argmin snaps the LoS grid
+        # start to this 1.8e-3 grid and shifts all its nodes at once as parameters move.
+        self.lna_transfer_start = jnp.interp(0.008, aH_tau_c_vals, lna_vals)
 
     ### RECOMBINATION RELATED ###
 
