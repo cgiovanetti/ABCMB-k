@@ -9,6 +9,36 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-11 — v2 production (59561865) done; rows trapped by a Cl discontinuity
+------------------------------------------------------------------------------
+59561865 COMPLETED in 5h47m (4 nodes); sigma1 early-stop fired on every POI (it3-it7).
+Fit intervals (npz sigma1): h 0.6616 [0.6476, 0.6767], omega_b 0.02222 [0.02204, 0.02239],
+omega_cdm 0.1174 [0.1144, 0.1203], n_s 0.9577 [0.9503, 0.9655], ln10As 3.0416 [3.0277,
+3.0562], tau 0.0576 [0.0522, 0.0635], Neff 2.874 [2.685, 3.071]. Smooth, and the lower
+envelope of every earlier run (compare_profile_runs.py, _v2 added; per-run XBOX).
+NOT converged, though. Every row is a full 7-param point, so a POI's profile must sit at or
+below every other POI's row at the same value. It does not: Neff low side up to 1.5 chi2
+above h rows, omega_cdm low side 1.0, omega_b high side 1.3, others ~0.5. GPU check
+(scan/.v2analysis/slice_test.*): Neff row 4 (|g|_AD 0.017) is 1.21 above the h-valley point
+at the same Neff; AD matches FD at eps<=0.1 there, so the gradient is right and the value
+path is not smooth: chi2 along the segment jumps by up to +0.6, and omega_b row 15 sits next
+to a 0.17 step. All 7 centre rows plus n_s/ln10As row 11 never left x=0: a +0.21 step
+0.003-0.004 sigma away rejects every Armijo trial (fixed Hessian -> same direction forever).
+Source (pit_test.*): the THEORY. ClTT/ClTE jump by 0.35% flat over ell 2-12, falling to
+1e-3 at ell 60-150 and 1e-5 above 1500; ClEE smooth to 1e-5; nu* frozen gives the same
+jump; lowTT carries +0.19 of the +0.21. A late-time temperature source (late ISW) discrete
+change. NOT lna_transfer_start / lna_rec / lna_visibility_stop (argmin-snapped, but constant
+over the scan; bg_test.*). Likely the "~0.1 rtol-independent discretization floor" of
+2026-06-22. Mechanism inside ABCMB-k not yet located.
+Impact: pooled lower envelope of all 147 points (pooled_envelope.py) moves Neff to 2.80
+[2.61, 3.03] (lower edge -0.39 sigma); every other edge moves <= 0.21 sigma.
+Also flagged: the LCDM+Neff SMC (smc_plikfull_neff, N=512, moves_slow=2) sits 1.0-1.9 std
+above the profile on ALL seven params and is narrower than the profile for
+h/omega_cdm/n_s/Neff, while the profile matches Planck 2018 base_nnu (Neff 2.92 +- 0.19,
+H0 66.3 +- 1.4). The 2026-06-28 "volume effect" reading contradicts the measured near-
+constant row Hessians (3-7%); suspect SMC under-mixing along the h-Neff-omega_cdm direction.
+
+
 2026-10-08 — method-v2 A/B: BFGS updates are not needed; v2 profiles are smooth
 --------------------------------------------------------------------------------
 A/B on 2026-10-01 (scan/.v2test/ab*.log), v2 settings (21 pts x +-2.5 grid_sig, SPG maxit 3000,

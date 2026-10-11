@@ -1,5 +1,13 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-11: 59561865 COMPLETED (5h47m); results in scan/results/profile_prod_ad_*_v2.npz.
+NOT final: rows are trapped by step discontinuities in the ABCMB-k low-ell ClTT/ClTE
+(0.35% at ell<12, late-ISW-like; chi2 steps 0.2-0.6). Read CHANGELOG 2026-10-11 first.**
+Evidence + scripts: scan/.v2analysis/ (cross_check_v2.png, slice_test.log, pit_test.log,
+bg_test.log). Open: (1) locate the Cl jump in ABCMB-k (dump the late-time T source / low-k
+step counts at pit_test s=+3e-3 vs +4e-3, n_s centre row); (2) then re-run v2 (rows from the
+pooled envelope as warm starts); (3) SMC +Neff under-mixing suspicion (CHANGELOG).
+
 **2026-10-08: v2 production SUBMITTED** as job 59561865 (m3166_g, 4 nodes, 48h, tag _v2,
 PA_BFGS_UPDATE=0), user-approved. Log: logs/abcmb_pf_neff_59561865.out. method-v2 is merged into
 main (a501895, pushed). Shakeout (interactive 59557071, tag _v2shake, PA_MAXIT=1, log

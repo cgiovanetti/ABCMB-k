@@ -23,10 +23,10 @@ CEN_RC = [0.6662, 0.02229, 0.11654, 0.95986, 3.0446, 0.05933, 2.8268]  # lcdm_ne
 SIG_OLD = [0.0054, 0.00015, 0.0012, 0.0042, 0.014, 0.0073, 0.2]
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]         # 2026-07-07 edit
 RUNS = {"_pf": (CEN_PF, SIG_OLD), "_pfrc": (CEN_RC, SIG_OLD), "_widecdm": (CEN_RC, SIG_NEW),
-        "_fixprec": (CEN_RC, SIG_NEW), "_fixprec2": (CEN_RC, SIG_NEW)}
+        "_fixprec": (CEN_RC, SIG_NEW), "_fixprec2": (CEN_RC, SIG_NEW), "_v2": (CEN_RC, SIG_NEW)}
 STYLE = {"_pf": ("#1baf7a", "s"), "_pfrc": ("#2a78d6", "o"), "_widecdm": ("#eb6834", "^"),
-         "_fixprec": ("#eda100", "D"), "_fixprec2": ("#e87ba4", "v")}
-XBOX = 5.0
+         "_fixprec": ("#eda100", "D"), "_fixprec2": ("#e87ba4", "v"), "_v2": ("#222222", "*")}
+XBOX = {"_v2": 10.0}                                                    # PA_XBOX; 5.0 otherwise
 
 
 def load_rows():
@@ -44,7 +44,8 @@ def load_rows():
                 th = cen.copy()
                 th[ORDER.index(poi)] = d["poi_grid"][i]
                 th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i]
-                rows.append((tag, poi, float(c), bool((np.abs(d["xstar"][i]) >= XBOX - 1e-3).any()), th))
+                box = XBOX.get(tag, 5.0)
+                rows.append((tag, poi, float(c), bool((np.abs(d["xstar"][i]) >= box - 1e-3).any()), th))
     return rows
 
 
