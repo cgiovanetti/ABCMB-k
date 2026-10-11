@@ -610,7 +610,9 @@ class Background(BackgroundPreRecomb):
             jnp.where(
                 lna >= self.lna_xe_tab.lastval,
                 self.xe_tab.lastval,
-                tools.fast_interp(lna, self.lna_xe_tab.arr[0],
+                # C^1: grad(visibility) sees d x_e / d lna; a linear lookup makes it jump at
+                # every knot, and the cosmology-dependent LoS grid crossing one steps the Cls
+                tools.fast_interp_c1(lna, self.lna_xe_tab.arr[0],
                 self.lna_xe_tab.arr[0] + len(self.lna_xe_tab.arr) * (self.lna_xe_tab.arr[1]-self.lna_xe_tab.arr[0]),
                 self.xe_tab.arr)
             )
