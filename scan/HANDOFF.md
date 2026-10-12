@@ -8,6 +8,10 @@ lookup, and the argmin-snapped lna_transfer_start / lna_rec. Prototype fix on br
 Evidence + scripts: scan/.v2analysis/. Open: (1) xe-c1 -> pytests + AD-vs-FD gradient check,
 then merge; (2) re-run v2 on it (ask the user first); (3) same bug upstream (user's call on a
 PR); (4) SMC +Neff under-mixing suspicion (CHANGELOG).
+**2026-10-12: (1) done (CHANGELOG 2026-10-12); upstream diff at ../ABCMB-xec1/continuous_los.diff,
+the user opens the PR, then apply it here. The AD-vs-FD check found two AD bugs in the TT/TE
+tangents (linear j_l table lookups = dominant; Kvaerno5 kappa tangent jitter = small). Fix them
+(C1 Bessel lookup + Tsit5 kappa) and re-test BEFORE the v2 re-run: rows converge on AD gradients.**
 
 **2026-10-08: v2 production SUBMITTED** as job 59561865 (m3166_g, 4 nodes, 48h, tag _v2,
 PA_BFGS_UPDATE=0), user-approved. Log: logs/abcmb_pf_neff_59561865.out. method-v2 is merged into

@@ -9,6 +9,36 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-12 — xe-c1 tests, upstream diff, timing; two AD bugs in the TT/TE tangents
+---------------------------------------------------------------------------------------------
+Upstream PR prep (user opens it): worktree ../ABCMB-xec1 (branch xe-c1-continuous-los off
+upstream 508a15e, uncommitted), continuous_los.diff = the xe-c1 numerics. Upstream accuracy test
+passes on GPU and CPU: TT 0.194% -> 0.254% (l=2), EE/Pk unchanged. Not a regression: with the
+diff, 500 LoS nodes match 2000 to 1e-5; main is 1.7e-3 off (2e-4 even at 2000) -- its aliasing
+partly cancelled a +2.5e-3 l=2 offset vs CLASS shared by every converged run. C1 x_e alone
+accounts for it (acc_var.log). Upstream warm single call 9.99 s -> 9.13-9.18 s (single_*.log).
+ABCMB-k xe-c1: snapshots regenerated (60ec015; TT moved <=5.6e-3 at l<30, EE/Pk <4e-5), all 5
+pass; accuracy test passes, TT 0.22% -> 0.43% at l=2. vs n_lna_PE=1200 (which matches upstream's
+converged run to 1e-4): main 7e-3 off at low l on the snapshot cosmology, xe-c1 1.5-2e-3 -- the
+residual is the 300-node grid's own low-l error, which the aliasing had masked (conv_cmp.log,
+acc_var_k.log). Production value path B=168: 268.5 s -> 272.0 s (+1.3%), peak memory unchanged.
+AD-vs-FD (grad_check_*.log): on main FD ~ 1/eps on every background direction (the steps); on
+xe-c1 FD converges, but AD is off at Neff[4]/omega_b[15] (omega_cdm -0.68 vs -1.02, h, omega_b)
+while n_s/ln10As agree to 2e-4. cl_jvp_check.log: the likelihood layer is exact (chain FD =
+direct FD to 5e-3); the jvp of ClTT/ClTE w.r.t. omega_cdm and h is wrong (TT 8% of max dCl at
+l=2, TE up to 80%), ClEE right to 6e-4, n_s right to 2e-7. Present at every row tested; in chi2
+it cancels at some rows (pit) and not others. Two causes (runtime swaps, cl_jvp_check_*.log):
+1) DOMINANT: the j_l tables (spectrum.py phi0/1/2 + the 3 hoisted copies in the LoS accumulator)
+   are read by LINEAR fast_interp, so AD of j_l(k(tau0-tau)) along any direction that moves tau0
+   sees cell slopes. C1 lookup: Neff[4] omega_cdm chain AD -1.049 vs FD -1.011 (was -0.694),
+   h -0.088 vs -0.076/-0.081 (was +0.053); the l>=500 TT bands go from +0.22/+0.09 to <0.006.
+2) small, low l: the kappa quadrature is solved with Kvaerno5 (implicit); its forward-mode tangent
+   jitters at the 1e-3 level near the visibility peak, g' differentiates that (g' tangent 3.4%
+   off; Tsit5: 3e-4, bg_tangent_check*.log). Worth ~0.02 in the chi2 gradient (TT l<30).
+Same code upstream (spectrum.py lines 81/100/119/739/751/763; Kvaerno5 kappa). Not yet
+implemented as a code change; values/timing/accuracy of a C1 Bessel lookup untested.
+
+
 2026-10-11 — The Cl discontinuity: two non-smooth pieces of the LoS integral (branch xe-c1)
 ------------------------------------------------------------------------------------------
 Not fixed upstream: public ABCMB main (508a15e) and open PRs #35/#36/#38/#39/#45 have the same
