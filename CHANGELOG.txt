@@ -9,6 +9,14 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-12 — Worktree consolidation
+-----------------------------------
+User asked for fewer ABCMB trees. The upstream fix moved from worktree ../ABCMB-xec1 into this
+repo as local branch upstream-continuous-los (8a1a9f2, on upstream/main; diff copy
+scan/.v2analysis/upstream_continuous_los.diff); ../ABCMB-xec1 and ../ABCMB-k-xec1 removed (xe-c1
+stays a branch here). scan/.v2analysis/run_*.sh still name ../ABCMB-k-xec1 (stale scratch).
+
+
 2026-10-12 — xe-c1 tests, upstream diff, timing; two AD bugs in the TT/TE tangents
 ---------------------------------------------------------------------------------------------
 Upstream PR prep (user opens it): worktree ../ABCMB-xec1 (branch xe-c1-continuous-los off
