@@ -639,14 +639,21 @@ class Background(BackgroundPreRecomb):
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
         vis_vals = vmap(self.visibility, in_axes=[0, None])(lna_vals, params)
-        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
+        # Refine the grid argmax with a parabola through its neighbours, so lna_rec
+        # moves continuously with the parameters instead of in steps of the grid spacing.
+        i_rec = jnp.clip(jnp.argmax(vis_vals), 1, lna_vals.shape[0] - 2)
+        v0, v1, v2 = vis_vals[i_rec - 1], vis_vals[i_rec], vis_vals[i_rec + 1]
+        self.lna_rec = lna_vals[i_rec] + 0.5 * (lna_vals[1] - lna_vals[0]) * (v0 - v2) / (v0 - 2. * v1 + v2)
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
 
         # Find approximate early time when aH x tau_c = 0.008
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH, in_axes=[0, None])(lna_vals, params) * self.tau_c(lna_vals, params)
-        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
+        # aH x tau_c increases monotonically here; interpolating the crossing (rather than
+        # snapping to the grid) keeps the line-of-sight grid continuous in the parameters.
+        # The grid is a numerical choice, so it carries no derivative.
+        self.lna_transfer_start = jax.lax.stop_gradient(jnp.interp(0.008, aH_tau_c_vals, lna_vals))
 
     ### RECOMBINATION RELATED ###
 
@@ -681,7 +688,8 @@ class Background(BackgroundPreRecomb):
             jnp.where(
                 lna >= self.lna_xe_tab.lastval,
                 self.xe_tab.lastval,
-                tools.fast_interp(lna, self.lna_xe_tab.arr[0],
+                # C^1 so that grad(visibility), which goes through d x_e / d lna, is continuous.
+                tools.fast_interp_c1(lna, self.lna_xe_tab.arr[0],
                 self.lna_xe_tab.arr[0] + len(self.lna_xe_tab.arr) * (self.lna_xe_tab.arr[1]-self.lna_xe_tab.arr[0]),
                 self.xe_tab.arr)
             )

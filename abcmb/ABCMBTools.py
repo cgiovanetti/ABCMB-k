@@ -308,6 +308,26 @@ def fast_interp(x, xp_min, xp_max, fp):
     return w_lower * fp[i_lower] + w_upper * fp[i_upper]
 
 
+def fast_interp_c1(x, xp_min, xp_max, fp):
+    """
+    Cubic (Catmull-Rom) version of `fast_interp`, same arguments and grid mapping.
+
+    Unlike linear interpolation it is C^1, so its derivative has no jumps at the
+    grid points. Use it for tables that are differentiated downstream.
+    """
+    eps = 1.e-6
+    n = fp.shape[-1]
+    i = (x - xp_min) / (xp_max - xp_min) * (n - 1)
+    i = jnp.clip(i, eps, n - 1.0 - eps)
+    i1 = jnp.floor(i).astype(jnp.int32)
+    t = i - i1
+    p0 = fp[jnp.maximum(i1 - 1, 0)]
+    p1 = fp[i1]
+    p2 = fp[jnp.minimum(i1 + 1, n - 1)]
+    p3 = fp[jnp.minimum(i1 + 2, n - 1)]
+    return p1 + 0.5 * t * (p2 - p0 + t * (2.*p0 - 5.*p1 + 4.*p2 - p3 + t * (3.*(p1 - p2) + p3 - p0)))
+
+
 def loglog_interp(x, xp, fp):
     """
     1D interpolation that is linear in (ln x, ln f).
