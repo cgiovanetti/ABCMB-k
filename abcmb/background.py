@@ -727,9 +727,12 @@ class Background(BackgroundPreRecomb):
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
         adjoint=self.adjoint()
+        # Explicit: the RHS does not depend on kappa (a pure quadrature, not stiff), and
+        # Kvaerno5's forward-mode tangent jitters ~1e-3 near the visibility peak, which
+        # grad(visibility) then differentiates (wrong AD of the T Doppler source).
         sol = diffeqsolve(
             term,
-            solver=Kvaerno5(),
+            solver=Tsit5(),
             stepsize_controller=stepsize_controller,
             t0=0.,
             t1=-10.,
