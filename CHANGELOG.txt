@@ -9,6 +9,23 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-12 — The two AD fixes, on xe-c1 (bd34849 + snapshots 2214055)
+---------------------------------------------------------------------
+spectrum.py: the 6 j_l lookups (phi0/1/2 + the hoisted phi*_local) fast_interp -> fast_interp_c1.
+background.py _tabulate_optical_depth: Kvaerno5 -> Tsit5 (pure quadrature; 378-410 steps over
++-5 sigma). Values move <=7e-5 at l<30, <=1e-5 above, Pk 4e-9; 5 pytests pass; accuracy test
+unchanged (TT 0.429%, EE 0.310%, Pk 0.185%).
+Cl-level chain AD vs FD (adfix_clchk.log), Neff[4] omega_cdm: -1.049 vs -1.046/-1.047/-1.050/-1.037
+at eps 0.01/0.02/0.05/0.1 (was -0.694); h -0.089 vs -0.088; omega_b[15] omega_cdm -1.765 vs -1.772.
+Production path (grad_check_adfix.log vs _xec1.log), |FD-AD| at eps=0.05: Neff[4] omega_cdm
+0.315 -> 0.008, h 0.137 -> 0.0006; omega_b[15] omega_cdm 0.260 -> 0.011; every coordinate on
+every row now <=0.012 except the pit's omega_b/omega_cdm (0.019, at the FD noise floor there).
+FD itself is also smoother (pre-fix tau FD wandered 1.31/1.29/1.26 across eps; now 1.263/1.263/1.261).
+Timing, same node (timing_*.log): value path B=168 warm 266.7 s vs 267.1 s (1.59 s/row both).
+AD path B=42: fixed warm 1800 s (42.9 s/row); cold 1938 s vs 2166 s pre-fix. The pre-fix warm run
+hit the allocation limit, so: no slowdown, size of any AD-path gain unmeasured.
+
+
 2026-10-12 — Worktree consolidation
 -----------------------------------
 User asked for fewer ABCMB trees. The upstream fix moved from worktree ../ABCMB-xec1 into this
