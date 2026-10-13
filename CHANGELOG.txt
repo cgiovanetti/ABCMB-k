@@ -9,6 +9,22 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-13 — Fork vs upstream, batched, one GPU (is ABCMB-k needed?)
+--------------------------------------------------------------------
+scan/.v2analysis/fvu/ (bench_fvu.py, logs). ABCMB-k xe-c1 call_batched / staged AD vs upstream
+508a15e jax.vmap(run_cosmology_abbr) / vmap(jacfwd-style jvp); profile specs (l_max 2508, lensing,
+1 massive nu, rtol 1e-5); N_k 572 vs 575. Warm s/cosmology (peak GB):
+  values  B=1: up 26.5 / k 38.4; B=8: 12.9 / 8.7; B=16: 11.4 / 6.3; B=32: 11.2 (10.6) / 5.4 (5.3);
+          B=64: up compile wanted 28 GB, no result in 20 min / k 4.5 (9.1).
+  7-dir gradient  B=1: up 91 / k 532; B=4: 66 / 231; B=8: 61 (22.4) / 167 (4.7).
+Values: fork 2-2.5x faster at profile batch sizes. Gradients: upstream 2.75-5.9x faster, because
+staged_cl_and_grad pushes the P directions one at a time and each jax.jvp re-solves the primal;
+upstream shares one primal across P vmapped tangent lanes (at ~5x the memory). Estimated profile
+iteration (42 rows/node): fork ~35 min (measured) vs upstream ~19 min. Not fixed: vmap the directions
+inside each staged jvp. (An upstream delta_l_max=0 variant was dropped: it also removes the lensing
+ell buffer. The fork hard-codes ellmax+500 for lensing but its k_max does not cover the buffer.)
+
+
 2026-10-12 — v2 re-run on xe-c1 submitted (job 59724450, tag _v2fix); warm Hessian rebuilt
 ---------------------------------------------------------------------------------------------
 User-approved. Same launcher as v2 (PA_TAG=_v2fix via sbatch --export); code = this checkout on
