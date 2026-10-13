@@ -9,6 +9,17 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-12 — v2 re-run on xe-c1 submitted (job 59724450, tag _v2fix); warm Hessian rebuilt
+---------------------------------------------------------------------------------------------
+User-approved. Same launcher as v2 (PA_TAG=_v2fix via sbatch --export); code = this checkout on
+xe-c1, so it stays on xe-c1 until the job ends. The cached warm Hessian (used by v2) was FD of the
+buggy AD gradients and indefinite at the joint MLE (min eig -0.251; omega_b/n_s/ln10As/tau
+nuisance blocks too). Rebuilt with the fixes (.v2analysis/hess_adfix.py/.log): PD, eig
+0.122 ... 421.6; entries move <=2.5% of sqrt(H_ii H_jj) (omega_b/tau rows), Neff valley closer to
+the empirical one. Installed as scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz
+(old copy: scan/.v2test/H_center_fdh0.5.npz). Upstream PRs for the Cl-step + AD bugs: the user's.
+
+
 2026-10-12 — The two AD fixes, on xe-c1 (bd34849 + snapshots 2214055)
 ---------------------------------------------------------------------
 spectrum.py: the 6 j_l lookups (phi0/1/2 + the hoisted phi*_local) fast_interp -> fast_interp_c1.

@@ -17,6 +17,10 @@ tangents (linear j_l table lookups = dominant; Kvaerno5 kappa tangent jitter = s
 **2026-10-12 (later): both AD fixes DONE on xe-c1 (bd34849, snapshots 2214055; CHANGELOG): AD = FD
 on the production path, no timing cost. Next: v2 re-run on xe-c1 (ask the user first); the user
 decides whether the AD fixes join the upstream PR (upstream has both bugs).**
+**2026-10-12 (night): RE-RUN SUBMITTED as job 59724450 (tag _v2fix, log logs/abcmb_pf_neff_59724450.out),
+runs from this checkout on xe-c1: do NOT switch branches here until it ends. Warm Hessian rebuilt
+(PD now). On completion: add '_v2fix' to compare_profile_runs.py RUNS and compare with _v2.
+User opens the upstream PRs (Cl-step fix = branch upstream-continuous-los; AD fixes = bd34849).**
 
 **2026-10-08: v2 production SUBMITTED** as job 59561865 (m3166_g, 4 nodes, 48h, tag _v2,
 PA_BFGS_UPDATE=0), user-approved. Log: logs/abcmb_pf_neff_59561865.out. method-v2 is merged into
