@@ -68,7 +68,7 @@ def phi0(i, x):
     New method for computing phi0 (or just jl)
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_c1. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
     # use x_safe to avoid double-where gotcha in reverse AD
@@ -79,7 +79,7 @@ def phi0(i, x):
         jnp.where(
             x >= xphi0_tab[-1, i],
             j(l, x_safe),
-            tools.fast_interp(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
+            tools.fast_interp_c1(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
         )
     )
 
@@ -88,7 +88,7 @@ def phi1(i, x):
     New method for computing phi1, or jl'.
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_c1. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
     x_safe = jnp.where(x >= xphi1_tab[-1, i], x, xphi1_tab[-1, i])
@@ -98,7 +98,7 @@ def phi1(i, x):
         jnp.where(
             x >= xphi1_tab[-1, i],
             l/x_safe*j(l, x_safe) - j(l+1, x_safe),
-            tools.fast_interp(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
+            tools.fast_interp_c1(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
         )
     )
 
@@ -107,7 +107,7 @@ def phi2(i, x):
     New method for computing phi2 = (3 jl'' + jl)/2
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_c1. Otherwise we use the large x expansion above. 
     """
     l = bessel_l_tab[i]
     x_safe = jnp.where(x >= xphi2_tab[-1, i], x, xphi2_tab[-1, i])
@@ -117,7 +117,7 @@ def phi2(i, x):
         jnp.where(
             x >= xphi2_tab[-1, i],
             ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
-            tools.fast_interp(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
+            tools.fast_interp_c1(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
         )
     )
 
@@ -836,7 +836,8 @@ class SpectrumSolver(eqx.Module):
         # and accumulating down ell.  Clever "traingle term" added by hand is now handled by the trapezoid weights.
 
         # Pre-slice bessel-table columns so the scan body doesn't re-index
-        # ..._tab[:, idx] every iteration.
+        # ..._tab[:, idx] every iteration. The lookups are C^1 so that derivatives of
+        # j_l(k(tau0 - tau)) with respect to the background are smooth.
         x0_min = xphi0_tab[0, idx]
         x0_max = xphi0_tab[-1, idx]
         x1_min = xphi1_tab[0, idx]
@@ -856,7 +857,7 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x0_max,
                     j(l, x_safe),
-                    tools.fast_interp(x, x0_min, x0_max, col_phi0_l)
+                    tools.fast_interp_c1(x, x0_min, x0_max, col_phi0_l)
                 )
             )
 
@@ -868,7 +869,7 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x1_max,
                     l/x_safe*j(l, x_safe) - j(l+1, x_safe),
-                    tools.fast_interp(x, x1_min, x1_max, col_phi1_l)
+                    tools.fast_interp_c1(x, x1_min, x1_max, col_phi1_l)
                 )
             )
 
@@ -880,7 +881,7 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x2_max,
                     ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
-                    tools.fast_interp(x, x2_min, x2_max, col_phi2_l)
+                    tools.fast_interp_c1(x, x2_min, x2_max, col_phi2_l)
                 )
             )
 

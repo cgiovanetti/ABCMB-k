@@ -798,9 +798,12 @@ class Background(BackgroundPreRecomb):
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
         adjoint=self.adjoint()
+        # Explicit solver: the integrand does not depend on kappa, so this is a quadrature,
+        # not a stiff problem. Kvaerno5's forward-mode tangent of it is noisy at the 1e-3
+        # level near the visibility peak, and grad(visibility) differentiates that noise.
         sol = diffeqsolve(
             term,
-            solver=Kvaerno5(),
+            solver=Tsit5(),
             stepsize_controller=stepsize_controller,
             t0=0.,
             t1=-10.,
