@@ -9,6 +9,43 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-14 — Staged AD gradient: directions vmapped inside each stage's jvp (branch grad-vmap-dirs)
+-----------------------------------------------------------------------------------------------
+Why: the 2026-10-13 fork-vs-upstream bench showed upstream's jacfwd 2.75-5.9x FASTER than the
+fork's staged gradient. The question behind it (can batched values replace gradients for the
+profile?) is no: a gradient-free batched minimizer needs ~(2n+1)=15 points per iteration and
+2-3x the iterations, so batched values must be ~30-45x cheaper than a gradient; the fork's
+values were ~20x cheaper than its own gradient and ~7x cheaper than upstream's. So fix the gradient.
+Cause: staged_cl_and_grad (scan/batched_grad.py) looped the P directions and every jax.jvp
+re-solved the full primal -> 1 + P primal solves per gradient.
+Fix: stack the directions on a leading axis and push them through ONE jvp per stage, vmapped
+over that axis (jvp_stage(..., n_dirs=); out_axes=(None, 0)), and read the primal Cls off the
+same jvp. One primal solve per gradient. dir_chunk (driver PA_GRAD_DIRCHUNK) chunks the
+directions as a memory fallback; direction-stacked tangents shard on axis 1 (_dir_shardfn_from).
+Return layout unchanged (list[P] of (dTT, dTE, dEE)); staged_chi2_and_grad / the driver untouched
+apart from the knob. Driver PA_AD_BCHUNK default 64 -> 32 (see memory).
+Bench (scan/.grad_bench/ in the ABCMB-k-grad worktree; copy of fvu/bench_fvu.py, k path only;
+production specs, P=7, 1 A100-40GB, warm s/cosmo, peak GB):
+  B      new (all 7 dirs)     old fork         upstream jacfwd
+  1      115.5   4.9          532   1.8        91   4.7
+  4       46.5   6.4          231   2.0        66  11.4
+  8       34.1  12.7          167   4.7        61  22.4
+  12/16  OOM (15.0 / 19.7 GiB allocation: the direction-stacked modes tangent + a transient
+         second copy, ~1.25 GiB per cosmology at P=7 -> B_local <= 8 on 40 GB, <= ~16 on 80 GB)
+  B=8, dir_chunk=4 (4+3, two primal solves): 59.2 / 9.6 -- chunking is a poor trade.
+  B=8, dir_chunk=1 (old order, but primal read off the jvp): 154.5 / 4.9 -- so the win is the
+         vmap over directions, not the dropped primal pass (8%).
+  Sharded over 2 GPUs: B=7 (padded to 8) 29.6 / 6.4 per device; B=8 21.8 / 6.4.
+Accuracy: same-batch-composition runs reproduce the production (xe-c1, one-direction-at-a-time)
+gradients to 8e-14 relative and the call_batched Cls to 6e-16; the sharded run differs by 1e-7
+with the primal Cls themselves 2e-7 off (the known B_local step-controller composition noise).
+Projected profile iteration: AD block of 32 rows over 4 GPUs ~4-5 min vs ~590 s + 23 s/row before.
+Next memory lever (not done): make_output_table is pointwise in k, so applying it per k-chunk
+and concatenating the ~27 small PT fields instead of the full modes tensor would cut the
+gradient peak ~4-5x and let B_local=16 x 7 directions fit in 40 GB (core perturbations.py
+change, needs the snapshot tests). Merge into xe-c1 only after chunk 3 of the _v2fix profile.
+
+
 2026-10-11 — v2 production (59561865) done; rows trapped by a Cl discontinuity
 ------------------------------------------------------------------------------
 59561865 COMPLETED in 5h47m (4 nodes); sigma1 early-stop fired on every POI (it3-it7).

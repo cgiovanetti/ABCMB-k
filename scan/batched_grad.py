@@ -43,12 +43,19 @@ def raw_dict(h=0.6736, omega_b=0.02237, omega_cdm=0.1200, n_s=0.9649,
 
 
 # ---------- per-stage jvp helper (partition static, thread array tangents) ----------
-def jvp_stage(fn, primals_full, tangents_diff):
+def jvp_stage(fn, primals_full, tangents_diff, n_dirs=None):
     """fn(*primals_full) with forward-mode. primals_full: tuple of full pytrees
     (eqx.Modules / dicts). tangents_diff: tuple of DIFF pytrees (arrays where the
     primal is an inexact array, None at static), one per primal. Returns
     (primal_out_full, out_tangent_diff) where out_tangent_diff is filtered to the
-    inexact-array leaves (ready to thread into the next stage)."""
+    inexact-array leaves (ready to thread into the next stage).
+
+    n_dirs : int or None. If given, every tangent leaf carries a leading axis of
+        length n_dirs (a stack of directions) and ALL directions go through ONE
+        jvp, vmapped over that axis (what upstream's jacfwd does): the primal is
+        evaluated once and the n_dirs tangent lanes ride along, instead of one
+        full primal re-solve per direction. The primal output is unbatched
+        (out_axes=None); the tangent leaves come back as (n_dirs, ...)."""
     diffs, statics = [], []
     for p in primals_full:
         d, s = eqx.partition(p, eqx.is_inexact_array)
@@ -57,7 +64,11 @@ def jvp_stage(fn, primals_full, tangents_diff):
     def f_arr(*ds):
         return fn(*[eqx.combine(d, s) for d, s in zip(ds, statics)])
 
-    out, out_dot = jax.jvp(f_arr, tuple(diffs), tuple(tangents_diff))
+    if n_dirs is None:
+        out, out_dot = jax.jvp(f_arr, tuple(diffs), tuple(tangents_diff))
+    else:
+        out, out_dot = jax.vmap(lambda *ts: jax.jvp(f_arr, tuple(diffs), ts),
+                                in_axes=0, out_axes=(None, 0))(*tangents_diff)
     return out, eqx.filter(out_dot, eqx.is_inexact_array)
 
 
@@ -74,13 +85,45 @@ def _to_float(tree):
     return jax.tree_util.tree_map(f, tree)
 
 
+def _dir_shardfn_from(sharded_leaf):
+    """shardfn for DIRECTION-STACKED tangents (axis 0 = directions, axis 1 = B):
+    the same mesh / 'batch' axis as ``Model._make_shardfn`` (read off a leaf it
+    sharded), applied to axis 1. Leaves with ndim < 2 (per-direction scalars) are
+    replicated."""
+    from jax.sharding import NamedSharding, PartitionSpec as P
+    mesh = sharded_leaf.sharding.mesh
+    dir_sh = NamedSharding(mesh, P(None, 'batch'))
+    repl_sh = NamedSharding(mesh, P())
+
+    def f(tree):
+        def per_leaf(x):
+            if eqx.is_array(x):
+                return jax.device_put(x, dir_sh if x.ndim >= 2 else repl_sh)
+            return x
+        return jax.tree.map(per_leaf, tree)
+    return f
+
+
 # ---------- the staged forward-mode push: params_batch -> (Cl, dCl) ----------
-def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None):
+def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None,
+                       dir_chunk=None):
     """full_ps: list[B] of derived param dicts (primal).
     params_dots: list[P] of derived-param-tangent dicts, each stacked over B
         (i.e., params_dots[j] is the dB-stacked tangent of params_batch in
         direction j). Returns (ClTT,ClTE,ClEE) primal (B,n_l) and a list[P] of
         (dClTT,dClTE,dClEE) tangents (B,n_l).
+
+    The P directions are stacked on a leading axis and pushed through each
+    stage's jvp vmapped over that axis (``jvp_stage(..., n_dirs=)``): one primal
+    evaluation per stage carries all the tangent lanes, and the primal Cls are
+    read off that same jvp, so the pipeline's primal is solved ONCE per call.
+    (Before 2026-10-14 the directions were looped one at a time and every
+    jax.jvp re-solved the full primal: 1 + P primal solves per gradient.)
+
+    dir_chunk : int or None. Number of directions per vmapped jvp; None = all P
+        at once (fastest; the tangent of the saved modes tensor is P times the
+        primal's). Smaller chunks cap memory at the cost of ceil(P/dir_chunk)
+        primal solves; dir_chunk=1 is the old one-direction-at-a-time memory.
 
     k_chunk_size threads through full_evolution_batched on both the primal and the
     jvp. It is a gradient-path knob, independent of the primal call_batched (which
@@ -90,14 +133,15 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
 
     shard : bool or None. If True (or None with >1 visible GPU), shard the B
         axis across all visible GPUs via the SAME GSPMD shardfn call_batched
-        uses (``Model._make_shardfn``). B (and the leading axis of every
+        uses (``Model._make_shardfn``). B (and the B axis of every
         params_dots tangent) is padded to a multiple of the device count by
         REPLICATING the last cosmology; the padding is sliced off ALL outputs
         (primal Cls + every per-direction Cl tangent). The shardfn is applied
-        BEFORE the stages -- to the stacked primal params, to each pdot
-        tangent, and to recomb/recomb_dot after the CPU->GPU device_put
-        (mirroring _build_bgs_batched). Sharding AFTER the setup would build
-        everything on device 0 and OOM at large B."""
+        BEFORE the stages -- to the stacked primal params, to the
+        direction-stacked tangents (axis 1 = B, via ``_dir_shardfn_from``), and
+        to recomb/recomb_dot after the CPU->GPU device_put (mirroring
+        _build_bgs_batched). Sharding AFTER the setup would build everything on
+        device 0 and OOM at large B."""
     PE = model.PE; SS = model.SS
     cpu = jax.devices('cpu')[0]
     try:
@@ -112,6 +156,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     # divides evenly across the mesh; the padding is sliced off below. Both the
     # primal list and EACH stacked tangent dict are padded on axis 0. ---
     B = len(full_ps)
+    Pn = len(params_dots)
     full_ps_run = list(full_ps)
     params_dots_run = list(params_dots)
     if do_shard and B % n_dev != 0:
@@ -126,58 +171,61 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     params_batch = _to_float(jax.tree.map(lambda *xs: jnp.stack(xs), *full_ps_run))
     if do_shard:
         params_batch = shardfn(params_batch)
-        params_dots_run = [shardfn(pdot) for pdot in params_dots_run]
+        dir_shardfn = _dir_shardfn_from(params_batch['h'])
+    else:
+        dir_shardfn = None
 
-    # ---- stage 1: pre-recomb (GPU) ----
-    pre_BG = model._pre_recomb_batched(params_batch)
+    # stack the directions on a leading axis: leaves (P, B, ...); chunk over it
+    if dir_chunk is None or dir_chunk >= Pn:
+        dir_chunk = Pn
+    cls_primal = None
+    cl_dots = []                           # per chunk: (dTT, dTE, dEE) each (n_d, B, n_l)
+    for d0 in range(0, Pn, dir_chunk):
+        pdots = params_dots_run[d0:d0 + dir_chunk]
+        n_d = len(pdots)
+        pdot = jax.tree.map(lambda *xs: jnp.stack(xs), *pdots)
+        if do_shard:
+            pdot = dir_shardfn(pdot)
 
-    # ---- stage 2: HyRex (CPU) ----
-    ri_cpu = jax.device_put(pre_BG.recomb_inputs, cpu)
-    p_cpu = jax.device_put(params_batch, cpu)
-    hy = _recmodel_cpu(model.RecModel, True)
-    recomb = hy((ri_cpu, p_cpu))
-    # re-shard the CPU->GPU output (or land on gpu[0] if single-device)
-    if do_shard:
-        recomb = shardfn(recomb)
-    elif gpu is not None:
-        recomb = jax.device_put(recomb, gpu)
-
-    # ---- stage 3: get_BG (GPU) ----
-    BG = model._get_BG_batched(params_batch, pre_BG, recomb)
-
-    # ---- stage 4: perturbations (GPU, k-chunked) ----
-    PT = PE.full_evolution_batched((BG, params_batch), k_chunk_size=k_chunk_size)
-
-    # ---- stage 5: spectrum (GPU) ----
-    ClTT, ClTE, ClEE = SS.get_Cl_batched(PT, BG, params_batch)
-
-    # ===== tangents, one nuisance direction at a time =====
-    grads = []
-    for pdot in params_dots_run:           # pdot: dict stacked over B (direction j)
-        # stage 1 jvp
-        _, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,))
-        # stage 2 jvp (HyRex on CPU): inputs (recomb_inputs, params), tangents
+        # ---- stage 1: pre-recomb (GPU) ----
+        pre_BG, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,),
+                                       n_dirs=n_d)
+        # ---- stage 2: HyRex (CPU): inputs (recomb_inputs, params), tangents
         # (pre_BG_dot.recomb_inputs, pdot). Move primal+tangent to CPU; result to GPU.
+        ri_cpu = jax.device_put(pre_BG.recomb_inputs, cpu)
+        p_cpu = jax.device_put(params_batch, cpu)
+        hy = _recmodel_cpu(model.RecModel, True)
         ri_dot_cpu = jax.device_put(pre_BG_dot.recomb_inputs, cpu)
         p_dot_cpu = jax.device_put(pdot, cpu)
-        _, recomb_dot = jvp_stage(lambda ri, p: hy((ri, p)),
-                                  (ri_cpu, p_cpu), (ri_dot_cpu, p_dot_cpu))
+        recomb, recomb_dot = jvp_stage(lambda ri, p: hy((ri, p)),
+                                       (ri_cpu, p_cpu), (ri_dot_cpu, p_dot_cpu), n_dirs=n_d)
         if do_shard:
-            recomb_dot = shardfn(recomb_dot)
+            recomb = shardfn(recomb)
+            recomb_dot = dir_shardfn(recomb_dot)
         elif gpu is not None:
+            recomb = jax.device_put(recomb, gpu)
             recomb_dot = jax.device_put(recomb_dot, gpu)
-        # stage 3 jvp
-        _, BG_dot = jvp_stage(model._get_BG_batched,
-                              (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot))
-        # stage 4 jvp (perturbations)
-        _, PT_dot = jvp_stage(
+        # ---- stage 3: get_BG (GPU) ----
+        BG, BG_dot = jvp_stage(model._get_BG_batched,
+                               (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot),
+                               n_dirs=n_d)
+        # ---- stage 4: perturbations (GPU, k-chunked) ----
+        PT, PT_dot = jvp_stage(
             lambda bg, p: PE.full_evolution_batched((bg, p), k_chunk_size=k_chunk_size),
-            (BG, params_batch), (BG_dot, pdot))
-        # stage 5 jvp (spectrum)
-        _, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
-                              (PT_dot, BG_dot, pdot))
-        # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE) -> a 3-tuple of arrays
-        grads.append(cl_dot)
+            (BG, params_batch), (BG_dot, pdot), n_dirs=n_d)
+        # ---- stage 5: spectrum (GPU) ----
+        cls, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
+                                (PT_dot, BG_dot, pdot), n_dirs=n_d)
+        # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE): a 3-tuple of (n_d, B, n_l)
+        if cls_primal is None:
+            cls_primal = cls
+        cl_dots.append(cl_dot)
+        del pre_BG_dot, recomb_dot, BG_dot, PT, PT_dot
+
+    ClTT, ClTE, ClEE = cls_primal
+    # (P, B, n_l) per spectrum -> list[P] of (dTT, dTE, dEE), the historical layout
+    stacked = tuple(jnp.concatenate([c[s] for c in cl_dots], axis=0) for s in range(3))
+    grads = [tuple(g[j] for g in stacked) for j in range(Pn)]
 
     # --- slice off the B-padding (if any) on the primal Cls + every tangent ---
     if len(full_ps_run) != B:
@@ -188,7 +236,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
 
 # ---------- chi2-aware variant: contract the Cl tangents through a likelihood ----------
 def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
-                         k_chunk_size=100, shard=None):
+                         k_chunk_size=100, shard=None, dir_chunk=None):
     """Like staged_cl_and_grad but returns (chi2 (B,), grad (B,P)) by contracting
     each Cl tangent through a pure-jnp likelihood closure.
 
@@ -201,9 +249,11 @@ def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
     shard : forwarded to staged_cl_and_grad (B-axis GSPMD sharding over all
         visible GPUs; padding is sliced off the Cls before the chi2 contraction,
         so chi2/grad already have the unpadded length B).
+    dir_chunk : forwarded to staged_cl_and_grad (directions per vmapped jvp).
     """
     (ClTT, ClTE, ClEE), cl_grads = staged_cl_and_grad(
-        model, full_ps, params_dots, k_chunk_size=k_chunk_size, shard=shard)
+        model, full_ps, params_dots, k_chunk_size=k_chunk_size, shard=shard,
+        dir_chunk=dir_chunk)
     chi2 = chi2_of_cls(ClTT, ClTE, ClEE)
     cols = []
     for cl_dot in cl_grads:                       # cl_dot = (dTT, dTE, dEE)
