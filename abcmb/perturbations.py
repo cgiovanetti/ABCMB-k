@@ -579,9 +579,9 @@ class PerturbationEvolver(eqx.Module):
         )
 
         # step_ts=lna: land an accepted step on every save point. Kvaerno5's diffrax
-        # interpolation is LINEAR inside a step, and saving through it put a 2.3e-3
-        # (peak-normalised) error into ClTT/ClTE at low ell and 4e-4 above ell 30 against
-        # a tight reference (rtol 1e-7, stepped onto the grid); stepping onto the grid at
+        # interpolation inside a step is third-order Hermite, and saving through it across
+        # the wide adaptive steps put a 2.3e-3 (peak-normalised) error into ClTT/ClTE at
+        # low ell and 4e-4 above ell 30 against a tight reference (rtol 1e-7, stepped onto the grid); stepping onto the grid at
         # the production rtol 1e-5 leaves 3e-8 / 7e-5, for ~12% more steps (2026-10-14,
         # scan/.grad_bench/gs/interp_check.py). ``step_ts_PE`` (default True) keeps the
         # old behaviour reachable.
