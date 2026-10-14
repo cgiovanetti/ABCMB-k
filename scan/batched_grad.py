@@ -347,8 +347,9 @@ def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
 
     chi2_of_cls : (ClTT, ClTE, ClEE) [each (B, n_l)] -> chi2 (B,). Must be
         differentiable in the Cls (the driver's envelope-profiled plik-lite +
-        low-ell objective is). The Cl->chi2 map is cheap, so per-direction we just
-        jvp the closure (NOT the expensive pipeline) -- one extra jvp per direction.
+        low-ell objective is). All P directions go through ONE vmapped jvp of the
+        closure (NOT the pipeline), so its primal runs once: for full plik that is
+        the inner nuisance profile, ~47 s for 42 rows (it ran 1 + P times before).
     params_dots[j] is the B-stacked derived-param tangent in direction j; the
         returned grad column j is d chi2 / d (that direction).
     shard : forwarded to staged_cl_and_grad (B-axis GSPMD sharding over all
@@ -361,12 +362,10 @@ def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
     (ClTT, ClTE, ClEE), cl_grads = staged_cl_and_grad(
         model, full_ps, params_dots, k_chunk_size=k_chunk_size, shard=shard,
         dir_chunk=dir_chunk, spec_b_local=spec_b_local)
-    chi2 = chi2_of_cls(ClTT, ClTE, ClEE)
-    cols = []
-    for cl_dot in cl_grads:                       # cl_dot = (dTT, dTE, dEE)
-        _, c2_dot = jax.jvp(chi2_of_cls, (ClTT, ClTE, ClEE), tuple(cl_dot))
-        cols.append(c2_dot)
-    grad = jnp.stack(cols, axis=-1)               # (B, P)
+    stk = tuple(jnp.stack([cl_dot[s] for cl_dot in cl_grads]) for s in range(3))  # (P, B, n_l)
+    chi2, c2_dots = jax.vmap(lambda *t: jax.jvp(chi2_of_cls, (ClTT, ClTE, ClEE), t),
+                             out_axes=(None, 0))(*stk)
+    grad = jnp.moveaxis(c2_dots, 0, -1)           # (B, P)
     return chi2, grad
 
 

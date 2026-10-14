@@ -453,7 +453,7 @@ def _chi2_of_cls(ClTT, ClTE, ClEE):
         # input so the outer jvp never traces tangents through the inner Hessian/solve),
         # then differentiate penalized_chi2 in cls at the FIXED optimum.
         nu_star = jax.lax.stop_gradient(
-            plf.profile_batched(jax.lax.stop_gradient(cls2d))[1])             # (B,21)
+            _plf_prof_B(jax.lax.stop_gradient(cls2d))[1])  # (B,21); jitted, as the values path
         c2 = jax.vmap(plf.penalized_chi2)(cls2d, nu_star)
     elif USE_PLIK:
         Dte = pl.abcmb_cl_to_Dl(ClTE, lvec)
