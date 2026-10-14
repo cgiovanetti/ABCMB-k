@@ -217,11 +217,13 @@ FD_CHUNK = int(os.environ.get("PA_FD_CHUNK", "128"))        # cosmologies per pr
 FD_CALTOL = float(os.environ.get("PA_FD_CALTOL", "1e-2"))   # it0 fd-vs-ad max-rel target
 FD_CALMIN = int(os.environ.get("PA_FD_CALMIN", "32"))       # min rows in the it0 calibration sample
 CAL_RETRIES = int(os.environ.get("PA_CAL_RETRIES", "3"))
-AD_BCHUNK = int(os.environ.get("PA_AD_BCHUNK", "32"))       # B per staged-AD call (was 64: with the
-    # directions vmapped inside the staged jvp the per-device peak is ~P x the modes tensor, and
-    # B_local=16 x 7 directions OOMs a 40 GB A100; B_local=8 fits at ~13 GB, 2026-10-14)
+AD_BCHUNK = int(os.environ.get("PA_AD_BCHUNK", "64"))       # B per staged-AD call (B_local=16 on a
+    # 4-GPU node: 9 GB/device with PA_GRAD_SPECB=4 and all directions vmapped; B_local=32 is 14 GB
+    # and only 3% faster per cosmology, 2026-10-14)
 GRAD_DIRCHUNK = int(os.environ.get("PA_GRAD_DIRCHUNK", "0")) or None  # directions per vmapped
     # staged jvp (0 = all P at once, fastest; smaller = memory fallback at ceil(P/chunk) primal solves)
+GRAD_SPECB = int(os.environ.get("PA_GRAD_SPECB", "4")) or None  # cosmologies per device per
+    # spectrum-stage jvp call (the gradient's memory peak; sub-batching it costs no extra work)
 DO_HESS = os.environ.get("PA_HESS", "1") != "0"
 _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 MULTISTART = os.environ.get("PA_MULTISTART", "0") != "0"
@@ -498,14 +500,14 @@ def _ad_grad_block(POI_IDX, X, PV):
                                 *[per[b][j] for b in range(B)]) for j in range(P)]
     chi2, grad = staged_chi2_and_grad(model, full_ps, params_dots, _chi2_of_cls,
                                       k_chunk_size=GRAD_KCHUNK, shard=DO_SHARD,
-                                      dir_chunk=GRAD_DIRCHUNK)
+                                      dir_chunk=GRAD_DIRCHUNK, spec_b_local=GRAD_SPECB)
     return np.asarray(chi2, float), np.asarray(grad, float)
 
 
 def ad_grad_rows(POI_IDX, X, PV, bchunk=None):
-    """Exact batched-AD gradient over ALL rows, in B<=bchunk blocks (B_local=8 is
-    the 40 GB memory limit with all P directions vmapped, so bchunk=32 on a 4-GPU
-    node; B_local=16 needs 80 GB or PA_GRAD_DIRCHUNK=3). Returns (chi2 (N,), G (N,P))."""
+    """Exact batched-AD gradient over ALL rows, in B<=bchunk blocks (B_local=16 per
+    device, 9 GB with the spectrum stage sub-batched; the per-cosmology cost is flat
+    beyond that). Returns (chi2 (N,), G (N,P))."""
     if bchunk is None:
         bchunk = AD_BCHUNK
     N = len(PV)

@@ -106,7 +106,7 @@ def _dir_shardfn_from(sharded_leaf):
 
 # ---------- the staged forward-mode push: params_batch -> (Cl, dCl) ----------
 def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None,
-                       dir_chunk=None):
+                       dir_chunk=None, spec_b_local=None):
     """full_ps: list[B] of derived param dicts (primal).
     params_dots: list[P] of derived-param-tangent dicts, each stacked over B
         (i.e., params_dots[j] is the dB-stacked tangent of params_batch in
@@ -124,6 +124,15 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         at once (fastest; the tangent of the saved modes tensor is P times the
         primal's). Smaller chunks cap memory at the cost of ceil(P/dir_chunk)
         primal solves; dir_chunk=1 is the old one-direction-at-a-time memory.
+
+    spec_b_local : int or None. Cosmologies PER DEVICE per spectrum-stage jvp
+        call. The spectrum jvp is the gradient's memory peak (its lensing and
+        line-of-sight intermediates are (P, B, ...) tensors of ~1.2 GiB per
+        cosmology at P=7, far above the ~0.2 GB/cosmology the tables need), and
+        it is embarrassingly parallel over B, so stage 5 is run on sub-batches of
+        spec_b_local x n_dev cosmologies and the Cls / tangents concatenated: no
+        extra work, no change to the spectrum code, peak ~ spec_b_local/B_local
+        of the full-batch stage. None = the whole batch in one call.
 
     k_chunk_size threads through full_evolution_batched on both the primal and the
     jvp. It is a gradient-path knob, independent of the primal call_batched (which
@@ -152,14 +161,19 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     shardfn, n_dev = model._make_shardfn(shard)
     do_shard = shardfn is not None
 
+    _t_mem = [time.perf_counter()]
+
     def _memlog(tag, *xs):
-        """BG_MEMLOG=1: block on xs and print GPU bytes in use / peak after a stage."""
+        """BG_MEMLOG=1: block on xs and print GPU bytes in use / peak + seconds since the
+        previous stage (first call per stage includes its compile)."""
         if os.environ.get("BG_MEMLOG", "0") != "1" or gpu is None:
             return
         jax.block_until_ready(xs)
         st = gpu.memory_stats()
+        now = time.perf_counter()
         print(f"[memlog] {tag:28s} in_use {st['bytes_in_use']/1e9:7.2f} GB  "
-              f"peak {st['peak_bytes_in_use']/1e9:7.2f} GB", flush=True)
+              f"peak {st['peak_bytes_in_use']/1e9:7.2f} GB  {now - _t_mem[0]:7.1f} s", flush=True)
+        _t_mem[0] = now
 
     # --- pad B to a multiple of n_dev (replicate last cosmology) so the B axis
     # divides evenly across the mesh; the padding is sliced off below. Both the
@@ -226,9 +240,30 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
             lambda bg, p: PE.full_evolution_batched((bg, p), k_chunk_size=k_chunk_size),
             (BG, params_batch), (BG_dot, pdot), n_dirs=n_d)
         _memlog("stage4 perturbations jvp", PT, PT_dot)
-        # ---- stage 5: spectrum (GPU) ----
-        cls, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
-                                (PT_dot, BG_dot, pdot), n_dirs=n_d)
+        # ---- stage 5: spectrum (GPU), in sub-batches of spec_b_local x n_dev ----
+        Brun = len(full_ps_run)
+        spec_chunk = None if spec_b_local is None else spec_b_local * (n_dev if do_shard else 1)
+        if spec_chunk is None or spec_chunk >= Brun:
+            cls, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
+                                    (PT_dot, BG_dot, pdot), n_dirs=n_d)
+        else:
+            def _sl(tree, s, e, axis):
+                return jax.tree.map(
+                    lambda x: jax.lax.slice_in_dim(x, s, e, axis=axis)
+                    if eqx.is_array(x) and x.ndim > axis else x, tree)
+            cls_parts, dot_parts = [], []
+            for s0 in range(0, Brun, spec_chunk):
+                e0 = min(s0 + spec_chunk, Brun)
+                prim = _sl((PT, BG, params_batch), s0, e0, 0)       # leaves (b, ...)
+                tang = _sl((PT_dot, BG_dot, pdot), s0, e0, 1)       # leaves (n_d, b, ...)
+                if do_shard:                                        # keep the B sharding
+                    prim = shardfn(prim); tang = dir_shardfn(tang)
+                c, cd = jvp_stage(SS.get_Cl_batched, prim, tang, n_dirs=n_d)
+                cls_parts.append(c); dot_parts.append(cd)
+                del prim, tang
+            cls = tuple(jnp.concatenate([c[i] for c in cls_parts], axis=0) for i in range(3))
+            cl_dot = tuple(jnp.concatenate([d[i] for d in dot_parts], axis=1) for i in range(3))
+            del cls_parts, dot_parts
         _memlog("stage5 spectrum jvp", cls, cl_dot)
         # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE): a 3-tuple of (n_d, B, n_l)
         if cls_primal is None:
@@ -250,7 +285,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
 
 # ---------- chi2-aware variant: contract the Cl tangents through a likelihood ----------
 def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
-                         k_chunk_size=100, shard=None, dir_chunk=None):
+                         k_chunk_size=100, shard=None, dir_chunk=None, spec_b_local=None):
     """Like staged_cl_and_grad but returns (chi2 (B,), grad (B,P)) by contracting
     each Cl tangent through a pure-jnp likelihood closure.
 
@@ -264,10 +299,12 @@ def staged_chi2_and_grad(model, full_ps, params_dots, chi2_of_cls,
         visible GPUs; padding is sliced off the Cls before the chi2 contraction,
         so chi2/grad already have the unpadded length B).
     dir_chunk : forwarded to staged_cl_and_grad (directions per vmapped jvp).
+    spec_b_local : forwarded to staged_cl_and_grad (cosmologies per device per
+        spectrum-stage call).
     """
     (ClTT, ClTE, ClEE), cl_grads = staged_cl_and_grad(
         model, full_ps, params_dots, k_chunk_size=k_chunk_size, shard=shard,
-        dir_chunk=dir_chunk)
+        dir_chunk=dir_chunk, spec_b_local=spec_b_local)
     chi2 = chi2_of_cls(ClTT, ClTE, ClEE)
     cols = []
     for cl_dot in cl_grads:                       # cl_dot = (dTT, dTE, dEE)
