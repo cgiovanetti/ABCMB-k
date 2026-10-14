@@ -9,6 +9,26 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-14 — Batched perturbations: build the output table per k-chunk (branch pt-per-kchunk)
+--------------------------------------------------------------------------------------------
+Stacked on grad-vmap-dirs. ``full_evolution_batched`` no longer concatenates the raw
+(B, Ny, Nlna, N_k) modes tensor and then calls ``make_output_table_batched`` on it: every quantity
+in ``make_output_table`` is pointwise in k (no species function touches the k axis), so each
+``_evolve_chunk`` output goes straight into a new jitted ``_table_chunk`` (transpose +
+``make_output_table_batched(..., k=k_chunk)``) and the small (B, Nlna, K) table fields are
+concatenated instead. ``make_output_table`` / ``make_output_table_batched`` take an optional ``k``
+(default: the full axis, so the single-cosmology path is unchanged). ``_compute_modes_batched``
+is kept for diagnostics. Snapshot tests: 5 passed. Value path (1 A100, s/cosmo / peak GB):
+B=8 8.71 / 1.45, B=16 6.27 / 2.33, B=32 5.38 / 5.21 -- identical to before (Cls bitwise at
+B=8/16, 7e-15 at B=32): the value path's peak was never the modes tensor.
+Gradient (P=7 directions vmapped): B=8 34.2 / 10.0 (was 12.7 GB); B=16 now FITS: 26.6 s/cosmo,
+24.9 GB (was OOM); B=24 OOM. Gradients match the production run to 8e-14, Cls to 1e-15.
+Per-stage memory log (new BG_MEMLOG=1 knob in scan/batched_grad.py), B=8: the perturbation
+jvp peaks at 3.6 GB and leaves 1.8 GB of tables; the SPECTRUM jvp is the peak (10.0 GB), with a
+transient that scales linearly with B (19.7 GiB at B=16, 29.3 GiB at B=24: ~1.2 GiB per cosmology
+at P=7). So the next memory lever is in spectrum.py's get_Cl, not the modes.
+
+
 2026-10-14 — Staged AD gradient: directions vmapped inside each stage's jvp (branch grad-vmap-dirs)
 -----------------------------------------------------------------------------------------------
 Why: the 2026-10-13 fork-vs-upstream bench showed upstream's jacfwd 2.75-5.9x FASTER than the

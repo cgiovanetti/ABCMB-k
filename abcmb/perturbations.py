@@ -287,9 +287,16 @@ class PerturbationEvolver(eqx.Module):
         a batched PerturbationTable.
 
         Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100),
-        calling the JIT'd ``_evolve_chunk`` on each. The loop over chunks is a
-        plain Python loop rather than ``lax.scan``, which has a long compile
-        time when wrapped around diffrax.
+        calling the JIT'd ``_evolve_chunk`` on each and then -- because every
+        quantity in ``make_output_table`` is pointwise in k -- the JIT'd
+        ``_table_chunk`` on that chunk alone. The per-chunk tables (a few dozen
+        ``(B, Nlna, K)`` fields) are concatenated along k; the full
+        ``(B, Ny, Nlna, N_k)`` modes tensor is never materialized, which cuts the
+        peak by ~Ny/n_fields (~4-5x) on both the value path and the forward-mode
+        gradient (where the tensor would carry a leading directions axis).
+        ``_compute_modes_batched`` still builds the full tensor for diagnostics.
+        The loop over chunks is a plain Python loop rather than ``lax.scan``,
+        which has a long compile time when wrapped around diffrax.
 
         Parameters:
         -----------
@@ -303,16 +310,40 @@ class PerturbationEvolver(eqx.Module):
         Returns:
         --------
         PerturbationTable
-            Each field carries a leading B axis. Internally this is just
-            ``vmap(make_output_table, in_axes=(0, 0, (0, 0)))`` applied to
-            the per-element ``(lna, modes, (BG, params))``.
+            Each field carries a leading B axis (``k`` is ``(B, N_k)``, as
+            before: the vmap broadcasts the shared k axis).
         """
-        modes, lna_batch = self._compute_modes_batched(
-            args, k_chunk_size=k_chunk_size)
-        return self.make_output_table_batched(lna_batch, modes, args)
+        BG_batch, params_batch = args
+        lna_batch = vmap(
+            lambda bg, p: make_lna_grid(bg, p, self.specs["n_lna_PE"], self.specs)
+        )(BG_batch, params_batch)
+
+        k_axis = self.k_axis_perturbations
+        n_k = len(k_axis)
+        tables = []
+        for i in range(0, n_k, k_chunk_size):
+            k_chunk = k_axis[i:i + k_chunk_size]
+            raw = self._evolve_chunk(k_chunk, lna_batch, BG_batch, params_batch)
+            tables.append(self._table_chunk(k_chunk, lna_batch, raw, args))
+            del raw
+        # concatenate every field along its (last) k axis; ``lna`` is per-cosmology,
+        # not per-k, so it is taken from the first chunk instead. Sharding-safe:
+        # concatenating B-axis-sharded chunks along the unsharded k axis keeps the
+        # B sharding (same argument as the modes concatenate it replaces).
+        PT = jax.tree_util.tree_map(lambda *xs: jnp.concatenate(xs, axis=-1), *tables)
+        return eqx.tree_at(lambda t: t.lna, PT, tables[0].lna)
 
     @eqx.filter_jit
-    def make_output_table_batched(self, lna_batch, modes_batch, args_batch):
+    def _table_chunk(self, k_chunk, lna_batch, raw_chunk, args_batch):
+        """Per-chunk output table: transpose the raw ``(K, B, Nlna, Ny)`` modes
+        chunk to ``(B, Ny, Nlna, K)`` and build the batched PerturbationTable for
+        the k-modes ``k_chunk`` only, inside one JIT so the transposed chunk is
+        never a separate array. Fields are ``(B, Nlna, K)``."""
+        return self.make_output_table_batched(
+            lna_batch, raw_chunk.transpose(1, 3, 2, 0), args_batch, k=k_chunk)
+
+    @eqx.filter_jit
+    def make_output_table_batched(self, lna_batch, modes_batch, args_batch, k=None):
         """Batched version of ``make_output_table`` via outer vmap.
 
         PT fields show ~1e-5 relative drift vs the single-call PT; this is
@@ -325,6 +356,10 @@ class PerturbationEvolver(eqx.Module):
         modes_batch : jnp.array, shape (B, Ny, Nlna, N_k)
         args_batch : tuple
             ``(BG_batch, params_batch)``, stacked pytrees.
+        k : jnp.array, shape (N_k,), optional
+            The k-modes the modes tensor was evolved on (a sub-range of
+            ``k_axis_perturbations`` for the per-chunk path). Default: the
+            full ``k_axis_perturbations``.
 
         Returns:
         --------
@@ -332,7 +367,7 @@ class PerturbationEvolver(eqx.Module):
         """
         BG_batch, params_batch = args_batch
         return vmap(
-            self.make_output_table,
+            lambda lna, modes, args: self.make_output_table(lna, modes, args, k=k),
             in_axes=(0, 0, (0, 0)),
         )(lna_batch, modes_batch, (BG_batch, params_batch))
 
@@ -536,20 +571,24 @@ class PerturbationEvolver(eqx.Module):
 
         return sol.ys
 
-    def make_output_table(self, lna, modes, args):
+    def make_output_table(self, lna, modes, args, k=None):
         """
         Create interpolatable perturbation table from evolution results.
 
         Extracts key perturbation modes and computes derived quantities.
+        Everything here is pointwise in k, so the table can be built for any
+        sub-range of the k axis (the batched path builds it per k-chunk).
 
         Parameters:
         -----------
         lna : array
             Logarithm of scale factor grid
         modes : array
-            Perturbation evolution results
+            Perturbation evolution results, shape (Ny, Nlna, len(k))
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
+        k : array, optional
+            The k-modes ``modes`` was evolved on; default ``k_axis_perturbations``.
 
         Returns:
         --------
@@ -557,7 +596,7 @@ class PerturbationEvolver(eqx.Module):
             Organized perturbation data for interpolation
 
         """
-        k = self.k_axis_perturbations
+        k = self.k_axis_perturbations if k is None else k
         BG, params = args
 
         metric_eta = modes[0]
