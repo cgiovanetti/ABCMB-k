@@ -26,11 +26,18 @@ tangents. No extra work, no change to spectrum.py. 1 A100-40GB, P=7, warm s/cosm
   B=16 spec 4: 24.8 / 9.0   (full: 26.5 / 24.9);  spec 2: peak 7.4
   B=32 spec 4: 24.1 / 14.2  (full: OOM, 38.7 GiB allocation); the perturbation jvp is now the
        peak (7.3 GB of tables + 7 GB transient).
-Gradients unchanged (8e-14 vs the production run; Cls 1e-15). The per-cosmology cost flattens at
-~24 s beyond B=16 (perturbation jvp 22 -> 20 s/cosmo, HyRex 2.5 -> 2.1), so the driver default
-PA_AD_BCHUNK goes back to 64 (B_local=16). Remaining levers, in order: the perturbation jvp
-itself (85%: the batched ODE solve), the HyRex CPU jvp (~2 s/cosmo, serial over B x P lanes on one
-CPU thread -- host-device sharding would parallelize it), then the spectrum intermediates.
+  B=64 spec 4: 22.0 / 28.3  (perturbation jvp 1177 s = 18.4 s/cosmo, HyRex 139 s, spectrum 57 s)
+  Sharded 2 GPUs, B=32 (16/device), spec 4: 470 s = 14.7 s/cosmo wall, 10.0 GB/device; vs 396 s
+  for B=16 on one GPU the extra 74 s is almost all the HyRex CPU jvp (65 s vs 22 s): one serial
+  CPU process handles every lane however many GPUs share the batch (the sharded slicing /
+  re-sharding path of the sub-batched stage 5 validated here).
+Gradients unchanged (8e-14 vs the production run; Cls 1e-15; sharded 3e-7 = the usual batch-
+composition noise). The per-cosmology cost flattens: 34 (B=8) -> 25 (16) -> 24 (32) -> 22 (64)
+s/cosmo, so the driver default PA_AD_BCHUNK goes back to 64 (B_local=16; 128 would fit at ~28 GB
+for a further ~10%). Remaining levers, in order: the perturbation jvp (85%: the batched ODE
+solve); the HyRex CPU jvp (~2.2 s/cosmo serial, and NOT divided by the GPU count -- on a 4-GPU
+node with B=64 it is ~140 s against ~370 s of perturbations, so host-device sharding of that
+stage is worth ~25%); then the spectrum intermediates.
 
 
 2026-10-14 — Batched perturbations: build the output table per k-chunk (branch pt-per-kchunk)
