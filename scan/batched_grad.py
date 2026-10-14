@@ -42,6 +42,56 @@ def raw_dict(h=0.6736, omega_b=0.02237, omega_cdm=0.1200, n_s=0.9649,
                 A_s=float(np.exp(ln10As) / 1e10), tau_reion=tau_reion)
 
 
+# ---------- HyRex on a CPU mesh (the staged jvp's stage 2) ----------
+_HYREX_MESH_CACHE = {}
+
+
+def hyrex_cpu_mesh(model, B):
+    """HyRex wrapper + placement functions for the staged jvp's stage 2.
+
+    The HyRex primal is cheap (~0.9 s for 16 cosmologies) but its P-direction jvp is a
+    serial CPU loop over every (cosmology, direction) lane (~22 s at B=16, P=7) and does
+    not shrink when more GPUs share the batch. With several host devices
+    (``XLA_FLAGS=--xla_force_host_platform_device_count=N`` before JAX starts) the B axis
+    is sharded over ``n_use`` = the largest divisor of B <= N of them and each device
+    runs its own lanes in parallel: 22 -> 4.3 s at B=16 on 16 devices. The wrapper must
+    NOT be ``_recmodel_cpu`` (``filter_jit(..., backend='cpu')`` gathers sharded inputs
+    onto device 0); a plain ``filter_jit`` runs on the mesh the inputs are placed on.
+    Returns ``(hy, put_b, put_pb, n_use)``: ``put_b`` places a B-leading tree, ``put_pb``
+    a (P, B, ...) direction-stacked tree. Single device (the old path) when only one CPU
+    device exists, B is prime, or ``BG_HYREX_SHARD=0``."""
+    cpus = jax.devices('cpu')
+    n_cpu = len(cpus)
+    n_use = max(d for d in range(1, n_cpu + 1) if B % d == 0)
+    if n_use == 1 or os.environ.get("BG_HYREX_SHARD", "1") == "0":
+        cpu = cpus[0]
+        put = lambda t: jax.device_put(t, cpu)
+        return _recmodel_cpu(model.RecModel, True), put, put, 1
+    from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+    key = (id(model.RecModel), n_use)
+    hit = _HYREX_MESH_CACHE.get(key)
+    if hit is not None:
+        return hit[0], hit[1], hit[2], n_use
+    # Build the wrapper, the mesh and the shardings ONCE per (RecModel, n_use) and reuse them:
+    # a fresh Mesh/NamedSharding per call is a fresh jit cache key, i.e. a recompile of the
+    # sharded HyRex program on every gradient call (the in-pipeline stage-2 time was stuck at
+    # ~22 s while the same jvp ran in 4.3 s standalone, where the mesh was built once).
+    hy = eqx.filter_jit(jax.vmap(model.RecModel))
+    mesh = Mesh(np.asarray(cpus[:n_use]), axis_names=('batch',))
+    sh_b, sh_pb, repl = (NamedSharding(mesh, P('batch')), NamedSharding(mesh, P(None, 'batch')),
+                         NamedSharding(mesh, P()))
+
+    def put_b(tree):
+        return jax.tree.map(lambda x: jax.device_put(x, sh_b if x.ndim >= 1 else repl)
+                            if eqx.is_array(x) else x, tree)
+
+    def put_pb(tree):
+        return jax.tree.map(lambda x: jax.device_put(x, sh_pb if x.ndim >= 2 else repl)
+                            if eqx.is_array(x) else x, tree)
+    _HYREX_MESH_CACHE[key] = (hy, put_b, put_pb, model.RecModel, mesh)
+    return hy, put_b, put_pb, n_use
+
+
 # ---------- per-stage jvp helper (partition static, thread array tangents) ----------
 def jvp_stage(fn, primals_full, tangents_diff, n_dirs=None):
     """fn(*primals_full) with forward-mode. primals_full: tuple of full pytrees
@@ -214,15 +264,21 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         pre_BG, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,),
                                        n_dirs=n_d)
         _memlog("stage1 pre_recomb jvp", pre_BG, pre_BG_dot)
-        # ---- stage 2: HyRex (CPU): inputs (recomb_inputs, params), tangents
-        # (pre_BG_dot.recomb_inputs, pdot). Move primal+tangent to CPU; result to GPU.
-        ri_cpu = jax.device_put(pre_BG.recomb_inputs, cpu)
-        p_cpu = jax.device_put(params_batch, cpu)
-        hy = _recmodel_cpu(model.RecModel, True)
-        ri_dot_cpu = jax.device_put(pre_BG_dot.recomb_inputs, cpu)
-        p_dot_cpu = jax.device_put(pdot, cpu)
+        # ---- stage 2: HyRex (CPU mesh): inputs (recomb_inputs, params), tangents
+        # (pre_BG_dot.recomb_inputs, pdot). Primal + tangents to the host devices (B axis
+        # sharded over them when there are several, see hyrex_cpu_mesh); result to GPU.
+        hy, put_b, put_pb, n_cpu_use = hyrex_cpu_mesh(model, len(full_ps_run))
+        ri_cpu = put_b(pre_BG.recomb_inputs)
+        p_cpu = put_b(params_batch)
+        ri_dot_cpu = put_pb(pre_BG_dot.recomb_inputs)
+        p_dot_cpu = put_pb(pdot)
+        _memlog("stage2a inputs to cpu mesh", ri_cpu, p_cpu, ri_dot_cpu, p_dot_cpu)
         recomb, recomb_dot = jvp_stage(lambda ri, p: hy((ri, p)),
                                        (ri_cpu, p_cpu), (ri_dot_cpu, p_dot_cpu), n_dirs=n_d)
+        if os.environ.get("BG_MEMLOG", "0") == "1":
+            _xs = [x for x in jax.tree_util.tree_leaves(recomb_dot) if eqx.is_array(x)]
+            print(f"[memlog] stage2 recomb_dot sharding: {str(_xs[0].sharding)[:100] if _xs else 'none'}", flush=True)
+        _memlog("stage2b hyrex jvp on cpu", recomb, recomb_dot)
         if do_shard:
             recomb = shardfn(recomb)
             recomb_dot = dir_shardfn(recomb_dot)
@@ -230,7 +286,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
             recomb = jax.device_put(recomb, gpu)
             recomb_dot = jax.device_put(recomb_dot, gpu)
         # ---- stage 3: get_BG (GPU) ----
-        _memlog("stage2 hyrex jvp (to gpu)", recomb, recomb_dot)
+        _memlog(f"stage2 hyrex jvp ({n_cpu_use} cpu dev)", recomb, recomb_dot)
         BG, BG_dot = jvp_stage(model._get_BG_batched,
                                (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot),
                                n_dirs=n_d)

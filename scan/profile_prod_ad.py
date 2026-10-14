@@ -40,6 +40,14 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_RANK_SLICE(0)  -- 1 => slice the ROW list across SLURM ranks (multi-node);
                        0 (default) => every rank runs the full lockstep set.
 """
+# Host devices for the HyRex jvp (scan/batched_grad.hyrex_cpu_mesh): must be set before JAX
+# initialises. PA_CPU_DEVICES=0/1 keeps the single-device path.
+import os as _os
+_ncpu = _os.environ.get("PA_CPU_DEVICES", "16")
+if _ncpu not in ("0", "1") and "xla_force_host_platform_device_count" not in _os.environ.get("XLA_FLAGS", ""):
+    _os.environ["XLA_FLAGS"] = (_os.environ.get("XLA_FLAGS", "") +
+                                f" --xla_force_host_platform_device_count={_ncpu}").strip()
+
 import os, time, importlib.util
 _SCRATCH = os.environ.get("SCRATCH", "/pscratch/sd/c/carag")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
