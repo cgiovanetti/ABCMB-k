@@ -38,6 +38,16 @@ at B=8. AD vs central FD of the bench loss (h = 0.01 sigma, scan/.grad_bench/fd_
   (n_s, ln10As exact; tau 9e-6 both)
 The new gradient is MORE consistent with the values than the old one. Snapshots must be
 regenerated (values move by the numbers above).
+HyRex jvp on a host-device mesh (scan/batched_grad.py hyrex_cpu_mesh; XLA_FLAGS=
+--xla_force_host_platform_device_count=N before JAX starts, driver PA_CPU_DEVICES=16): the stage
+was 22 s at B=16 because it is one serial CPU program over all B x P lanes, and it does not shrink
+with more GPUs. The old wrapper (filter_jit backend='cpu') silently gathered sharded inputs onto
+device 0, so a plain filter_jit on inputs device_put to a NamedSharding over the host devices is
+used, with the mesh/shardings cached per (RecModel, n_use) -- a fresh Mesh per call is a fresh
+jit key. In the pipeline the stage takes two calls to settle (65 s, 22 s, then 4.3 s per gradient
+call at B=16 on 16 devices; standalone 22 -> 4.3 s), so a profile run gets the 5x after its
+second iteration. B=16 gradient with step_ts + the mesh: 25.4 s/cosmo (24.5 in the settled pass;
+24.8 before step_ts without the mesh), 9.9 GB.
 GRADSOLVE (ECLIPSE-AI4Science 0.2.1, /pscratch/sd/c/carag/gradsolve): not a speedup. Its fused
 one-thread-per-trajectory kernels need dim<=64 and a scalar-arithmetic RHS (no table lookups); its
 JAX engines are the same lockstep vmapped while_loop as diffrax: Rodas5P record 50.8 s + replay
