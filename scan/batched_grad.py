@@ -152,6 +152,15 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     shardfn, n_dev = model._make_shardfn(shard)
     do_shard = shardfn is not None
 
+    def _memlog(tag, *xs):
+        """BG_MEMLOG=1: block on xs and print GPU bytes in use / peak after a stage."""
+        if os.environ.get("BG_MEMLOG", "0") != "1" or gpu is None:
+            return
+        jax.block_until_ready(xs)
+        st = gpu.memory_stats()
+        print(f"[memlog] {tag:28s} in_use {st['bytes_in_use']/1e9:7.2f} GB  "
+              f"peak {st['peak_bytes_in_use']/1e9:7.2f} GB", flush=True)
+
     # --- pad B to a multiple of n_dev (replicate last cosmology) so the B axis
     # divides evenly across the mesh; the padding is sliced off below. Both the
     # primal list and EACH stacked tangent dict are padded on axis 0. ---
@@ -190,6 +199,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         # ---- stage 1: pre-recomb (GPU) ----
         pre_BG, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,),
                                        n_dirs=n_d)
+        _memlog("stage1 pre_recomb jvp", pre_BG, pre_BG_dot)
         # ---- stage 2: HyRex (CPU): inputs (recomb_inputs, params), tangents
         # (pre_BG_dot.recomb_inputs, pdot). Move primal+tangent to CPU; result to GPU.
         ri_cpu = jax.device_put(pre_BG.recomb_inputs, cpu)
@@ -206,16 +216,20 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
             recomb = jax.device_put(recomb, gpu)
             recomb_dot = jax.device_put(recomb_dot, gpu)
         # ---- stage 3: get_BG (GPU) ----
+        _memlog("stage2 hyrex jvp (to gpu)", recomb, recomb_dot)
         BG, BG_dot = jvp_stage(model._get_BG_batched,
                                (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot),
                                n_dirs=n_d)
+        _memlog("stage3 get_BG jvp", BG, BG_dot)
         # ---- stage 4: perturbations (GPU, k-chunked) ----
         PT, PT_dot = jvp_stage(
             lambda bg, p: PE.full_evolution_batched((bg, p), k_chunk_size=k_chunk_size),
             (BG, params_batch), (BG_dot, pdot), n_dirs=n_d)
+        _memlog("stage4 perturbations jvp", PT, PT_dot)
         # ---- stage 5: spectrum (GPU) ----
         cls, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
                                 (PT_dot, BG_dot, pdot), n_dirs=n_d)
+        _memlog("stage5 spectrum jvp", cls, cl_dot)
         # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE): a 3-tuple of (n_d, B, n_l)
         if cls_primal is None:
             cls_primal = cls
