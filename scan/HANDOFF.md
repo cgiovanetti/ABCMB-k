@@ -1,5 +1,13 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-14: _v2fix DONE, all 7 POIs (CHANGELOG 2026-10-14; results/profile_prod_ad_*_v2fix.npz).
+xe-c1 = the pt-per-kchunk gradient stack + compare script (53d98a3), checked end to end. The
+ABCMB-k checkout may leave xe-c1 now. Open: apply .v2analysis/chi2_contraction_vmap.diff +
+chi2_jit_inner_profile.diff (coordinate with the ABCMB-k-grad session, which edits batched_grad.py);
+HyRex CPU jvp ~1/4 of a gradient (does not divide by GPU count); surrogate profiler proposal
+(.v2analysis/surrogate_profiler_proposal.md, under review); 2D joint profiles; merge xe-c1 -> main.
+The user opens the upstream PRs (Cl-step fix + the 2 AD fixes).**
+
 **2026-10-11: 59561865 COMPLETED (5h47m); results in scan/results/profile_prod_ad_*_v2.npz.
 NOT final: rows are trapped by step discontinuities in the ABCMB-k low-ell ClTT/ClTE.
 CAUSE FOUND (both CHANGELOG 2026-10-11 entries): g' = grad(visibility) through a LINEAR x_e

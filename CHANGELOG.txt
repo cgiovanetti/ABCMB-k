@@ -9,6 +9,31 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-14 — _v2fix complete (all 7 POIs); gradient stack on xe-c1, checked end to end
+-------------------------------------------------------------------------------------
+Chunks 59741103 + 59750806 (4 nodes), 59781927 (1 node: omega_cdm+ln10As resumed at it11, stopped
+it13). Every POI stopped on sigma1 stability; 83/147 rows under GTOL 0.03, max ||g||_AD 0.05-0.49.
+Min chi2 2757.60 (v2 2757.06, on the pre-fix Cl: a different surface). Driver fit, best +-1sig:
+  h 0.66620 +-0.01630; omega_b 0.02224 +-0.00022; omega_cdm 0.11734 +-0.00351; n_s 0.95986 +-0.00870;
+  ln10As 3.04075 +-0.01647; tau 0.05778 +-0.00610; Neff 2.82680 +-0.23227.
+All 7 curves smooth; v2's kinks gone (results/profile_neff_runs_compared_v2_v2fix.png;
+compare_profile_runs.py takes run tags and offsets fixed-Cl runs by their own best chi2, 53d98a3).
+Profile widths exceed the SMC std (Neff 0.23 vs 0.14, h 0.016 vs 0.011): fits the SMC +Neff
+under-mixing suspicion.
+xe-c1 fast-forwarded to the ABCMB-k-grad session's pt-per-kchunk (2a46965: P directions vmapped in
+the staged jvp, per-k-chunk PT table, sub-batched spectrum jvp; PA_AD_BCHUNK 64, PA_GRAD_SPECB 4).
+End-to-end check (.v2analysis/gradcheck_newcode.*, interactive 59787755): new AD gradient at all 147
+rows, in the production certificate's blocks. max|g| vs the stored certificate: median 1-3e-6
+relative, worst 1.8e-3 (<=3e-4 absolute vs GTOL 0.03); same rows converged; chi2 within 1e-5.
+Peak 8.4 GB/GPU at B_local 11. Warm 42-row block 690 s (old code ~27 min): the stages take ~345 s
+(perturbations 270, HyRex CPU 55); the other ~330 s is the chi2 contraction, which re-runs the
+EAGER inner nuisance profile 1+P = 7 times, 47 s each (.v2analysis/gradcheck_split.*).
+Patches, not applied (the other session is editing batched_grad.py): .v2analysis/
+chi2_contraction_vmap.diff (one vmapped jvp over the P directions; tested 286 -> 48 s, agrees to
+3.5e-14) and chi2_jit_inner_profile.diff (use the jitted _plf_prof_B, as the values path does;
+untested). Held 59724450 cancelled; stale STATE_v2fix_r1 deleted.
+
+
 2026-10-13 — Fork vs upstream, batched, one GPU (is ABCMB-k needed?)
 --------------------------------------------------------------------
 scan/.v2analysis/fvu/ (bench_fvu.py, logs). ABCMB-k xe-c1 call_batched / staged AD vs upstream
