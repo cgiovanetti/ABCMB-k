@@ -568,14 +568,20 @@ class Background(BackgroundPreRecomb):
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
         vis_vals = vmap(self.visibility, in_axes=[0, None])(lna_vals, params)
-        self.lna_rec = lna_vals[jnp.argmax(vis_vals)]
+        # Parabolic vertex around the grid argmax: a bare argmax snaps lna_rec (the lensing-window
+        # grid start) to this 2.7e-3 grid and steps the lensed Cls as parameters move.
+        i_rec = jnp.clip(jnp.argmax(vis_vals), 1, lna_vals.shape[0] - 2)
+        v0, v1, v2 = vis_vals[i_rec - 1], vis_vals[i_rec], vis_vals[i_rec + 1]
+        self.lna_rec = lna_vals[i_rec] + 0.5 * (lna_vals[1] - lna_vals[0]) * (v0 - v2) / (v0 - 2. * v1 + v2)
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
 
         # Find approximate early time when aH x tau_c = 0.008
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH, in_axes=[0, None])(lna_vals, params) * self.tau_c(lna_vals, params)
-        self.lna_transfer_start = lna_vals[jnp.argmin((aH_tau_c_vals-0.008)**2)]
+        # Interpolated crossing (aH tau_c increases monotonically here): an argmin snaps the LoS grid
+        # start to this 1.8e-3 grid and shifts all its nodes at once as parameters move.
+        self.lna_transfer_start = jnp.interp(0.008, aH_tau_c_vals, lna_vals)
 
     ### RECOMBINATION RELATED ###
 
@@ -610,7 +616,9 @@ class Background(BackgroundPreRecomb):
             jnp.where(
                 lna >= self.lna_xe_tab.lastval,
                 self.xe_tab.lastval,
-                tools.fast_interp(lna, self.lna_xe_tab.arr[0],
+                # C^1: grad(visibility) sees d x_e / d lna; a linear lookup makes it jump at
+                # every knot, and the cosmology-dependent LoS grid crossing one steps the Cls
+                tools.fast_interp_c1(lna, self.lna_xe_tab.arr[0],
                 self.lna_xe_tab.arr[0] + len(self.lna_xe_tab.arr) * (self.lna_xe_tab.arr[1]-self.lna_xe_tab.arr[0]),
                 self.xe_tab.arr)
             )
@@ -719,9 +727,12 @@ class Background(BackgroundPreRecomb):
         term = ODETerm(integrand)
         stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-10, atol=1.e-10)
         adjoint=self.adjoint()
+        # Explicit: the RHS does not depend on kappa (a pure quadrature, not stiff), and
+        # Kvaerno5's forward-mode tangent jitters ~1e-3 near the visibility peak, which
+        # grad(visibility) then differentiates (wrong AD of the T Doppler source).
         sol = diffeqsolve(
             term,
-            solver=Kvaerno5(),
+            solver=Tsit5(),
             stepsize_controller=stepsize_controller,
             t0=0.,
             t1=-10.,

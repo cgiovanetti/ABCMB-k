@@ -97,6 +97,31 @@ def make_lna_grid(BG, params, n, specs):
     return jnp.interp(jnp.linspace(0., 1., n), cdf, u)
 
 
+class _FrozenMeshPID(diffrax.PIDController):
+    """PIDController whose decisions carry no tangent under forward-mode AD.
+
+    The accepted step mesh is data, exactly as in record-and-replay adjoints
+    (GRADSOLVE) and modax's forward sensitivities: the gradient is that of the
+    integration on the realised mesh, which differs from differentiating the
+    controller by a theta-derivative of the discretisation error. Differentiating
+    the controller is also what breaks with ``step_ts``: a step clipped onto a
+    save point can be tiny, its error norm ~0, and the controller's
+    ``err**(-1/order)`` has a non-finite tangent that reaches the implicit
+    solve ("linear solver received non-finite input"). ``PIDController``'s
+    ``step_ts``/``jump_ts`` arguments still work (its ``__new__`` wraps this
+    class in a ``ClipStepSizeController``)."""
+
+    def init(self, *args, **kwargs):
+        t1, state = super().init(*args, **kwargs)
+        sg = jax.lax.stop_gradient
+        return sg(t1), jax.tree_util.tree_map(sg, state)
+
+    def adapt_step_size(self, *args, **kwargs):
+        keep, t0, t1, jump, state, result = super().adapt_step_size(*args, **kwargs)
+        sg = jax.lax.stop_gradient
+        return keep, sg(t0), sg(t1), jump, jax.tree_util.tree_map(sg, state), result
+
+
 class PerturbationEvolver(eqx.Module):
     """
     Linear scalar perturbation evolution solver.
@@ -287,9 +312,16 @@ class PerturbationEvolver(eqx.Module):
         a batched PerturbationTable.
 
         Iterates over the k-axis in chunks of ``k_chunk_size`` (default 100),
-        calling the JIT'd ``_evolve_chunk`` on each. The loop over chunks is a
-        plain Python loop rather than ``lax.scan``, which has a long compile
-        time when wrapped around diffrax.
+        calling the JIT'd ``_evolve_chunk`` on each and then -- because every
+        quantity in ``make_output_table`` is pointwise in k -- the JIT'd
+        ``_table_chunk`` on that chunk alone. The per-chunk tables (a few dozen
+        ``(B, Nlna, K)`` fields) are concatenated along k; the full
+        ``(B, Ny, Nlna, N_k)`` modes tensor is never materialized, which cuts the
+        peak by ~Ny/n_fields (~4-5x) on both the value path and the forward-mode
+        gradient (where the tensor would carry a leading directions axis).
+        ``_compute_modes_batched`` still builds the full tensor for diagnostics.
+        The loop over chunks is a plain Python loop rather than ``lax.scan``,
+        which has a long compile time when wrapped around diffrax.
 
         Parameters:
         -----------
@@ -303,16 +335,40 @@ class PerturbationEvolver(eqx.Module):
         Returns:
         --------
         PerturbationTable
-            Each field carries a leading B axis. Internally this is just
-            ``vmap(make_output_table, in_axes=(0, 0, (0, 0)))`` applied to
-            the per-element ``(lna, modes, (BG, params))``.
+            Each field carries a leading B axis (``k`` is ``(B, N_k)``, as
+            before: the vmap broadcasts the shared k axis).
         """
-        modes, lna_batch = self._compute_modes_batched(
-            args, k_chunk_size=k_chunk_size)
-        return self.make_output_table_batched(lna_batch, modes, args)
+        BG_batch, params_batch = args
+        lna_batch = vmap(
+            lambda bg, p: make_lna_grid(bg, p, self.specs["n_lna_PE"], self.specs)
+        )(BG_batch, params_batch)
+
+        k_axis = self.k_axis_perturbations
+        n_k = len(k_axis)
+        tables = []
+        for i in range(0, n_k, k_chunk_size):
+            k_chunk = k_axis[i:i + k_chunk_size]
+            raw = self._evolve_chunk(k_chunk, lna_batch, BG_batch, params_batch)
+            tables.append(self._table_chunk(k_chunk, lna_batch, raw, args))
+            del raw
+        # concatenate every field along its (last) k axis; ``lna`` is per-cosmology,
+        # not per-k, so it is taken from the first chunk instead. Sharding-safe:
+        # concatenating B-axis-sharded chunks along the unsharded k axis keeps the
+        # B sharding (same argument as the modes concatenate it replaces).
+        PT = jax.tree_util.tree_map(lambda *xs: jnp.concatenate(xs, axis=-1), *tables)
+        return eqx.tree_at(lambda t: t.lna, PT, tables[0].lna)
 
     @eqx.filter_jit
-    def make_output_table_batched(self, lna_batch, modes_batch, args_batch):
+    def _table_chunk(self, k_chunk, lna_batch, raw_chunk, args_batch):
+        """Per-chunk output table: transpose the raw ``(K, B, Nlna, Ny)`` modes
+        chunk to ``(B, Ny, Nlna, K)`` and build the batched PerturbationTable for
+        the k-modes ``k_chunk`` only, inside one JIT so the transposed chunk is
+        never a separate array. Fields are ``(B, Nlna, K)``."""
+        return self.make_output_table_batched(
+            lna_batch, raw_chunk.transpose(1, 3, 2, 0), args_batch, k=k_chunk)
+
+    @eqx.filter_jit
+    def make_output_table_batched(self, lna_batch, modes_batch, args_batch, k=None):
         """Batched version of ``make_output_table`` via outer vmap.
 
         PT fields show ~1e-5 relative drift vs the single-call PT; this is
@@ -325,6 +381,10 @@ class PerturbationEvolver(eqx.Module):
         modes_batch : jnp.array, shape (B, Ny, Nlna, N_k)
         args_batch : tuple
             ``(BG_batch, params_batch)``, stacked pytrees.
+        k : jnp.array, shape (N_k,), optional
+            The k-modes the modes tensor was evolved on (a sub-range of
+            ``k_axis_perturbations`` for the per-chunk path). Default: the
+            full ``k_axis_perturbations``.
 
         Returns:
         --------
@@ -332,7 +392,7 @@ class PerturbationEvolver(eqx.Module):
         """
         BG_batch, params_batch = args_batch
         return vmap(
-            self.make_output_table,
+            lambda lna, modes, args: self.make_output_table(lna, modes, args, k=k),
             in_axes=(0, 0, (0, 0)),
         )(lna_batch, modes_batch, (BG_batch, params_batch))
 
@@ -518,13 +578,27 @@ class PerturbationEvolver(eqx.Module):
             self.specs["atol_small_k_PE"]
         )
 
-        stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol)
+        # step_ts=lna: land an accepted step on every save point. Kvaerno5's diffrax
+        # interpolation inside a step is third-order Hermite, and saving through it across
+        # the wide adaptive steps put a 2.3e-3 (peak-normalised) error into ClTT/ClTE at
+        # low ell and 4e-4 above ell 30 against a tight reference (rtol 1e-7, stepped onto the grid); stepping onto the grid at
+        # the production rtol 1e-5 leaves 3e-8 / 7e-5, for ~12% more steps (2026-10-14,
+        # scan/.grad_bench/gs/interp_check.py). ``step_ts_PE`` (default True) keeps the
+        # old behaviour reachable.
+        # The mesh (controller decisions, start time) is data under AD: _FrozenMeshPID.
+        # lna[:-1]: the last grid point is t1 itself. The saved values still carry the
+        # grid's tangent through SaveAt(ts=lna).
+        step_ts_on = self.specs.get("step_ts_PE", True)
+        stepsize_controller = _FrozenMeshPID(
+            pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"],
+            dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol,
+            step_ts=(jax.lax.stop_gradient(lna[:-1]) if step_ts_on else None))
         saveat = diffrax.SaveAt(ts=lna)
         adjoint=self.adjoint()
 
         sol = diffrax.diffeqsolve(
             term, solver,
-            t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
+            t0=jax.lax.stop_gradient(lna_start), t1=lna_end, dt0=1.e-2, y0=y_ini,
             stepsize_controller=stepsize_controller,
             max_steps=self.specs["max_steps_PE"],
             saveat=saveat,
@@ -536,20 +610,24 @@ class PerturbationEvolver(eqx.Module):
 
         return sol.ys
 
-    def make_output_table(self, lna, modes, args):
+    def make_output_table(self, lna, modes, args, k=None):
         """
         Create interpolatable perturbation table from evolution results.
 
         Extracts key perturbation modes and computes derived quantities.
+        Everything here is pointwise in k, so the table can be built for any
+        sub-range of the k axis (the batched path builds it per k-chunk).
 
         Parameters:
         -----------
         lna : array
             Logarithm of scale factor grid
         modes : array
-            Perturbation evolution results
+            Perturbation evolution results, shape (Ny, Nlna, len(k))
         args : tuple
             Background cosmology and cosmological parameters (BG, params)
+        k : array, optional
+            The k-modes ``modes`` was evolved on; default ``k_axis_perturbations``.
 
         Returns:
         --------
@@ -557,7 +635,7 @@ class PerturbationEvolver(eqx.Module):
             Organized perturbation data for interpolation
 
         """
-        k = self.k_axis_perturbations
+        k = self.k_axis_perturbations if k is None else k
         BG, params = args
 
         metric_eta = modes[0]

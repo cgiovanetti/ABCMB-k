@@ -1,12 +1,13 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
-**2026-10-14: _v2fix DONE, all 7 POIs (CHANGELOG 2026-10-14; results/profile_prod_ad_*_v2fix.npz).
-xe-c1 = the pt-per-kchunk gradient stack + compare script (53d98a3), checked end to end. The
-ABCMB-k checkout may leave xe-c1 now. Open: apply .v2analysis/chi2_contraction_vmap.diff +
-chi2_jit_inner_profile.diff (coordinate with the ABCMB-k-grad session, which edits batched_grad.py);
-HyRex CPU jvp ~1/4 of a gradient (does not divide by GPU count); surrogate profiler proposal
-(.v2analysis/surrogate_profiler_proposal.md, under review); 2D joint profiles; merge xe-c1 -> main.
-The user opens the upstream PRs (Cl-step fix + the 2 AD fixes).**
+**2026-10-14 (later): main = xe-c1 merged (gradient stack, pe-step-ts, chi2-contraction patches), pushed.
+Before any production run: (1) re-run scan/.v2analysis/gradcheck_merged.py (patched-vs-old chi2
+contraction + the 147-row gradient pass on the step_ts Cls; the first run died with node nid001557);
+(2) regenerate pytests/fixtures/snapshots.npz for step_ts and run the pytests. The _v2fix profiles are
+on the pre-step_ts Cls: re-run or re-certify them on main for the paper. Upstream PR candidate (the
+user opens it): branch upstream-fixes + scan/.upstream_pr/*.diff; open: step_ts vs the user's PR #45
+dtmax_PE (scan/.upstream_pr/interp_upstream.py). Also open: surrogate profiler proposal
+(.v2analysis/surrogate_profiler_proposal.md), 2D joint profiles.**
 
 **2026-10-11: 59561865 COMPLETED (5h47m); results in scan/results/profile_prod_ad_*_v2.npz.
 NOT final: rows are trapped by step discontinuities in the ABCMB-k low-ell ClTT/ClTE.
