@@ -9,6 +9,21 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-15 (later) — Upstream candidate rebuilt on ABCMB main 4dd4e66 (PR #45 merged)
+--------------------------------------------------------------------------------------
+Branch upstream-fixes (origin only) = 4dfe86f Cl steps + e6871a5 AD (C^1 j_l, Tsit5 kappa) + 975f7fd
+rs_d/z_d drag integrals rtol 1e-3 -> 1e-6 (found by the pact_mnu_neff session; ABCMB-k has the same
+two lines, unfixed) + 7754aa3 OPTIONAL: PR #45's dtmax_PE only for k < 0.1. Diffs scan/.upstream_pr/
+{1_,2_,3_rsd_drag_rtol,4_optional_dtmax_lowk,upstream_fixes_1-3,upstream_fixes_all}.diff, checked to
+apply in order outside a git repo (git apply inside ABCMB-k silently skips paths, so the earlier
+"--check" claims were vacuous). Removed: superseded branches/diffs, tag pr45-head-1015.
+GPU, new main: accuracy_test fails on main itself in this env (classy 3.3.4 delta_l_max 500 vs ABCMB's
+new l_max/2: TT 1.2% at l=2500); with CLASS given ABCMB's delta_l_max it passes on main (TT 2.3e-3)
+and main+1..4 (TT 1.3e-3). AD vs FD: main omega_cdm 7.5e-3, h 4e-3; +fixes <= 8e-4. rs_d vs CLASS
+-3.3..-4.4e-4 -> +4..5e-5. Same GPU, warm call: main 10.76 s, +1+2 9.52, +1..4 9.00; fix 4 trades the
+l > 1000 accuracy of the all-k cap (3.2e-4 -> 1.1e-3) for 5.5%.
+
+
 2026-10-15 — step_ts replaced by a low-k step ceiling (pe-dtmax-lowk); checks re-run after the node loss
 -------------------------------------------------------------------------------------------------------
 Re-run checks on main (step_ts): chi2-contraction patch = old code to 4.6e-8 (grad) / 1.1e-11 (chi2),
