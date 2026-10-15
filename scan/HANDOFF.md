@@ -1,5 +1,11 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-15: main = pe-dtmax-lowk (step_ts replaced by dtmax_PE=0.03 for k < 0.06; CHANGELOG
+2026-10-15). Checks done: chi2 patches, 147-row gradient pass (on step_ts), pytests, AD vs FD. Before
+production: the _v2fix profiles are on pre-fix Cls (no _v2fix row is under GTOL on the new ones) ->
+re-run them on main (ask the user). Upstream (the user opens PRs): upstream-fixes-v2 +
+scan/.upstream_pr/{1_,2_,upstream_fixes_all,pr45_dtmax_lowk}.diff.**
+
 **2026-10-14 (later): main = xe-c1 merged (gradient stack, pe-step-ts, chi2-contraction patches), pushed.
 Before any production run: (1) re-run scan/.v2analysis/gradcheck_merged.py (patched-vs-old chi2
 contraction + the 147-row gradient pass on the step_ts Cls; the first run died with node nid001557);

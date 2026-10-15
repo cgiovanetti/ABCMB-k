@@ -33,6 +33,10 @@ re-solves the primal and is a poor trade).
 
 ### 3a. BUG: production saves the modes through in-step interpolation (also upstream)
 
+**Superseded 2026-10-15 (main, branch pe-dtmax-lowk; ABCMB-k CHANGELOG):** the step_ts fix below cost
++12.9% (fork) / +28% (upstream) and its t0 stop_gradient broke the Neff tangent; replaced by a step
+ceiling dtmax_PE=0.03 for k < 0.06 on the plain controller (+3.3%, same accuracy).
+
 `SaveAt(ts=lna)` with Kvaerno5 evaluates its third-order Hermite interpolant inside each accepted
 step; across the wide adaptive steps that is 2.3e-3 (peak-normalised) in ClTT/ClTE at low ell and
 4e-4 relative above ell 30 against a tight reference (Kvaerno5 rtol 1e-7 stepped onto the grid;

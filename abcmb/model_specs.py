@@ -58,9 +58,13 @@ def load_specs(input_specs):
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
-    # Land an accepted perturbation step on every save point (diffrax step_ts); False
-    # saves through Kvaerno5's in-step (third-order Hermite) interpolation (2.3e-3 low-ell Cl error).
-    specs["step_ts_PE"]      = input_specs.get("step_ts_PE", True)
+    # Step ceiling in ln a for the modes with k < k_max_dtmax_PE (Mpc^-1). Unbounded, the controller
+    # takes wide steps where those modes look smooth and the saves are read off Kvaerno5's in-step
+    # (third-order Hermite) interpolation: 2.6e-3 in ClTT at ell < 10, 4e-4 at ell 100-500. With the
+    # ceiling: 3e-7 / 1e-5, for +3% value time (only the low-k chunks take more steps; k_max_dtmax_PE=0
+    # turns it off).
+    specs["dtmax_PE"]        = input_specs.get("dtmax_PE", 0.03)
+    specs["k_max_dtmax_PE"]  = input_specs.get("k_max_dtmax_PE", 0.06)
     # Number of lna output points per mode (the saved-trajectory / LoS grid).
     # This is the dominant per-call GPU memory factor (peak ∝ N_k·n_lna_PE·Ny·B
     # /n_dev). Default 500 is the historical value; lowering it (e.g. ~300, ideally

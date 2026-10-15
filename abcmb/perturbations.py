@@ -97,31 +97,6 @@ def make_lna_grid(BG, params, n, specs):
     return jnp.interp(jnp.linspace(0., 1., n), cdf, u)
 
 
-class _FrozenMeshPID(diffrax.PIDController):
-    """PIDController whose decisions carry no tangent under forward-mode AD.
-
-    The accepted step mesh is data, exactly as in record-and-replay adjoints
-    (GRADSOLVE) and modax's forward sensitivities: the gradient is that of the
-    integration on the realised mesh, which differs from differentiating the
-    controller by a theta-derivative of the discretisation error. Differentiating
-    the controller is also what breaks with ``step_ts``: a step clipped onto a
-    save point can be tiny, its error norm ~0, and the controller's
-    ``err**(-1/order)`` has a non-finite tangent that reaches the implicit
-    solve ("linear solver received non-finite input"). ``PIDController``'s
-    ``step_ts``/``jump_ts`` arguments still work (its ``__new__`` wraps this
-    class in a ``ClipStepSizeController``)."""
-
-    def init(self, *args, **kwargs):
-        t1, state = super().init(*args, **kwargs)
-        sg = jax.lax.stop_gradient
-        return sg(t1), jax.tree_util.tree_map(sg, state)
-
-    def adapt_step_size(self, *args, **kwargs):
-        keep, t0, t1, jump, state, result = super().adapt_step_size(*args, **kwargs)
-        sg = jax.lax.stop_gradient
-        return keep, sg(t0), sg(t1), jump, jax.tree_util.tree_map(sg, state), result
-
-
 class PerturbationEvolver(eqx.Module):
     """
     Linear scalar perturbation evolution solver.
@@ -578,27 +553,17 @@ class PerturbationEvolver(eqx.Module):
             self.specs["atol_small_k_PE"]
         )
 
-        # step_ts=lna: land an accepted step on every save point. Kvaerno5's diffrax
-        # interpolation inside a step is third-order Hermite, and saving through it across
-        # the wide adaptive steps put a 2.3e-3 (peak-normalised) error into ClTT/ClTE at
-        # low ell and 4e-4 above ell 30 against a tight reference (rtol 1e-7, stepped onto the grid); stepping onto the grid at
-        # the production rtol 1e-5 leaves 3e-8 / 7e-5, for ~12% more steps (2026-10-14,
-        # scan/.grad_bench/gs/interp_check.py). ``step_ts_PE`` (default True) keeps the
-        # old behaviour reachable.
-        # The mesh (controller decisions, start time) is data under AD: _FrozenMeshPID.
-        # lna[:-1]: the last grid point is t1 itself. The saved values still carry the
-        # grid's tangent through SaveAt(ts=lna).
-        step_ts_on = self.specs.get("step_ts_PE", True)
-        stepsize_controller = _FrozenMeshPID(
-            pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"],
-            dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol,
-            step_ts=(jax.lax.stop_gradient(lna[:-1]) if step_ts_on else None))
+        # Step ceiling for the modes below k_max_dtmax_PE (see model_specs).
+        stepsize_controller = diffrax.PIDController(
+            pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"],
+            rtol=rtol, atol=atol,
+            dtmax=jnp.where(k < self.specs["k_max_dtmax_PE"], self.specs["dtmax_PE"], jnp.inf))
         saveat = diffrax.SaveAt(ts=lna)
         adjoint=self.adjoint()
 
         sol = diffrax.diffeqsolve(
             term, solver,
-            t0=jax.lax.stop_gradient(lna_start), t1=lna_end, dt0=1.e-2, y0=y_ini,
+            t0=lna_start, t1=lna_end, dt0=1.e-2, y0=y_ini,
             stepsize_controller=stepsize_controller,
             max_steps=self.specs["max_steps_PE"],
             saveat=saveat,

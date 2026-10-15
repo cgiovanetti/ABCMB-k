@@ -9,6 +9,27 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-15 — step_ts replaced by a low-k step ceiling (pe-dtmax-lowk); checks re-run after the node loss
+-------------------------------------------------------------------------------------------------------
+Re-run checks on main (step_ts): chi2-contraction patch = old code to 4.6e-8 (grad) / 1.1e-11 (chi2),
+46-53 s vs 344 s; 147-row gradient pass done (chi2 shifts -0.022 median; no _v2fix row is under GTOL on
+the new Cls); snapshots regenerated, pytests pass. step_ts was then dropped: +12.9% fork value time
+(+28% upstream, where 500 uniform saves clip every high-k step), and an AD bug: t0 was stop_gradient'ed
+while y_ini used the live lna_start (upstream Neff AD-vs-FD 4e-3; 7e-4 when consistent); the frozen
+mesh alone also left omega_b at 2e-3.
+Replacement: plain PIDController, dtmax_PE = 0.03 only for k < k_max_dtmax_PE = 0.06 (new specs;
+step_ts_PE and _FrozenMeshPID removed, t0 = lna_start again). Fork, production specs, B=16, 1 GPU
+(.v2analysis/fork_interp_check.py vs rtol-1e-7 reference): TT ell<10 2.6e-3 -> 3e-7, ell 100-500
+4e-4 -> 1e-5 (step_ts: 1e-7 / 1.4e-5); value 101.4 -> 104.7 s (+3.3%; step_ts 114.5). k<0.1: +4.4%;
+dtmax 0.06: +1.1% but 1.8e-4 left. AD vs FD (upstream_check.py fork_dtl): h/omega_cdm/Neff <= 1e-3,
+n_s/A_s/tau exact; omega_b at the FD noise. Snapshots regenerated; test_snapshots + accuracy_test pass.
+Upstream: the same ceiling for k < 0.1 costs nothing (high-k modes set the lockstep step count) and
+matches step_ts to ell 1000 -> scan/.upstream_pr/pr45_dtmax_lowk.diff, a change to the user's PR #45
+(head 1c6093d, tag pr45-head-1015). Branch upstream-fixes-v2 = commits 1+2 only (pushed);
+upstream-fixes (with step_ts) is superseded but still on origin. Unpatched upstream AD: omega_cdm
+7e-3, h 4e-3; with fixes 1+2: <= 8e-4 (upstream_check.py cmp).
+
+
 2026-10-14 — Gradient stack merged into main; upstream PR candidate branch upstream-fixes
 ----------------------------------------------------------------------------------------
 xe-c1: merged pe-step-ts (1a49ae0); comments corrected (4cd6391: Kvaerno5's in-step interpolation is
