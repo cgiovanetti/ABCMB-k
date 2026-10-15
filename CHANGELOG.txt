@@ -9,6 +9,23 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-15 (night) — Upstream diff 1 AD bug: the line-of-sight grid start now carries no derivative
+--------------------------------------------------------------------------------------------------
+Reported by the pact session: with diff 1, per-ell Cl tangents vs FD got worse than main (omega_b TT
+0.15 at l=2, omega_cdm TE 0.056). Cause (scan/.upstream_pr/adprobe/): diff 1 makes lna_transfer_start
+continuous AND differentiable. The Cls barely depend on it (a +-2e-3 scan moves low-l TT by ~1e-5) but
+that dependence is jagged (local slopes 10x the trend), and AD returns the local slope. All inputs on
+the moving nodes (PT values, g, xe, expmkappa, tau, sources) have AD = FD to <= 1.5e-3; C1 tau lookup
+and a frozen lensing grid change nothing. Fix (in commit 1, upstream-fixes rebuilt and force-pushed):
+lna_transfer_start = stop_gradient(...); values unchanged. AD vs FD (0.2 sigma), main / 1-4 / 1-4+fix:
+omega_b TT 1e-2 / 2e-1 / 4e-2, omega_cdm TE 1e-2 / 5e-2 / 1e-2, Neff TT 6e-3 / 1e-1 / 2e-3, h 8e-4 /
+1e-5 / 1e-5; chi2-like gradients unchanged by the fix. Warm (same GPU): single call 10.50 / 9.35 /
+9.20 s; production value 26.6 / 25.1 / 25.0 s; 7-dir gradient 87.0 / 85.9 / 85.3 s.
+ABCMB-k is NOT fixed by the same idea: its visibility-adaptive grid moves every node and the placement
+genuinely changes the Cls; a stop_gradient on the whole grid made per-ell errors worse (omega_b TT
+0.38 -> 0.74). Options there (fixed fiducial grid, more nodes) are a design change, not made.
+
+
 2026-10-15 (evening) — Lensed BB added to the upstream candidate
 -----------------------------------------------------------------
 upstream-fixes is now 1 Cl steps, 2 AD, 3 rs_d drag rtol, 4 lensed BB (ce26b38: lensed_Cls/get_Cl
