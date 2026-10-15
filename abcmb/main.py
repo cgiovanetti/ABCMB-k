@@ -313,7 +313,7 @@ class Model(eqx.Module):
         output = Output(
             Cls[0], Cls[1], Cls[2], Pk,
             l, k, BG, PT, params,
-            Pk_nl=Pk_nl
+            Pk_nl=Pk_nl, ClBB=Cls[3]
         )
 
         return output
@@ -659,6 +659,8 @@ class Output(eqx.Module):
     Pk_nl : jnp.array or None
         HALOFIT non-linear matter power spectrum at z=0 on the same k-grid,
         or None if the model was built without ``nonlinear="halofit"``
+    ClBB : jnp.array
+        Lensed B-mode power spectrum (scalar modes; zero without lensing)
     """
 
     # Power spectra
@@ -674,3 +676,4 @@ class Output(eqx.Module):
     params : dict
 
     Pk_nl : jnp.array = None
+    ClBB  : jnp.array = None
