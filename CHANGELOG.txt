@@ -9,6 +9,16 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-15 (evening) — Lensed BB added to the upstream candidate
+-----------------------------------------------------------------
+upstream-fixes is now 1 Cl steps, 2 AD, 3 rs_d drag rtol, 4 lensed BB (ce26b38: lensed_Cls/get_Cl
+return ClBB, Output.ClBB keyword field; ported from the pact_mnu_neff diff part 1), 5 OPTIONAL low-k
+dtmax (46a35a5). Diffs 4_lensed_bb, 5_optional_dtmax_lowk, upstream_fixes_1-4, upstream_fixes_all.
+GPU (bb_check.py, accuracy_test settings, CLASS given ABCMB's delta_l_max): BB/CLASS - 1 <= 1.5e-4 to
+l 1000, <= 4.2e-4 to 2500; ClBB = 0 with lensing off; TT/TE/EE unchanged (1.8e-17); accuracy_test
+with 1-4 passes (TT 9.2e-4, EE 2.4e-3, P(k) 1.8e-3).
+
+
 2026-10-15 (later) — Upstream candidate rebuilt on ABCMB main 4dd4e66 (PR #45 merged)
 --------------------------------------------------------------------------------------
 Branch upstream-fixes (origin only) = 4dfe86f Cl steps + e6871a5 AD (C^1 j_l, Tsit5 kappa) + 975f7fd
