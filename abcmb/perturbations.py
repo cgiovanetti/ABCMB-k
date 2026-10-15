@@ -308,7 +308,8 @@ class PerturbationEvolver(eqx.Module):
             )
         )
 
-        stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol, dtmax=self.specs["dtmax_PE"])
+        stepsize_controller = diffrax.PIDController(pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"], rtol=rtol, atol=atol,
+                                                    dtmax=jnp.where(k < self.specs["k_max_dtmax_PE"], self.specs["dtmax_PE"], jnp.inf))
         saveat = diffrax.SaveAt(ts=lna)
         adjoint=self.adjoint()
 

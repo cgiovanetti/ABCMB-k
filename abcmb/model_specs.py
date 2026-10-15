@@ -110,6 +110,8 @@ def load_specs(input_specs):
     specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
     specs["dtmax_PE"]        = input_specs.get("dtmax_PE", 0.03)
+    # dtmax_PE applies to the modes with k below this; higher-k modes already step finer.
+    specs["k_max_dtmax_PE"]  = input_specs.get("k_max_dtmax_PE", 0.1)
 
     ### Physical contributions to CMB temperature transfer function ###
     specs["scale_sw"]  = input_specs.get("scale_sw", 1)
