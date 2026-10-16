@@ -356,6 +356,29 @@ class Model(eqx.Module):
             Pk=Pk, l=l, k=k, params=params_batch,
         )
 
+    def lna_grid(self, params):
+        """The perturbation save / line-of-sight grid (``PT.lna``, ``n_lna_PE`` nodes) this
+        model builds for the cosmology ``params`` (user-input dict), as a numpy array."""
+        params_batch, BG_batch = self._build_bgs_batched([self.add_derived_parameters(params)])
+        n = self.specs["n_lna_PE"]
+        nodes = jax.vmap(lambda bg, p: perturbations.make_lna_grid(bg, p, n, self.specs))(
+            BG_batch, params_batch)
+        return np.asarray(nodes[0])
+
+    def freeze_lna_grid(self, params):
+        """Copy of this model whose save / line-of-sight grid is fixed to the one it builds
+        at ``params`` (``lna_grid_mode="fixed"``), for every cosmology.
+
+        Use it for parameter scans and profiles: with the default visibility grid every node
+        moves with the cosmology, and the Cls depend on node placement in a jagged way, so
+        per-ell AD tangents disagree with finite differences (omega_b TT by ~40%) and the
+        values carry ~5e-5 of placement noise. With the nodes frozen at a fiducial point both
+        go away (CHANGELOG 2026-10-16). Values at ``params`` are unchanged; elsewhere the grid
+        is the fiducial's, which keeps the accuracy across a profile's range."""
+        specs = dict(self.specs, lna_grid_mode="fixed",
+                     lna_grid_nodes=jnp.asarray(self.lna_grid(params)))
+        return eqx.tree_at(lambda m: (m.specs, m.PE.specs), self, (specs, specs))
+
     def _build_one_bg(self, full_params):
         """Sequential helper: run the full single-cosmology path through to
         ``Background``. Mirrors ``run_cosmology_abbr`` but stops at the BG

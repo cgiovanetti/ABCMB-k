@@ -80,6 +80,8 @@ def load_specs(input_specs):
     # trapezoid weights in spectrum.py (already grid-agnostic).
     specs["lna_grid_mode"]    = input_specs.get("lna_grid_mode", "visibility")
     specs["lna_grid_n_dense"] = input_specs.get("lna_grid_n_dense", 4000)
+    # "fixed" mode: the n_lna_PE nodes used for every cosmology (Model.freeze_lna_grid sets both).
+    specs["lna_grid_nodes"]   = input_specs.get("lna_grid_nodes", None)
     # "visibility" mode knobs (physics-agnostic). Defaults (smooth=0.3, floor=0.4)
     # recover the old uniform-500 accuracy at every multipole l>=5 with n_lna_PE=300
     # (~1.6x less per-call memory / LoS-scan cost); only the l=2-4 quadrupole regresses

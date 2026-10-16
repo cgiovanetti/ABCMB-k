@@ -39,6 +39,14 @@ def make_lna_grid(BG, params, n, specs):
         (and optionally ``lna_reion_center``). Kept for reference; not
         physics-extensible (a recomb-only bump starves reionization and biases
         EE). Prefer ``"visibility"``.
+      - ``"fixed"`` : the nodes ``specs["lna_grid_nodes"]`` (length ``n``), the same
+        for every cosmology. Set by ``Model.freeze_lna_grid(params)``, which stores
+        the grid another mode builds at ``params``. The nodes are then data that does
+        not move with theta, Cl(theta) is smooth, and its AD tangents match finite
+        differences ell by ell. With the theta-dependent visibility grid, every node
+        moves with the cosmology and the quadrature's dependence on node placement is
+        jagged (local slopes far above the trend), which AD returns as the per-ell
+        tangent (CHANGELOG 2026-10-16).
 
     Shape-controlling values (``n``, ``lna_grid_n_dense``, the mode/knobs) are
     static; ``BG``/``params`` are traced, so the grid auto-adapts per cosmology
@@ -49,6 +57,11 @@ def make_lna_grid(BG, params, n, specs):
     """
     lna_start = BG.lna_transfer_start
     mode = specs.get("lna_grid_mode", "uniform")
+    if mode == "fixed":
+        nodes = jnp.asarray(specs["lna_grid_nodes"], dtype=jnp.float64)
+        assert nodes.shape == (n,), (nodes.shape, n)
+        return nodes
+
     if mode == "uniform":
         return jnp.linspace(lna_start, 0., n)
 

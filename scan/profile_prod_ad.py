@@ -204,6 +204,10 @@ SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 BF_TRACE = os.environ.get("PA_BF_TRACE", "")         # debug-only: dump per-iter best_f history
 #   to this npz path for post-hoc early-stop validation. OFF by default (no prod impact).
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
+# Save / LoS grid: "fixed" = the visibility grid built once at the config centre and used for every
+# row (Model.freeze_lna_grid). "visibility" = rebuilt per cosmology (before 2026-10-16): its nodes move
+# with theta, which makes the Cls jagged in theta and the per-ell AD tangents wrong (CHANGELOG).
+LNA_GRID = os.environ.get("PA_LNA_GRID", "fixed").lower()
 TAG = os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
 # grad_method is a run-config field (a per-model analysis choice: FD iterations are
@@ -355,6 +359,14 @@ def build_dict(theta):
         else:
             p[name] = float(theta[i])
     return p
+
+
+if LNA_GRID == "fixed":
+    model = model.freeze_lna_grid(build_dict(CENTER))
+    print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "
+          f"{float(model.specs['lna_grid_nodes'][0]):.6f}", flush=True)
+elif LNA_GRID != "visibility":
+    raise ValueError(f"PA_LNA_GRID={LNA_GRID!r} (fixed|visibility)")
 
 
 # ======================================================================
