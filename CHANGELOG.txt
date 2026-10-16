@@ -9,6 +9,47 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-16 — Fixed save/LoS grid (Model.freeze_lna_grid); the profile driver freezes it at the config centre
+-------------------------------------------------------------------------------------------------------------
+Task: scan/HANDOFF_fork_grid_ad.md (per-ell AD tangents jagged vs FD). Branch grid-ad. Harness, logs,
+npz: scan/.gridad/ (gscan.py scans + FD probes on the staged-AD production path, acc.py, chi2check.py).
+Change: lna_grid_mode="fixed" reads specs["lna_grid_nodes"]; Model.lna_grid(params) returns the grid a
+model builds at params; Model.freeze_lna_grid(params) returns a copy with that grid fixed for every
+cosmology. profile_prod_ad.py freezes at the config centre (PA_LNA_GRID=fixed, default; =visibility is the
+old behaviour). Default Model behaviour unchanged (snapshots pass). New pytests/test_fixed_grid.py.
+Why: the visibility grid moves every node with theta, and the Cls depend on node placement. On 40-point
+scans (+-0.5 sigma) the values carry jumps of up to 5e-5 of Cl relative to the integral of the AD tangent,
+and the low-ell TT trend itself is mostly placement: mean slope along omega_b at l=6 is 2.2e-3 of Cl per
+sigma on main vs 3.1e-4 with the grid frozen (the frozen 300- and 900-node tangents agree to 4e-6 of Cl;
+a moving 600-node grid is off by 2e-3).
+Per-ell AD vs FD at the centre, max|AD-FD|/max|FD| at FD 0.05 / 0.2 sigma, main -> frozen:
+  omega_b TT 0.38/0.56 -> 9.6e-3/3.6e-3; TE 0.39/1.36 -> 1.5e-3/5.6e-4
+  omega_cdm TT 6.2e-3/0.20 -> 1.2e-3/5.3e-4; TE 0.081/1.6 -> 7.9e-3/3.3e-3
+  Neff TT 0.074/0.84 -> 8.5e-4/5.2e-3; TE 0.049/1.15 -> 5.0e-4/3.2e-3; h unchanged (1e-4)
+  At the Neff[0] / omega_b[0] profile-edge rows (grid still built at the centre) the frozen grid stays at
+  <= 2e-2 (TT l<30, where FD 0.05 and 0.2 disagree by 5e-2) vs main 0.07-0.58.
+Scans: AD roughness along the scan, TT l<10, 4e-3 -> 1e-8 of Cl per sigma; value jitter 5e-5 -> 1e-6.
+Real chi2 (full plik inner-profiled + low-l, 8 _v2fix rows x 6 directions, scan/.gridad/chi2check.py),
+  visibility -> frozen: max|AD - FD| 0.08 -> 0.022 (FD 0.05 sigma), 0.15 -> 0.065 (0.2); 33-point chi2
+  scan along omega_b through Neff[10]: rms roughness 2.8e-3 -> 6.2e-4, trend slope vs AD 0.080 vs -0.0007
+  -> 0.114 vs 0.109. AD chi2 = value-path chi2 to 1e-5.
+Accuracy vs a 1200-node adapted grid at the 16 _v2fix profile-edge cosmologies (acc.py): frozen <= main in
+  every band (TT l<10 2.2e-3 vs 2.8e-3, TE l<10 9e-4 vs 3.7e-3, l>100 identical). The edge cosmologies' own
+  grid starts are within +-0.005 of the frozen one, where g/g_peak <= 1.5e-6.
+Cost: none. B=16, one A100, frozen vs main, two orders (AB/BA): value 102.9/102.9 vs 103.0/102.8 s,
+  7-direction gradient 421/419 vs 424/428 s, peak 9.8 GB both.
+Left (not grid), from scans of v - v0 - int(AD) (.gridad/jumps.py, bgprobe.py, stageprobe.py):
+  (1) Low-l value jumps of 2-4e-6 of Cl (l<30): HyRex. With HyRex's output frozen at the centre they go
+      (<= 1e-7); x_e at fixed lna jumps by up to 1e-4 at z 11-16, 1e-7..2e-6 near the visibility peak
+      (its tables are variable-length, phases end on index thresholds and boolean events).
+  (2) A smooth high-l AD bias, ~6e-6 of Cl per sigma at l=2500 along omega_cdm (6e-4 of the tangent;
+      ~1e-4 along omega_b, Neff), lensed and unlensed. Not HyRex, not the perturbation rtol (identical at
+      1e-6); differentiating diffrax's stop_gradient'ed PID step factor removes ~17% of it. Through the
+      plik residuals it is the ~0.02 AD-vs-value gap of the chi2 gradient along omega_cdm (GTOL 0.03).
+  (3) Pre-existing low-l bias of the 300-node grid: TT l<30 +2e-3 vs 1200 nodes (900: +1.8e-3, 600:
+      +2e-4), the same on the moving and frozen grids.
+
+
 2026-10-15 (night) — Upstream diff 1 AD bug: the line-of-sight grid start now carries no derivative
 --------------------------------------------------------------------------------------------------
 Reported by the pact session: with diff 1, per-ell Cl tangents vs FD got worse than main (omega_b TT
