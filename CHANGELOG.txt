@@ -9,6 +9,25 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-16 (later) — Large-x spherical Bessel functions: Debye expansion through u_3 (high-l AD bias)
+-----------------------------------------------------------------------------------------------------
+Item (2) of the entry below, found: spectrum.py switches phi0/1/2 from the tables (exact to 1e-11) to the
+leading-order Debye form of J_{l+1/2} at the fifth maximum, where that form is off by +3.75e-5 (phi0,
+phi2) / -7e-5 (phi1) of max|j_l|, same sign at every l. x = k(tau0 - tau) moves with theta (tau0 by 53 Mpc
+over +-0.5 sigma omega_cdm), so (k, node) points keep crossing the switch: a staircase in Cl(theta) that AD
+does not see. Located with .gridad/stageprobe.py (spectrum stage fed CEN's perturbation table: the whole
+drift is in the background/parameter pathway). Beyond the switch the leading form is off by up to 1.4e-3
+of max|j_l|. Change: j(l, x) = Debye form through u_3 (DLMF 10.19.6): <= 7e-8 at every tabulated l,
+switch jump 3.75e-5 -> 7e-8 (.gridad/debye_check.py, vs scipy).
+Result (frozen grid, omega_cdm scan, v - v0 - int AD over +-0.5 sigma, per Cl): TT l=500/1000/2500
+-2.5/-3.5/-6.0e-6 -> -0.15/-0.33/-0.52e-6; EE l=2500 -7.3e-6 -> -0.3e-6. Real chi2 (chi2check.py), trend
+slope vs AD through Neff[10]: omega_cdm 0.023 apart -> 0.008, omega_b 0.005 -> 0.004 (GTOL 0.03); chi2
+roughness along omega_cdm 6.1e-4 -> 3.8e-4. Cls move <= 5e-5 (TT l 30-100); accuracy_test vs CLASS passes,
+TT/EE/Pk 1.816e-3/3.107e-3/1.845e-3 -> 1.818e-3/3.107e-3/1.845e-3 (set by other terms). Timing unchanged
+(B=16: value 103.2 vs 102.9 s, gradient 425 vs 419-421 s). Snapshots regenerated. Upstream has the same
+lines: scan/.gridad/upstream_debye_bessel.diff (against upstream main 4dd4e66; the user opens PRs).
+
+
 2026-10-16 — Fixed save/LoS grid (Model.freeze_lna_grid); the profile driver freezes it at the config centre
 -------------------------------------------------------------------------------------------------------------
 Task: scan/HANDOFF_fork_grid_ad.md (per-ell AD tangents jagged vs FD). Branch grid-ad. Harness, logs,

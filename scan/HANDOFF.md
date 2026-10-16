@@ -1,5 +1,10 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-16 (evening): grid AD task DONE (scan/HANDOFF_fork_grid_ad.md STATUS; CHANGELOG 2026-10-16 x2).**
+main = grid-ad: the save/LoS grid is frozen at the config centre in profile_prod_ad.py (PA_LNA_GRID=fixed,
+Model.freeze_lna_grid) and the large-x Bessel functions are Debye through u_3. NEXT: the _v2fix profile
+rerun on main (ask the user first).
+
 **2026-10-16: NEXT TASK = scan/HANDOFF_fork_grid_ad.md.** ABCMB-k's per-ell AD Cl tangents are jagged
 (omega_b TT 0.38 vs FD) because the visibility-adaptive save/LoS grid moves every node with theta; the
 upstream one-line stop_gradient fix does not transfer (freezing the grid made it worse). Fix before the

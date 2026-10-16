@@ -1,5 +1,23 @@
 # HANDOFF — ABCMB-k per-ell AD tangents are jagged: the cosmology-dependent save/LoS grid (2026-10-16)
 
+## STATUS (2026-10-16, evening): FIXED on branch grid-ad (merged into main). Details: CHANGELOG 2026-10-16 (x2).
+- Fix 1, the grid: `Model.freeze_lna_grid(params)` / `lna_grid_mode="fixed"`; scan/profile_prod_ad.py
+  freezes at the config centre by default (`PA_LNA_GRID=fixed`; `visibility` = old behaviour). Per-ell AD
+  vs FD (0.05/0.2 sigma): omega_b TT 0.38/0.56 -> 9.6e-3/3.6e-3, TE 0.39/1.36 -> 1.5e-3/5.6e-4; omega_cdm,
+  Neff alike. Accuracy at the 16 _v2fix edge rows unchanged or better; cost none.
+- Fix 2, the Bessel switch (found while chasing what was left): the large-x j_l was leading-order Debye,
+  3.75e-5 off at the table switch -> an AD-invisible staircase at high l; now through u_3 (7e-8).
+- Real chi2 along omega_cdm through Neff[10]: trend vs AD gap 0.023 (frozen grid) -> 0.008 (both fixes);
+  main's moving grid had up to 0.08 over the 8-row x 6-direction check.
+- Left, not fixed: HyRex value jumps of 2-4e-6 of Cl at l<30 (irrelevant at cosmic variance); a pre-existing
+  low-l bias of the 300-node grid (TT l<30 +2e-3 vs 1200 nodes); ~0.6e-6 from diffrax's stop_gradient'ed
+  PID factor (a straight-through tangent fix exists, scan/.gridad/perturbations_tangentpid.py.txt, removes
+  only that part; not merged).
+- Tools: scan/.gridad/ (gscan.py, acc.py, chi2check.py, bgprobe.py, stageprobe.py, jumps.py, ana_abs.py,
+  debye_check.py; logs/, out/). Upstream copy of fix 2: scan/.gridad/upstream_debye_bessel.diff.
+- Next: the _v2fix profile rerun on main (ask the user first). The warm-Hessian cache is from the moving
+  grid; it is only a preconditioner.
+
 ## Task
 Make ABCMB-k's forward-mode AD Cl tangents agree with finite differences ell by ell, at no or small cost,
 without moving production accuracy (near permille). Upstream ABCMB had a milder form of the same problem and
