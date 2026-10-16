@@ -9,6 +9,16 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-16 (evening) — Driver shakeout on main; 300-node grid low-l error vs node placement
+-------------------------------------------------------------------------------------------
+Shakeout (scan/.gridad/shake.sh = the v2 launcher env, omega_b, 3 rows, PA_MAXIT=1, 2 GPUs): grid frozen
+at the centre, warm-Hessian cache loaded, it0 + AD certificate + npz written, rank done (outputs deleted).
+Low-l accuracy of the 300-node grid (frozen at CEN, 16 _v2fix edge cosmologies) vs a 2400-node adapted
+grid (1200 vs 2400: <= 1e-4 TT l<30, ~1e-5 l>100): TT l<30 / 30-100 / >100: floor 0.4 (current) 2.1e-3 /
+1.3e-3 / 2-4e-4; floor 0.6 6.4e-4 / 5.2e-4 / 2.6-3.0e-4; floor 0.8 1.5e-3 / 9.7e-4 / 3-4e-4. EE l>100
+2.0-2.3e-4 (0.4), 2.6-2.9e-4 (0.6). Non-monotonic in the floor, so no default change.
+
+
 2026-10-16 (later) — Large-x spherical Bessel functions: Debye expansion through u_3 (high-l AD bias)
 -----------------------------------------------------------------------------------------------------
 Item (2) of the entry below, found: spectrum.py switches phi0/1/2 from the tables (exact to 1e-11) to the
