@@ -1,5 +1,10 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-16: NEXT TASK = scan/HANDOFF_fork_grid_ad.md.** ABCMB-k's per-ell AD Cl tangents are jagged
+(omega_b TT 0.38 vs FD) because the visibility-adaptive save/LoS grid moves every node with theta; the
+upstream one-line stop_gradient fix does not transfer (freezing the grid made it worse). Fix before the
+_v2fix profile rerun.
+
 **2026-10-15: main = pe-dtmax-lowk (step_ts replaced by dtmax_PE=0.03 for k < 0.06; CHANGELOG
 2026-10-15). Checks done: chi2 patches, 147-row gradient pass (on step_ts), pytests, AD vs FD. Before
 production: the _v2fix profiles are on pre-fix Cls (no _v2fix row is under GTOL on the new ones) ->
