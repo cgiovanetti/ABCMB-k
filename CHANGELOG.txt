@@ -9,6 +9,19 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-16 (night) — Debye j_l diff for upstream, rebased on upstream main 29667dd and checked there
+------------------------------------------------------------------------------------------------------
+scan/.gridad/upstream_debye_bessel.diff now applies to upstream main 29667dd (grad_bumps merged: cubic table
+lookups); same j() as ABCMB-k main, shorter comment. Checked on exported trees (scan/.gridad/up_check.py,
+up_lane.sh, up_ana.py, up_class.py; logs/up_lane.log; base = grad_bumps out/*_gb2*, identical code):
+switch jump phi0/1/2 3.8e-5/7.7e-5/1.0e-4 -> 7e-8/1.8e-7/1.6e-7 of max|phi_l|; Cls move <= 4.5e-5;
+accuracy gate vs CLASS at ABCMB's delta_l_max 1250 TT/EE/Pk 9.21e-4/2.44e-3/1.81e-3, unchanged; k_tail and
+halofit tests pass; 7-direction AD vs FD unchanged except EE h/omega_cdm 1.9e-5/1.7e-5 -> 4.6e-6/1.0e-5;
+40-point omega_cdm scan, v - v0 - int(AD) per Cl: TT l500-1499 5.5e-6 -> 1.2e-6, TE 4.9e-6 -> 1.2e-6,
+EE 6.7e-6 -> 1.1e-6 (TT l>1500 5.5e-6 -> 6.9e-6). Upstream accuracy_test itself fails in actdr6 with or
+without the diff (classy 3.3.4 default delta_l_max 500 vs ABCMB's l_max//2: TT 1.18e-2 at l=2500).
+
+
 2026-10-16 (evening) — Driver shakeout on main; 300-node grid low-l error vs node placement
 -------------------------------------------------------------------------------------------
 Shakeout (scan/.gridad/shake.sh = the v2 launcher env, omega_b, 3 rows, PA_MAXIT=1, 2 GPUs): grid frozen
