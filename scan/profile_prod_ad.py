@@ -33,12 +33,29 @@ physical bound), and a per-point AD convergence certificate.
      or as a one-sided limit depending on the data; without one it is the usual
      Delta-chi2 = 1 / 4 crossing.
 
+  5. Multimodality (scan/lm_tools.py). By default every POI gets PA_MS_K extra starts at
+     PA_MS_NPTS of its grid points, spread +-PA_MS_SPREAD profile sigmas along the softest
+     eigen-directions of the warm Gauss-Newton matrix on the row's free dims; they run in
+     the same lockstep and leave the batch as they converge. A grid point is flagged when
+     a start stalled, when converged starts sit at distinct points (> PA_MS_DX scaled
+     sigma apart) or when they disagree in chi2 by > PA_MS_DCHI2. Flagged points are
+     re-run with every known minimum deflated at once (Farrell, Birkisson & Funke 2015:
+     the ordinary LM step d becomes d / (1 - grad(log M).d), M = prod_i (|x - x_i|^-p +
+     alpha)), which converges to stationary points other than the known ones; each new
+     one (a second minimum, or a saddle, whose chi2 is the barrier) seeds a branch: an
+     ordinary LM run from it at every grid point of that POI. The profile is the lower
+     envelope over all starts and branches; the intervals are the union of the regions
+     below threshold (one region for a unimodal profile). The per-POI npz keeps every row.
+
 Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
   PA_NPTS(config) PA_NSIG(config) PA_MAXIT(40) PA_GTOL(3e-2)
   PA_LMAX(2508) PA_RTOL(1e-5) PA_TAG('') PA_RESUME(1)
   PA_LM_K(4) PA_STEP_MAX(1.0) PA_XBOX(5) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
-  PA_WARM_LR(0) PA_MLE_PREPASS(0) PA_MULTISTART(0) PA_MS_K(6) PA_POI_SLICE(0) PA_TRACE_EVALS(0)
+  PA_WARM_LR(0) PA_MLE_PREPASS(0) PA_POI_SLICE(0) PA_TRACE_EVALS(0)
+  PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
+  PA_MS_ROUNDS(1) PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10) PA_DF_MAXIT(10) PA_DF_P(2) PA_DF_ALPHA(1)
+  PA_MS_FORCE(0) PA_MS_BRANCH_FROM(new)   [the last two: shakeout knobs]
 """
 # Host devices for the HyRex jvp (scan/batched_grad.hyrex_cpu_mesh): must be set before JAX
 # initialises. PA_CPU_DEVICES=0/1 keeps the single-device path.
@@ -64,6 +81,8 @@ from abcmb import species as _species
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
+from scan.lm_tools import (proj_grad, lm_step, deflate_step, deflated_resid, spread_starts,
+                           flag_point, union_regions, is_multimodal)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 CL1, CL2, CL95 = 0.682689492137, 0.954499736104, 0.95
@@ -72,16 +91,26 @@ CL1, CL2, CL95 = 0.682689492137, 0.954499736104, 0.95
 # ======================================================================
 # profile-interval helpers
 # ======================================================================
+def _interval_mode(x, y):
+    """PA_INTERVAL, except that a profile whose points show two minima separated by a barrier above
+    the roughness (lm_tools.is_multimodal) is interpolated: a polynomial would smooth the second
+    mode away."""
+    if INTERVAL != "fit" or is_multimodal(x, y, FIT_DCHI2, MS_DCHI2):
+        return "pchip"
+    return "fit"
+
+
 def _smooth_profile(x, y):
     """Dense Delta-chi2 curve (xs, ys) through a profile's points. PA_INTERVAL=fit: least-squares
     polynomial of degree FIT_DEG through the points within FIT_DCHI2 of the minimum (averages per-row
     scatter; a quartic follows the skew of tau / Neff); pchip: shape-preserving interpolation through
-    every point. None with fewer than 4 finite points."""
+    every point (also used for a multimodal profile, _interval_mode). None with fewer than 4 finite
+    points."""
     x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
     if m.sum() < 4:
         return None
     x, y = x[m], y[m]; o = np.argsort(x); x, y = x[o], y[o]
-    if INTERVAL == "fit":
+    if _interval_mode(x, y) == "fit":
         sel = (y - y.min()) <= FIT_DCHI2
         if sel.sum() >= FIT_DEG + 3:
             xs_, ys_ = x[sel], y[sel]; xc = xs_.mean()
@@ -132,11 +161,13 @@ def poi_interval(x, y, cl, bound=(None, None)):
     """Confidence interval at level cl from a profile (x, chi2). bound = the POI's physical (lo, hi)
     limits (None = open). With no bound in play the threshold is the chi2_1 quantile on both sides.
     With one, the threshold is t_threshold at each tested value, sigma from wald_fit, so the interval
-    becomes a one-sided limit by itself when the data sit near the bound. Returns (lo, best, hi): an
-    end equal to the bound is a one-sided limit, NaN means not reached within the grid."""
+    becomes a one-sided limit by itself when the data sit near the bound. Returns (lo, best, hi,
+    regions): regions is the UNION of the regions below threshold as a list of (lo, hi) in increasing
+    x (one region for a unimodal profile), lo/hi are the outer ends of that union; an end equal to
+    the bound is a one-sided limit, NaN means not reached within the grid."""
     sp = _smooth_profile(x, y)
     if sp is None:
-        return np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan, []
     xs, ys = sp
     i0 = int(np.argmin(ys)); best = xs[i0]
     thr = np.full_like(xs, _chi2_dist.ppf(cl, 1))
@@ -150,20 +181,8 @@ def poi_interval(x, y, cl, bound=(None, None)):
     if near and np.isfinite(sig):
         _, dist = min(near, key=lambda t: t[0])          # the bound closest to the best fit
         thr = t_threshold(cl, dist / sig)
-    inside = ys <= thr
-    def end(step):
-        j = i0
-        while 0 <= j + step < len(xs) and inside[j + step]:
-            j += step
-        if j + step < 0 or j + step >= len(xs):          # still inside at the curve's end
-            edge = xs[j]
-            onb = (np.isfinite(blo) and abs(edge - blo) < 1e-12 * max(1, abs(blo))) or \
-                  (np.isfinite(bhi) and abs(edge - bhi) < 1e-12 * max(1, abs(bhi)))
-            return edge if onb else np.nan
-        a, b = j, j + step                               # inside at a, outside at b
-        fa, fb = ys[a] - thr[a], ys[b] - thr[b]
-        return xs[a] + (xs[b] - xs[a]) * (-fa) / (fb - fa + 1e-300)
-    return end(-1), best, end(+1)
+    regions = union_regions(xs, ys, thr, (blo, bhi))     # non-empty: ys = 0 <= thr at the minimum
+    return regions[0][0], best, regions[-1][1], regions
 
 
 def sigma_parabola(x, y):
@@ -247,8 +266,28 @@ GRAD_DIRCHUNK = int(os.environ.get("PA_GRAD_DIRCHUNK", "0")) or None  # directio
 GRAD_SPECB = int(os.environ.get("PA_GRAD_SPECB", "4")) or None  # cosmologies per device per
     # spectrum-stage jvp call (the gradient's memory peak; sub-batching it costs no extra work)
 _shard_env = os.environ.get("PA_SHARD", "auto").lower()
-MULTISTART = os.environ.get("PA_MULTISTART", "0") != "0"
-MS_K = int(os.environ.get("PA_MS_K", 6))
+# Multimodality (lm_tools): MS_K extra starts per row at MS_NPTS grid points per POI (0 = none),
+# +-MS_SPREAD profile sigmas along the softest warm Gauss-Newton directions; converged starts more
+# than MS_DX (scaled sigma, max-norm) apart are distinct minima, closer ones must agree in chi2 to
+# MS_DCHI2; the interval stop waits for the extra starts (MS_WAIT). Flagged points go through
+# MS_ROUNDS rounds of deflation (DF_MAXIT deflated steps; M = prod (r^-DF_P + DF_ALPHA), reach
+# ~ DF_ALPHA^(-1/DF_P) scaled sigma) and branches (at most MS_BRANCH_MAX new stationary points per
+# POI per round, BR_MAXIT iterations). Shakeout knobs: MS_FORCE=1 flags every multistart point;
+# MS_BRANCH_FROM=any branches from every deflation end point, not only the new stationary ones.
+MS_K = int(os.environ.get("PA_MS_K", "3"))
+MS_NPTS = int(os.environ.get("PA_MS_NPTS", "6"))
+MS_SPREAD = float(os.environ.get("PA_MS_SPREAD", "2.0"))
+MS_DX = float(os.environ.get("PA_MS_DX", "0.5"))
+MS_DCHI2 = float(os.environ.get("PA_MS_DCHI2", "0.1"))
+MS_WAIT = os.environ.get("PA_MS_WAIT", "1") != "0"
+MS_ROUNDS = int(os.environ.get("PA_MS_ROUNDS", "1"))
+MS_BRANCH_MAX = int(os.environ.get("PA_MS_BRANCH_MAX", "4"))
+MS_FORCE = os.environ.get("PA_MS_FORCE", "0") != "0"
+MS_BRANCH_FROM = os.environ.get("PA_MS_BRANCH_FROM", "new")
+BR_MAXIT = int(os.environ.get("PA_BR_MAXIT", "10"))
+DF_MAXIT = int(os.environ.get("PA_DF_MAXIT", "10"))
+DF_P = float(os.environ.get("PA_DF_P", "2"))
+DF_ALPHA = float(os.environ.get("PA_DF_ALPHA", "1"))
 USE_LOWTT = (os.environ["PA_USE_LOWTT"] != "0") if "PA_USE_LOWTT" in os.environ \
     else bool(CFG.get("use_lowtt", True))
 USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ \
@@ -548,43 +587,33 @@ def grad_gn_rows(BASE, FREE, X):
 # Levenberg-Marquardt over the row set (lockstep), with physical bounds
 # ======================================================================
 def _proj_grad(G, X, XLO, XHI):
-    """gradient with the components that push into an active bound zeroed (KKT residual)."""
-    at = ((X <= XLO + 1e-9) & (G > 0)) | ((X >= XHI - 1e-9) & (G < 0))
-    return np.where(at, 0.0, G)
+    """gradient with the components that push into an active bound zeroed (lm_tools.proj_grad)."""
+    return proj_grad(G, X, XLO, XHI)
 
 
 def _lm_step(g, H, x, xlo, xhi, lam):
-    """one projected LM step: solve (H_FF + lam diag(H_FF)) d = -g_F on the dims not held at a bound,
-    cap it at STEP_MAX, project into the box. Returns (d, Gauss-Newton predicted chi2 drop)."""
-    act = ((x <= xlo + 1e-9) & (g > 0)) | ((x >= xhi - 1e-9) & (g < 0))
-    F = np.where(~act)[0]
-    d = np.zeros_like(x)
-    if len(F):
-        Hf = H[np.ix_(F, F)]
-        dg = np.maximum(np.diag(Hf), 1e-6 * max(np.max(np.diag(Hf)), 1e-12))
-        for _ in range(30):                        # raise lam until the damped matrix is PD
-            try:
-                L = np.linalg.cholesky(Hf + lam * np.diag(dg))
-                break
-            except np.linalg.LinAlgError:
-                lam = max(lam, 1e-6) * 10.0
-        else:
-            L = np.diag(np.sqrt(dg * lam))
-        d[F] = -np.linalg.solve(L.T, np.linalg.solve(L, g[F]))
-    dm = np.abs(d).max()
-    if dm > STEP_MAX:
-        d *= STEP_MAX / dm
-    d = np.clip(x + d, xlo, xhi) - x
-    return d, -(g @ d + 0.5 * d @ H @ d)
+    """one projected LM step capped at STEP_MAX (lm_tools.lm_step). Returns (d, GN predicted drop)."""
+    return lm_step(g, H, x, xlo, xhi, lam, STEP_MAX)
+
+
+def _envelope(pv, f):
+    """(unique POI values, lowest chi2 at each): the profile of a row set with several starts per
+    grid point."""
+    u, inv = np.unique(np.asarray(pv, float), return_inverse=True)
+    m = np.full(len(u), np.inf)
+    np.minimum.at(m, inv, np.asarray(f, float))
+    return u, m
 
 
 def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=GTOL,
-            log_prefix="", ckpt_path=None, resume_state=None):
+            log_prefix="", ckpt_path=None, resume_state=None, EXTRA=None):
     """Levenberg-Marquardt over a flat row set. BASE (N,D), FREE (N,P'), XLO/XHI/X0 (N,P'); POI_IDX/PV
-    (N,) group the rows into profiles for the interval-stability stop (None: no early stop). Returns
-    a dict of per-row arrays: X, F (values-path chi2), G, H (at X), gnorm (projected, exact AD),
-    stalled, lam, it. The full state is checkpointed every iteration (ckpt_path); resume_state
-    restarts from such a checkpoint."""
+    (N,) group the rows into profiles for the interval-stability stop (None: no early stop); several
+    rows at one PV are starts of the same point and the profile takes their lowest chi2. EXTRA (N,)
+    marks the multistart rows: with MS_WAIT the stop waits until none is active. Returns a dict of
+    per-row arrays: X, F (values-path chi2), G, H (at X), gnorm (projected, exact AD), stalled, lam,
+    it. The full state is checkpointed every iteration (ckpt_path); resume_state restarts from such
+    a checkpoint."""
     N, Pp = X0.shape
     if resume_state is not None:
         S = {k: np.array(resume_state[k]) for k in ("X", "F", "G", "H", "lam", "nfail", "stalled")}
@@ -607,8 +636,9 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=G
     def _ends():
         out = {}
         for p, r in groups.items():
-            lo, _, hi = poi_interval(PV[r], F[r], CL1, (BLO[p], BHI[p]))
-            out[p] = (lo, hi)
+            pv, f = _envelope(PV[r], F[r])
+            lo, _, hi, reg = poi_interval(pv, f, CL1, (BLO[p], BHI[p]))
+            out[p] = (lo, hi, len(reg))
         return out
     hist = [_ends()]
     it = it0
@@ -652,7 +682,7 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=G
                   f"({time.strftime('%H:%M:%S')})", flush=True)
         if ckpt_path:
             tmp = ckpt_path + ".tmp.npz"
-            np.savez(tmp, BASE=BASE, FREE=FREE, X=X, F=F, G=G, H=H, lam=lam, nfail=nfail,
+            np.savez(tmp, BASE=BASE, FREE=FREE, X0=X0, X=X, F=F, G=G, H=H, lam=lam, nfail=nfail,
                      stalled=stalled, it=it + 1, gtol=gtol)
             os.replace(tmp, ckpt_path)
         # ---- interval-stability early stop: every POI's 68% interval ends moved by < SIGTOL*grid_sig
@@ -671,15 +701,23 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=G
             prev, cur = hist[-1 - SIGTOL_PATIENCE], hist[-1]
             worst, ready, nfin = 0.0, True, 0
             for p in groups:
-                for a, b in zip(prev[p], cur[p]):
+                if prev[p][2] != cur[p][2]:                # the number of regions changed
+                    ready = False
+                for a, b in zip(prev[p][:2], cur[p][:2]):
                     if np.isfinite(a) and np.isfinite(b):
                         worst = max(worst, abs(b - a) / GRID_SIG[p]); nfin += 1
                     elif np.isfinite(a) != np.isfinite(b):
                         ready = False
             if ready and nfin and worst < SIGTOL:
-                print(f"  {log_prefix} intervals stable: worst move {worst:.2e} grid_sig < SIGTOL "
-                      f"{SIGTOL:.0e} over {SIGTOL_PATIENCE} iters -> stop at it{it}", flush=True)
-                break
+                nx = 0 if EXTRA is None or not MS_WAIT else \
+                    int(((np.abs(gproj).max(1) > gtol) & ~stalled & EXTRA).sum())
+                if nx:
+                    print(f"  {log_prefix} intervals stable (worst move {worst:.2e} grid_sig) but "
+                          f"{nx} extra starts still active -> continuing", flush=True)
+                else:
+                    print(f"  {log_prefix} intervals stable: worst move {worst:.2e} grid_sig < SIGTOL "
+                          f"{SIGTOL:.0e} over {SIGTOL_PATIENCE} iters -> stop at it{it}", flush=True)
+                    break
     return dict(X=X, F=F, G=G, H=H, gnorm=np.abs(gproj).max(1), stalled=stalled, lam=lam, it=it)
 
 
@@ -721,8 +759,76 @@ def rss_gb():
 
 
 # ======================================================================
-# lockstep driver across ALL POIs
+# deflated Newton walk out of the known minima (multimodality; lm_tools.deflate_step)
 # ======================================================================
+def deflated_rows(BASE, FREE, XLO, XHI, X0, MINS, NMIN, maxit=DF_MAXIT, gtol=GTOL, log_prefix="[defl]"):
+    """Deflated Newton iteration (Farrell, Birkisson & Funke 2015) over a flat row set, every known
+    stationary point of a row deflated at once: M(x) = prod_i (|x - x_i|^-DF_P + DF_ALPHA), and the
+    step is the row's undamped Gauss-Newton step d rescaled to d / (1 - grad(log M).d), so it reuses
+    g and the GN matrix; it is capped at STEP_MAX and projected into the box. A full Newton step
+    toward a known point comes out reversed (the row walks away from it, up its valley, until the
+    GN step points into another basin), a step away from it is shortened; no step is damped or
+    rejected -- this is a bounded walk, not a descent. The walk ends when a row's projected gradient
+    drops under gtol (a stationary point: `new` when > MS_DX from every known one, else `recaptured`),
+    when it reaches the +-XBOX box (`escaped`), when ABCMB fails there (`stalled`, the row keeps its
+    last point), or after maxit steps (`maxit`; the caller finishes those with ordinary LM).
+    MINS (N, m, P') padded, NMIN (N,) the count per row. Returns per-row X, F (values path), G, H,
+    gnorm, status."""
+    N, Pp = X0.shape
+    X = np.array(X0, float)
+    _, G, H = grad_gn_rows(BASE, FREE, X)
+    fin = np.isfinite(G).all(1) & np.isfinite(H).all((1, 2))
+    G = np.where(fin[:, None], G, 0.0); H = np.where(fin[:, None, None], H, 0.0)
+    status = np.array(["active"] * N, dtype="U12")
+    status[~fin] = "stalled"
+    mins_of = lambda b: MINS[b, :NMIN[b]]
+
+    def _classify(b):
+        if ((X[b] <= -XBOX + 1e-9) | (X[b] >= XBOX - 1e-9)).any():
+            return "escaped"
+        gp = proj_grad(G[b:b + 1], X[b:b + 1], XLO[b:b + 1], XHI[b:b + 1])[0]
+        if np.abs(gp).max() < gtol:
+            near = NMIN[b] > 0 and bool((np.abs(mins_of(b) - X[b]).max(1) <= MS_DX).any())
+            return "recaptured" if near else "new"
+        return "active"
+
+    for b in np.where(status == "active")[0]:
+        status[b] = _classify(b)
+    for it in range(maxit):
+        A = np.where(status == "active")[0]
+        if not len(A):
+            break
+        Xc = X.copy()
+        for b in A:
+            d, _ = lm_step(G[b], H[b], X[b], XLO[b], XHI[b], LM_LAMBDA_MIN, np.inf)
+            d = deflate_step(d, X[b], mins_of(b), DF_P, DF_ALPHA)
+            dm = np.abs(d).max()
+            if dm > STEP_MAX:
+                d *= STEP_MAX / dm
+            Xc[b] = np.clip(X[b] + d, XLO[b], XHI[b])
+        _, Gc, Hc = grad_gn_rows(BASE[A], FREE[A], Xc[A])
+        fin = np.isfinite(Gc).all(1) & np.isfinite(Hc).all((1, 2))
+        for a, b in enumerate(A):
+            if fin[a]:
+                X[b], G[b], H[b] = Xc[b], Gc[a], Hc[a]
+                status[b] = _classify(b)
+            else:
+                status[b] = "stalled"
+        print(f"  {log_prefix} it{it}: walking={len(A)} " +
+              " ".join(f"{k}={int((status == k).sum())}" for k in ("new", "recaptured", "escaped", "stalled")) +
+              f" ({time.strftime('%H:%M:%S')})", flush=True)
+    status[status == "active"] = "maxit"
+    F = values_rows(BASE, FREE, X)
+    gproj = proj_grad(G, X, XLO, XHI)
+    return dict(X=X, F=F, G=G, H=H, gnorm=np.abs(gproj).max(1), status=status)
+
+
+# ======================================================================
+# lockstep driver across ALL POIs: base + multistart rows, flags, deflation, branches, envelope
+# ======================================================================
+KINDS = ("warm", "spread", "deflation", "branch")      # row kinds, T["KIND"] = index into this
+
+
 def _grid_for(poi):
     """NPTS points over the config 'grid' range, else GRID_CEN +- NSIG*GRID_SIG, clipped to the
     POI's physical bounds (a clipped end lands exactly on the bound)."""
@@ -735,91 +841,367 @@ def _bound_of(i):
     return (None if not np.isfinite(BLO[i]) else BLO[i], None if not np.isfinite(BHI[i]) else BHI[i])
 
 
+def _ckpt_path(outdir, what):
+    return os.path.join(outdir, f"profile_prod_ad_{what}{TAG}{'_r%d' % RANK if POI_SLICE else ''}.npz")
+
+
+def _stage_rank(stage):
+    """lm -> 0, defl<r> -> 2r - 1, branch<r> -> 2r (the order of the phases)."""
+    if stage.startswith("defl"):
+        return 2 * int(stage[4:]) - 1
+    if stage.startswith("branch"):
+        return 2 * int(stage[6:])
+    return 0
+
+
+def _save_table(path, T, stage):
+    """checkpoint the row table after a phase."""
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, stage=stage, gtol=GTOL, **T)
+    os.replace(tmp, path)
+
+
+def _load_table(path, BASE, FREE):
+    """(row table, stage) from a checkpoint whose base rows (the first len(BASE)) match this run's,
+    else (None, None)."""
+    if not (RESUME and os.path.exists(path)):
+        return None, None
+    try:
+        st = np.load(path)
+        n = len(BASE)
+        if (st["BASE"].shape[0] >= n and np.allclose(st["BASE"][:n], BASE)
+                and np.array_equal(st["FREE"][:n], FREE) and float(st["gtol"]) == GTOL):
+            T = {k: st[k] for k in st.files if k not in ("stage", "gtol")}
+            print(f"[resume] row table after stage {st['stage']} matches; continuing ({path})", flush=True)
+            return T, str(st["stage"])
+        print("[resume] row table grid/gtol mismatch -> fresh start", flush=True)
+    except Exception as ex:
+        print(f"[resume] could not load the row table ({ex}) -> fresh start", flush=True)
+    return None, None
+
+
+def _append(T, **rows):
+    for k, v in rows.items():
+        T[k] = np.concatenate([T[k], np.asarray(v, dtype=T[k].dtype)])
+
+
+def _row_conv(T):
+    """(converged, at_box) per row: ||g||_AD < GTOL off the +-XBOX box and not stalled. A deflation
+    row that ended on a stationary point (new or recaptured) qualifies like any other."""
+    at_box = ((T["X"] <= -XBOX + 1e-9) | (T["X"] >= XBOX - 1e-9)).any(1)
+    return (T["gnorm"] < GTOL) & ~at_box & ~T["stalled"], at_box
+
+
+def _flags(T, pois_idx):
+    """{(poi index, j): (flag, reason, reps, rows)} over the grid points: lm_tools.flag_point on the
+    point's rows; reps = row indices of its distinct converged minima, lowest chi2 first."""
+    conv, _ = _row_conv(T)
+    out = {}
+    for p in pois_idx:
+        for j in range(NPTS):
+            r = np.where((T["POI"] == p) & (T["J"] == j))[0]
+            f, why, reps = flag_point(T["X"][r], T["F"][r], conv[r], T["stalled"][r], MS_DX, MS_DCHI2)
+            out[(p, j)] = (f, why, [int(r[i]) for i in reps], r)
+    return out
+
+
+def _classify_rows(X, gnorm, stalled, mins_list):
+    """status of finished rows: new / recaptured / stalled / maxit (lm_rows output + known minima)."""
+    at_box = ((X <= -XBOX + 1e-9) | (X >= XBOX - 1e-9)).any(1)
+    out = np.array(["maxit"] * len(X), dtype="U12")
+    for b in range(len(X)):
+        if stalled[b]:
+            out[b] = "stalled"
+        elif at_box[b]:
+            out[b] = "escaped"
+        elif gnorm[b] < GTOL:
+            m = mins_list[b]
+            out[b] = "recaptured" if len(m) and (np.abs(m - X[b]).max(1) <= MS_DX).any() else "new"
+    return out
+
+
 def profile_lockstep(pois, outdir):
-    """Build ONE row set (all pois x NPTS grid points), warm-start, run LM in lockstep, and write
-    one npz/png per POI."""
+    """Build the row set (every POI x grid point, plus MS_K spread starts at MS_NPTS points per POI),
+    warm-start, run LM in lockstep, then MS_ROUNDS rounds of flags -> deflation -> branches, and
+    write one npz/png per POI from the lower envelope over every row. Each phase checkpoints the row
+    table (resumable)."""
     global GRID_CEN, GRID_SIG
-    theta_warm = CENTER.copy(); Hwarm = None
+    theta_warm = CENTER.copy(); Hwarm = [None]
     if MLE_PREPASS:
-        theta_warm, chi2_mle, Hwarm = joint_fit(CENTER, MLE_MAXITER)
-        GRID_CEN = theta_warm.copy(); GRID_SIG = _fisher_grid_sigma(Hwarm)
+        theta_warm, chi2_mle, Hw = joint_fit(CENTER, MLE_MAXITER); Hwarm[0] = Hw
+        GRID_CEN = theta_warm.copy(); GRID_SIG = _fisher_grid_sigma(Hw)
         print("[mle] recentered grids on the joint fit (chi2_min=%.3f):" % chi2_mle, flush=True)
         for i, nm in enumerate(ORDER):
             print(f"[mle]   {nm:>10}: cen {CENTER[i]:.5g} -> {GRID_CEN[i]:.5g}; grid-sig "
                   f"{GRID_SIG[i]:.3g}", flush=True)
-    # ---- assemble the flat row set ----
-    rows_poi, rows_pv, row_of_poi = [], [], {}
-    for poi in pois:
-        idx = ORDER.index(poi); grid = _grid_for(poi)
-        row_of_poi[poi] = (len(rows_pv), len(rows_pv) + NPTS, grid)
-        rows_poi += [idx] * NPTS; rows_pv += list(grid)
-    POI_IDX = np.array(rows_poi, int); PV = np.array(rows_pv, float); N = len(PV)
+
+    def _hwarm():
+        if Hwarm[0] is None:
+            _, _, Hwarm[0] = joint_fit(theta_warm, 0)
+        return Hwarm[0]
+
+    # ---- the base rows: one per (POI, grid point) ----
+    pois_idx = [ORDER.index(p) for p in pois]
+    rows_poi, rows_j, rows_pv, grid_of = [], [], [], {}
+    for i in pois_idx:
+        grid = _grid_for(ORDER[i]); grid_of[i] = grid
+        rows_poi += [i] * NPTS; rows_j += list(range(NPTS)); rows_pv += list(grid)
+    POI_IDX = np.array(rows_poi, int); J = np.array(rows_j, int); PV = np.array(rows_pv, float); N = len(PV)
     FREE = np.array([nuis_idx_of(i) for i in POI_IDX], int)
     BASE = np.tile(CENTER, (N, 1)); BASE[np.arange(N), POI_IDX] = PV
     XLO, XHI = map(np.array, zip(*[scaled_box(f) for f in FREE]))
-    # ---- warm starts: the free dims at the warm point (the config centre, or the joint fit) ----
     xw = (theta_warm - CENTER) / SIGMA
-    X0 = np.clip(xw[FREE], XLO, XHI) if WARM else np.clip(np.zeros((N, P)), XLO, XHI)
-    print(f"[lockstep] N={N} rows ({len(pois)} POIs x {NPTS}) P={P} D={D} shard={DO_SHARD} "
+    print(f"[lockstep] N={N} base rows ({len(pois)} POIs x {NPTS}) P={P} D={D} shard={DO_SHARD} "
           f"warm={'joint fit' if MLE_PREPASS else 'config centre' if WARM else 'cold'}", flush=True)
-    ckpt = os.path.join(outdir, f"profile_prod_ad_STATE{TAG}{'_r%d' % RANK if POI_SLICE else ''}.npz")
-    resume_state = None
-    if RESUME and os.path.exists(ckpt):
-        try:
-            st = np.load(ckpt)
-            if (st["BASE"].shape == BASE.shape and np.allclose(st["BASE"], BASE)
-                    and np.array_equal(st["FREE"], FREE) and float(st["gtol"]) == GTOL):
-                resume_state = {k: st[k] for k in st.files}
-                print(f"[resume] checkpoint @ it{int(st['it'])} matches; continuing ({ckpt})", flush=True)
-            else:
-                print("[resume] checkpoint grid/gtol mismatch -> fresh start", flush=True)
-        except Exception as ex:
-            print(f"[resume] could not load checkpoint ({ex}) -> fresh start", flush=True)
-    # ---- linear-response warm start: each row starts at the Gaussian conditional optimum of the warm
-    # point's Gauss-Newton matrix (rows far along a degeneracy need not walk there at STEP_MAX per
-    # iteration); one batched value call scores both starts and each row keeps the lower chi2. ----
-    if WARM and WARM_LR and resume_state is None:
-        if Hwarm is None:
-            _, _, Hwarm = joint_fit(theta_warm, 0)
-        Xlr = X0.copy()
-        for b in range(N):
-            i, f = POI_IDX[b], FREE[b]
-            dpoi = (PV[b] - theta_warm[i]) / SIGMA[i]
-            Xlr[b] = np.clip(xw[f] - np.linalg.lstsq(Hwarm[np.ix_(f, f)], Hwarm[f, i] * dpoi,
-                                                     rcond=None)[0], XLO[b], XHI[b])
-        fk = values_rows(np.tile(BASE, (2, 1)), np.tile(FREE, (2, 1)), np.concatenate([X0, Xlr]))
-        use = fk[N:] < fk[:N]
-        X0 = np.where(use[:, None], Xlr, X0)
-        print(f"[warm-lr] linear-response start kept for {int(use.sum())}/{N} rows; chi2 median "
-              f"{np.median(fk[:N]):.1f} -> {np.median(np.minimum(fk[:N], fk[N:])):.1f}", flush=True)
-    # ---- lockstep LM ----
     t0 = time.perf_counter()
-    S = lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=POI_IDX, PV=PV, log_prefix="[lock]",
-                ckpt_path=ckpt, resume_state=resume_state)
-    conv = S["gnorm"] < GTOL
-    at_box = ((S["X"] <= -XBOX + 1e-9) | (S["X"] >= XBOX - 1e-9)).any(1)   # on the +-XBOX safety box:
-    conv &= ~at_box                                                 # a zero projected gradient there is not a fit
-    ev = np.linalg.eigvalsh(S["H"])                                  # (N, P) GN eigenvalues
-    print(f"[lockstep] LM done {time.perf_counter() - t0:.0f}s RSS={rss_gb():.1f}GB; converged "
-          f"{int(conv.sum())}/{N} (||g||_AD<{GTOL:.1e}); stalled {int(S['stalled'].sum())}; "
-          f"on the XBOX box {int(at_box.sum())}; "
-          f"max||g||_AD={S['gnorm'].max():.2e}", flush=True)
-    # ---- write one npz/png per POI ----
+    tpath = _ckpt_path(outdir, "TABLE")
+    T, stage = _load_table(tpath, BASE, FREE)
+
+    def _done_line(what):
+        conv, at_box = _row_conv(T)
+        print(f"[lockstep] {what} {time.perf_counter() - t0:.0f}s RSS={rss_gb():.1f}GB; rows "
+              f"{len(T['PV'])} (" + ", ".join(f"{k} {int((T['KIND'] == i).sum())}" for i, k in enumerate(KINDS))
+              + f"); converged {int(conv.sum())} (||g||_AD<{GTOL:.1e}); stalled {int(T['stalled'].sum())}; "
+              f"on the XBOX box {int(at_box.sum())}; max||g||_AD={T['gnorm'].max():.2e}", flush=True)
+
+    # ================= phase 1: lockstep LM over the base + spread rows =================
+    if T is None:
+        # the multistart rows copy their base row's structure; the spread itself needs X0 (below)
+        KIND = np.zeros(N, int); START = np.zeros(N, int); ext = np.zeros(0, int); rep = np.zeros(0, int)
+        if MS_K > 0:
+            jsel = sorted(set(np.round(np.linspace(0, NPTS - 1, min(MS_NPTS, NPTS))).astype(int).tolist()))
+            ext = np.array([b for b in range(N) if J[b] in jsel], int)
+            rep = np.repeat(ext, MS_K)
+            KIND = np.concatenate([KIND, np.ones(len(rep), int)])
+            START = np.concatenate([START, np.tile(np.arange(1, MS_K + 1), len(ext))])
+        BASE_f, FREE_f, XLO_f, XHI_f, POI_f, J_f, PV_f = (np.concatenate([a, a[rep]]) for a in
+                                                         (BASE, FREE, XLO, XHI, POI_IDX, J, PV))
+        Nf = len(PV_f)
+        ckpt = _ckpt_path(outdir, "STATE")
+        resume_state = None
+        if RESUME and os.path.exists(ckpt):
+            try:
+                st = np.load(ckpt)
+                if (st["BASE"].shape == BASE_f.shape and np.allclose(st["BASE"], BASE_f)
+                        and np.array_equal(st["FREE"], FREE_f) and float(st["gtol"]) == GTOL):
+                    resume_state = {k: st[k] for k in st.files}
+                    print(f"[resume] LM checkpoint @ it{int(st['it'])} matches; continuing ({ckpt})", flush=True)
+                else:
+                    print("[resume] LM checkpoint grid/gtol mismatch -> fresh start", flush=True)
+            except Exception as ex:
+                print(f"[resume] could not load the LM checkpoint ({ex}) -> fresh start", flush=True)
+        if resume_state is not None and "X0" in resume_state:
+            X0_f = np.array(resume_state["X0"], float)
+        else:
+            X0 = np.clip(xw[FREE], XLO, XHI) if WARM else np.clip(np.zeros((N, P)), XLO, XHI)
+            # ---- linear-response warm start: each row starts at the Gaussian conditional optimum of
+            # the warm point's Gauss-Newton matrix (rows far along a degeneracy need not walk there at
+            # STEP_MAX per iteration); one batched value call scores both starts, each row keeps the
+            # lower chi2. ----
+            if WARM and WARM_LR:
+                Hw = _hwarm(); Xlr = X0.copy()
+                for b in range(N):
+                    i, f = POI_IDX[b], FREE[b]
+                    dpoi = (PV[b] - theta_warm[i]) / SIGMA[i]
+                    Xlr[b] = np.clip(xw[f] - np.linalg.lstsq(Hw[np.ix_(f, f)], Hw[f, i] * dpoi,
+                                                             rcond=None)[0], XLO[b], XHI[b])
+                fk = values_rows(np.tile(BASE, (2, 1)), np.tile(FREE, (2, 1)), np.concatenate([X0, Xlr]))
+                use = fk[N:] < fk[:N]
+                X0 = np.where(use[:, None], Xlr, X0)
+                print(f"[warm-lr] linear-response start kept for {int(use.sum())}/{N} rows; chi2 median "
+                      f"{np.median(fk[:N]):.1f} -> {np.median(np.minimum(fk[:N], fk[N:])):.1f}", flush=True)
+            # ---- multistart: MS_K spread starts around each selected row's start, +-MS_SPREAD profile
+            # sigmas along the softest eigen-directions of the warm GN matrix on the row's free dims ----
+            X0_f = X0
+            if len(ext):
+                Hw = _hwarm()
+                Xe = np.concatenate([spread_starts(X0[b], Hw[np.ix_(FREE[b], FREE[b])], XLO[b], XHI[b],
+                                                   MS_K, MS_SPREAD) for b in ext])
+                X0_f = np.concatenate([X0, Xe])
+                print(f"[multistart] {len(rep)} spread starts: {MS_K} per row at {len(jsel)} grid points per "
+                      f"POI (indices {jsel}), +-{MS_SPREAD} profile sigma along the softest warm GN "
+                      f"directions; max|dx| {np.abs(Xe - X0[rep]).max(1).mean():.2f} scaled sigma (mean)",
+                      flush=True)
+        S = lm_rows(BASE_f, FREE_f, XLO_f, XHI_f, X0_f, POI_IDX=POI_f, PV=PV_f, EXTRA=(KIND == 1),
+                    log_prefix="[lock]", ckpt_path=ckpt, resume_state=resume_state)
+        T = dict(BASE=BASE_f, FREE=FREE_f, XLO=XLO_f, XHI=XHI_f, POI=POI_f, J=J_f, PV=PV_f, KIND=KIND,
+                 START=START, ROUND=np.zeros(Nf, int), X0=X0_f, X=S["X"], F=S["F"], G=S["G"], H=S["H"],
+                 gnorm=S["gnorm"], stalled=S["stalled"], status=np.array(["lm"] * Nf, dtype="U12"),
+                 barrier=np.full(Nf, np.nan))
+        stage = "lm"
+        _save_table(tpath, T, stage)
+        try:
+            os.remove(ckpt)
+        except Exception:
+            pass
+        _done_line("LM done")
+
+    # ================= rounds: flags -> deflation -> branches =================
+    for rnd in range(1, MS_ROUNDS + 1):
+        if _stage_rank(stage) < 2 * rnd - 1:
+            flags = _flags(T, pois_idx)
+            nflag = sum(v[0] for v in flags.values())
+            flagged = [(k, v) for k, v in flags.items()
+                       if v[0] or (MS_FORCE and (T["KIND"][v[3]] == 1).any())]
+            print(f"[round {rnd}] {nflag} flagged grid points of {len(flags)}"
+                  + (f" (+{len(flagged) - nflag} forced by PA_MS_FORCE)" if MS_FORCE else ""), flush=True)
+            for (p, j), (f, why, reps, r) in flagged:
+                print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] {why or 'forced'}; known minima: "
+                      + (", ".join(f"chi2={T['F'][i]:.3f}" for i in reps) or "none"), flush=True)
+            if not flagged:
+                stage = f"branch{rnd}"
+                _save_table(tpath, T, stage)
+                break
+            # ---- deflation rows: the point's warm + spread starts (those within MS_DX of a known
+            # minimum dropped), topped up to MS_K + 1 with spreads around its best minimum on that
+            # minimum's own GN matrix; every known minimum of the point deflated at once ----
+            dB, dFR, dLO, dHI, dX0, dP, dJ, dPV, dMIN, dSTART = ([] for _ in range(10))
+            mmax = max(1, max(len(v[2]) for _, v in flagged))
+            for (p, j), (f, why, reps, r) in flagged:
+                mins = T["X"][reps] if reps else np.zeros((0, P))
+                starts = T["X0"][r[T["KIND"][r] <= 1]]
+                starts = np.unique(np.round(starts, 12), axis=0)
+                if len(mins):
+                    far = np.array([(np.abs(mins - s).max(1) > MS_DX).all() for s in starts], bool)
+                    starts = starts[far]
+                    if len(starts) < MS_K + 1:
+                        b0 = reps[0]
+                        starts = np.concatenate([starts, spread_starts(
+                            T["X"][b0], T["H"][b0], T["XLO"][b0], T["XHI"][b0], MS_K + 1 - len(starts), MS_SPREAD)])
+                b0 = int(r[0])
+                for s_i, s in enumerate(starts):
+                    dB.append(T["BASE"][b0]); dFR.append(T["FREE"][b0]); dLO.append(T["XLO"][b0]); dHI.append(T["XHI"][b0])
+                    dX0.append(s); dP.append(p); dJ.append(j); dPV.append(T["PV"][b0]); dSTART.append(s_i)
+                    m = np.full((mmax, P), np.nan); m[:len(mins)] = mins; dMIN.append((m, len(mins)))
+            dB, dFR, dLO, dHI, dX0 = (np.array(a) for a in (dB, dFR, dLO, dHI, dX0))
+            MINS = np.array([m for m, _ in dMIN]); NMIN = np.array([n for _, n in dMIN], int)
+            print(f"[round {rnd}] deflation: {len(dX0)} walks from {len(flagged)} points, up to {mmax} minima "
+                  f"deflated each (p={DF_P:g}, alpha={DF_ALPHA:g}, <= {DF_MAXIT} steps)", flush=True)
+            R = deflated_rows(dB, dFR, dLO, dHI, dX0, MINS, NMIN, log_prefix=f"[defl{rnd}]")
+            # ---- walks that ran out of steps: finish them with ordinary LM ----
+            mx = np.where(R["status"] == "maxit")[0]
+            if len(mx):
+                print(f"[round {rnd}] {len(mx)} walks unfinished after {DF_MAXIT} steps -> ordinary LM", flush=True)
+                S2 = lm_rows(dB[mx], dFR[mx], dLO[mx], dHI[mx], R["X"][mx], maxit=BR_MAXIT, log_prefix=f"[defl{rnd}-lm]")
+                for k in ("X", "F", "G", "H", "gnorm"):
+                    R[k][mx] = S2[k]
+                R["status"][mx] = _classify_rows(S2["X"], S2["gnorm"], S2["stalled"],
+                                                 [MINS[b, :NMIN[b]] for b in mx])
+            n_new = int((R["status"] == "new").sum())
+            print(f"[round {rnd}] deflation done: " + " ".join(
+                f"{k}={int((R['status'] == k).sum())}" for k in ("new", "recaptured", "escaped", "stalled", "maxit")),
+                flush=True)
+            # ---- each new stationary point: chi2 against the point's best known minimum, and the
+            # barrier along the straight segment between them (values only; an upper bound) ----
+            bar = np.full(len(dX0), np.nan)
+            new_rows = np.where(R["status"] == "new")[0]
+            if len(new_rows):
+                segB, segF, segX, owner = [], [], [], []
+                ts = np.linspace(0.0, 1.0, 9)[1:-1]
+                for a in new_rows:
+                    if NMIN[a] == 0:
+                        continue
+                    xk = MINS[a, 0]
+                    for t in ts:
+                        segB.append(dB[a]); segF.append(dFR[a]); segX.append(xk + t * (R["X"][a] - xk)); owner.append(a)
+                if segB:
+                    fs = values_rows(np.array(segB), np.array(segF), np.array(segX)); owner = np.array(owner)
+                    for a in new_rows:
+                        if NMIN[a] == 0:
+                            continue
+                        p, j = dP[a], dJ[a]
+                        fk = T["F"][flags[(p, j)][2][0]]
+                        bar[a] = fs[owner == a].max() - max(fk, R["F"][a])
+                        print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] new stationary point chi2={R['F'][a]:.3f} "
+                              f"({R['F'][a] - fk:+.3f} vs the known minimum); barrier along the segment "
+                              f">= {bar[a]:.3f}; |dx|max={np.abs(R['X'][a] - MINS[a, 0]).max():.2f}", flush=True)
+            _append(T, BASE=dB, FREE=dFR, XLO=dLO, XHI=dHI, POI=np.array(dP, int), J=np.array(dJ, int),
+                    PV=np.array(dPV, float), KIND=np.full(len(dX0), 2, int), START=np.array(dSTART, int),
+                    ROUND=np.full(len(dX0), rnd, int), X0=dX0, X=R["X"], F=R["F"], G=R["G"], H=R["H"],
+                    gnorm=R["gnorm"], stalled=(R["status"] == "stalled"), status=R["status"], barrier=bar)
+            stage = f"defl{rnd}"
+            _save_table(tpath, T, stage)
+        if _stage_rank(stage) < 2 * rnd:
+            # ---- branches: an ordinary LM run from each new stationary point of this round at every
+            # grid point of its POI (at most MS_BRANCH_MAX seeds per POI, lowest chi2 first) ----
+            seeds = []
+            for p in pois_idx:
+                cand = np.where((T["POI"] == p) & (T["KIND"] == 2) & (T["ROUND"] == rnd)
+                                & ((T["status"] == "new") if MS_BRANCH_FROM == "new" else True))[0]
+                cand = cand[np.argsort(T["F"][cand])]
+                seeds += [(p, int(c)) for c in cand[:MS_BRANCH_MAX]]
+            if seeds:
+                bB, bFR, bLO, bHI, bX0, bP, bJ, bPV, bST = ([] for _ in range(9))
+                for s_i, (p, c) in enumerate(seeds):
+                    for j in range(NPTS):
+                        b0 = int(np.where((T["POI"] == p) & (T["J"] == j) & (T["KIND"] == 0))[0][0])
+                        bB.append(T["BASE"][b0]); bFR.append(T["FREE"][b0]); bLO.append(T["XLO"][b0]); bHI.append(T["XHI"][b0])
+                        bX0.append(np.clip(T["X"][c], T["XLO"][b0], T["XHI"][b0])); bP.append(p); bJ.append(j)
+                        bPV.append(T["PV"][b0]); bST.append(s_i)
+                bB, bFR, bLO, bHI, bX0 = (np.array(a) for a in (bB, bFR, bLO, bHI, bX0))
+                print(f"[round {rnd}] branches: {len(seeds)} seeds -> {len(bX0)} rows: "
+                      + ", ".join(f"{ORDER[p]}@{grid_of[p][T['J'][c]]:.5g} chi2={T['F'][c]:.3f}" for p, c in seeds),
+                      flush=True)
+                S3 = lm_rows(bB, bFR, bLO, bHI, bX0, POI_IDX=np.array(bP, int), PV=np.array(bPV, float),
+                             maxit=BR_MAXIT, log_prefix=f"[branch{rnd}]")
+                _append(T, BASE=bB, FREE=bFR, XLO=bLO, XHI=bHI, POI=np.array(bP, int), J=np.array(bJ, int),
+                        PV=np.array(bPV, float), KIND=np.full(len(bX0), 3, int), START=np.array(bST, int),
+                        ROUND=np.full(len(bX0), rnd, int), X0=bX0, X=S3["X"], F=S3["F"], G=S3["G"], H=S3["H"],
+                        gnorm=S3["gnorm"], stalled=S3["stalled"],
+                        status=np.array(["branch"] * len(bX0), dtype="U12"), barrier=np.full(len(bX0), np.nan))
+                for s_i, (p, c) in enumerate(seeds):
+                    rb = np.where((T["KIND"] == 3) & (T["ROUND"] == rnd) & (T["START"] == s_i) & (T["POI"] == p))[0]
+                    base = np.array([T["F"][(T["POI"] == p) & (T["J"] == j) & (T["KIND"] < 3)].min() for j in T["J"][rb]])
+                    below = T["F"][rb] < base - MS_DCHI2
+                    print(f"  branch {s_i} ({ORDER[p]}): converged {int((T['gnorm'][rb] < GTOL).sum())}/{len(rb)}, "
+                          f"below the earlier envelope at {int(below.sum())} grid points"
+                          + (f" (by up to {float((base - T['F'][rb]).max()):.3f})" if below.any() else ""), flush=True)
+            else:
+                print(f"[round {rnd}] no new stationary point -> no branches", flush=True)
+            stage = f"branch{rnd}"
+            _save_table(tpath, T, stage)
+    _done_line("all phases done")
+
+    # ================= envelope + outputs =================
+    conv, at_box = _row_conv(T)
+    flags = _flags(T, pois_idx)
+    ev = np.linalg.eigvalsh(T["H"])
     for poi in pois:
-        s, e, grid = row_of_poi[poi]; sl = slice(s, e); i = ORDER.index(poi)
-        chi2 = S["F"][sl]; bnd = _bound_of(i)
-        lo1, mid, hi1 = poi_interval(grid, chi2, CL1, bnd)
-        lo2, _, hi2 = poi_interval(grid, chi2, CL2, bnd)
-        lo95, _, hi95 = poi_interval(grid, chi2, CL95, bnd)
+        i = ORDER.index(poi); grid = grid_of[i]; bnd = _bound_of(i)
+        rows = np.where(T["POI"] == i)[0]
+        e = np.array([r[np.argmin(T["F"][r])] for r in (rows[T["J"][rows] == j] for j in range(NPTS))], int)
+        chi2 = T["F"][e]
+        lo1, mid, hi1, reg1 = poi_interval(grid, chi2, CL1, bnd)
+        lo2, _, hi2, reg2 = poi_interval(grid, chi2, CL2, bnd)
+        lo95, _, hi95, reg95 = poi_interval(grid, chi2, CL95, bnd)
         sw, mw, dw = wald_fit(grid, chi2)
+        mmax = max(1, max(len(flags[(i, j)][2]) for j in range(NPTS)))
+        minima_x = np.full((NPTS, mmax, P), np.nan); minima_chi2 = np.full((NPTS, mmax), np.nan)
+        minima_kind = np.full((NPTS, mmax), "", dtype="U12")
+        for j in range(NPTS):
+            for m, rr in enumerate(flags[(i, j)][2]):
+                minima_x[j, m] = T["X"][rr]; minima_chi2[j, m] = T["F"][rr]; minima_kind[j, m] = KINDS[T["KIND"][rr]]
+        flag = np.array([flags[(i, j)][0] for j in range(NPTS)], bool)
+        reason = np.array([flags[(i, j)][1] for j in range(NPTS)], dtype="U96")
         npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
-        np.savez(npz, poi=poi, poi_grid=grid, chi2=chi2, xstar=S["X"][sl], gnorm=S["gnorm"][sl],
-                 converged=conv[sl], stalled=S["stalled"][sl], at_box=at_box[sl], lm_lambda=S["lam"][sl],
-                 gn_eig=ev[sl], hess_pd=ev[sl].min(1) > 0,
+        np.savez(npz, poi=poi, poi_grid=grid, chi2=chi2, xstar=T["X"][e], gnorm=T["gnorm"][e],
+                 converged=conv[e], stalled=T["stalled"][e], at_box=at_box[e],
+                 gn_eig=ev[e], hess_pd=ev[e].min(1) > 0,
                  nuis=np.array([ORDER[k] for k in nuis_idx_of(i)]), done=True,
                  sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
                  cl95=np.array([lo95, hi95]), bound=np.array([np.nan if b is None else b for b in bnd]),
-                 sigma_wald=sw, wald_vertex=mw, wald_misfit=dw, interval_mode=INTERVAL,
+                 regions1=np.array(reg1, float).reshape(-1, 2), regions2=np.array(reg2, float).reshape(-1, 2),
+                 regions95=np.array(reg95, float).reshape(-1, 2),
+                 sigma_wald=sw, wald_vertex=mw, wald_misfit=dw, interval_mode=_interval_mode(grid, chi2),
+                 n_starts=np.array([int((T["J"][rows] == j).sum()) for j in range(NPTS)]),
+                 n_minima=np.array([len(flags[(i, j)][2]) for j in range(NPTS)]), flag=flag, flag_reason=reason,
+                 minima_x=minima_x, minima_chi2=minima_chi2, minima_kind=minima_kind,
+                 rows_j=T["J"][rows], rows_kind=T["KIND"][rows], rows_start=T["START"][rows],
+                 rows_round=T["ROUND"][rows], rows_status=T["status"][rows], rows_x0=T["X0"][rows],
+                 rows_x=T["X"][rows], rows_chi2=T["F"][rows], rows_gnorm=T["gnorm"][rows],
+                 rows_converged=conv[rows], rows_stalled=T["stalled"][rows], rows_at_box=at_box[rows],
+                 rows_barrier=T["barrier"][rows], kinds=np.array(KINDS),
+                 ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2, DF_P, DF_ALPHA]),
                  gtol=GTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
         edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
@@ -834,44 +1216,45 @@ def profile_lockstep(pois, outdir):
                 why.append("upper 68% end beyond the grid")
             warn = "  ** CENTERING: " + "; ".join(why) + " (widen PA_NSIG / the config grid, or PA_MLE_PREPASS=1)"
         kind = "one-sided" if any(v in [b for b in bnd if b is not None] for v in (lo1, hi1)) else "two-sided"
+        multi = f"; 68% UNION of {len(reg1)} regions {[(round(a, 5), round(b, 5)) for a, b in reg1]}" if len(reg1) > 1 else ""
         print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; 68% [{lo1:.5f},{hi1:.5f}] ({kind}, "
               f"best {mid:.5f}); 95% [{lo95:.5f},{hi95:.5f}]; wald sigma {sw:.5f} (misfit {dw:.2f}); "
-              f"converged {int(conv[sl].sum())}/{nval}, stalled {int(S['stalled'][sl].sum())}; "
-              f"max||g||_AD={np.nanmax(S['gnorm'][sl]):.2e} -> {npz}{warn}", flush=True)
-        _plot(poi, grid, chi2, npz)
+              f"converged {int(conv[e].sum())}/{nval}, stalled {int(T['stalled'][e].sum())}; "
+              f"max||g||_AD={np.nanmax(T['gnorm'][e]):.2e}; {len(rows)} rows ("
+              + ", ".join(f"{k} {int((T['KIND'][rows] == ki).sum())}" for ki, k in enumerate(KINDS))
+              + f"); flagged {int(flag.sum())}/{NPTS} points; envelope from "
+              + ", ".join(f"{k} {int((T['KIND'][e] == ki).sum())}" for ki, k in enumerate(KINDS)
+                          if (T["KIND"][e] == ki).any())
+              + f"{multi} -> {npz}{warn}", flush=True)
+        _plot(poi, grid, chi2, npz, rows=(T["PV"][rows], T["F"][rows], T["KIND"][rows]), regions=reg1)
     try:
-        if os.path.exists(ckpt):
-            os.remove(ckpt)                           # run finished cleanly
+        if os.path.exists(tpath):
+            os.remove(tpath)                           # run finished cleanly
     except Exception:
         pass
 
 
-def multistart(poi, outdir, K=MS_K):
-    """global-minimum check: K random starts (+ the centre) at two values of the POI."""
-    i = ORDER.index(poi); c, s = CENTER[i], SIGMA[i]
-    test_vals = np.clip(np.array([c, c + 2 * s]), BLO[i], BHI[i])
-    rng = np.random.default_rng(1234)
-    print(f"[{poi}] MULTISTART K={K} at {poi}={test_vals}", flush=True)
-    saved = {}
-    f = np.array(nuis_idx_of(i)); xlo, xhi = scaled_box(f)
-    for vi, pv in enumerate(test_vals):
-        BASE = np.tile(CENTER, (K, 1)); BASE[:, i] = pv; FREE = np.tile(f, (K, 1))
-        x0 = np.clip(rng.uniform(-2.5, 2.5, (K, P)), xlo, xhi); x0[0] = np.clip(0.0, xlo, xhi)
-        S = lm_rows(BASE, FREE, np.tile(xlo, (K, 1)), np.tile(xhi, (K, 1)), x0, log_prefix=f"[{poi}@{pv:.4f}]")
-        print(f"[{poi}@{pv:.5f}] converged chi2: min={S['F'].min():.3f} max={S['F'].max():.3f} "
-              f"spread={S['F'].max() - S['F'].min():.3f} max||g||_AD={S['gnorm'].max():.1e} "
-              f"(global min if spread<<1)", flush=True)
-        saved[f"chi2_{vi}"] = S["F"]; saved[f"gnorm_{vi}"] = S["gnorm"]; saved[f"xstar_{vi}"] = S["X"]
-    np.savez(os.path.join(outdir, f"multistart_{poi}{TAG}.npz"), poi=poi, test_vals=test_vals, K=K, **saved)
-
-
-def _plot(poi, grid, chi2, npz):
+def _plot(poi, grid, chi2, npz, rows=None, regions=None):
+    """Delta-chi2 of the envelope; with rows = (pv, chi2, kind) every other row's end point too
+    (starts, deflation walks, branches), and the 68% union regions shaded when there are several."""
     try:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
         i = ORDER.index(poi); bnd = _bound_of(i)
-        d = chi2 - np.nanmin(chi2)
+        c0 = np.nanmin(chi2); d = chi2 - c0
         fig, ax = plt.subplots(figsize=(6, 4.3))
-        ax.plot(grid, d, "o-")
+        if rows is not None:
+            pv, f, kind = rows
+            env = np.interp(pv, grid, chi2)
+            for ki, (mk, col, lab) in enumerate((("s", "0.65", "warm start"), ("^", "0.65", "spread start"),
+                                                 ("x", "tab:red", "deflation walk"), ("+", "tab:purple", "branch"))):
+                m = (kind == ki) & (f > env + 1e-9)
+                if m.any():
+                    ax.scatter(pv[m], f[m] - c0, s=16, marker=mk, c=col, label=lab, zorder=2)
+        ax.plot(grid, d, "o-", label="profile (lower envelope)", zorder=3)
+        if regions is not None and len(regions) > 1:
+            for a, b in regions:
+                ax.axvspan(grid[0] if not np.isfinite(a) else a, grid[-1] if not np.isfinite(b) else b,
+                           color="g", alpha=0.08)
         xs = np.linspace(grid.min(), grid.max(), 400)
         sw = wald_fit(grid, chi2)[0]
         for cl, col, lab in ((CL1, "g", "68%"), (CL95, "orange", "95%")):
@@ -915,15 +1298,11 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     print(f"rank {RANK}/{NPROC} devices={jax.devices()} config={CONFIG_ABS} "
           f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} rtol={RTOL} shard={DO_SHARD} "
-          f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} warm={WARM} multistart={MULTISTART} "
-          f"poi_slice={POI_SLICE} nproc={NPROC} bounds="
+          f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} warm={WARM} multistart={MS_K}x{MS_NPTS}pts "
+          f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}; rounds {MS_ROUNDS}; deflation p={DF_P:g} "
+          f"alpha={DF_ALPHA:g}) poi_slice={POI_SLICE} nproc={NPROC} bounds="
           f"{ {k: (BLO[i], BHI[i]) for i, k in enumerate(ORDER) if np.isfinite(BLO[i]) or np.isfinite(BHI[i])} }",
           flush=True)
-    if MULTISTART:
-        for poi in POIS[RANK::NPROC]:
-            multistart(poi, outdir)
-        print(f"rank {RANK}: done", flush=True)
-        return
     if POI_SLICE and NPROC > 1:
         pois = _resume_skip(POIS[RANK::NPROC], outdir)     # each rank: a disjoint POI subset
     else:

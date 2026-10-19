@@ -22,3 +22,6 @@ logs/
 scan/out_profile/
 scan/out/
 scan/*.log
+scan/.mm/
+scan/.jobid_mm
+scan/.mm_salloc.log
