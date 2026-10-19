@@ -1,39 +1,35 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
-**2026-10-19: TODO when development resumes — remove ALL finite differences from profile_prod_ad.py.** User: "FD is
-not acceptable." FD still in the driver:
-1. `_warm_precond_hessian` — the warm Hessian (step metric for every row + the linear-response warm start; also the
-   MLE pre-pass) is central FD of the AD gradient at +-PA_FDH = 0.5 sigma. Replace with an AD Hessian (jacfwd of the
-   staged AD gradient). It is a Hessian of the PROFILED chi2, so it needs the implicit-function term for the 21 plik
-   nuisances, H = H_tt - H_tn H_nn^-1 H_nt (stop_gradient'ing the optimum drops it); plik_full.py records clipy's 2nd
-   derivatives as unreliable (Hessian-Newton SPG variants failed) -- check that first.
-2. `nuisance_hessian` — the per-row PD/condition check after the fit (PA_HESS, off in production): same FD pattern.
-3. `_safe_grad` — central-FD gradient fallback for rows with a non-finite AD gradient (never fired in _v2/_v2fix logs).
-   Replace with fixing the NaN source, or freeze the row; no FD.
-4. `fdbatch` gradient method + `calibrate_fd_step` — unused by every config (all grad_method "ad"); delete.
-Same session, also TODO (bfgs_rows): (5) a row whose 12 step lengths all fail is still moved by alpha = 2^-12 (no
-Armijo) and re-gradiented; with the fixed Hessian it repeats the same failed search, and it keeps its whole rank in
-3 line-search rounds -> leave it in place and flag it stalled. (6) converged rows (gnorm < GTOL) are re-gradiented
-every iteration at an unchanged point (a third to half of each rank's rows late in _v2fix) -> skip them.
-(7) Curvature: replace the fixed centre Hessian with a per-row Gauss-Newton / Levenberg-Marquardt matrix, AD only:
-J^T C^-1 J from the Cl tangents the gradient pass already computes and plik's own data covariance (read it out of
-clipy; don't AD twice through clipy, plik_full.py notes its 2nd derivatives were unreliable), + the nuisance
-correction (first derivatives only); exact AD curvature for the non-Gaussian low-ell likelihoods (few dozen Cls). No
-prior best fit or parameter covmat needed. Also covers item 1.
-**Next model: EM-coupled WIMP, expected ONE-SIDED interval.** The driver assumes two-sided, near-Gaussian profiles:
-(8) intervals (`_crossings`/`interval_fit`) need a one-sided mode (single crossing at a chosen threshold; today one
-side comes back NaN + a centering warning); (9) the sigma1-stability stop needs both crossings, so it would never fire
-(-> stop on the one-sided limit); (10) grids are cen +- NSIG*grid_sig -> grid from the boundary outward, in a
-well-behaved variable (1/m or log m); (11) the outer optimizer only clips at +-XBOX, no physical bounds -> projected
-steps (as the nuisance SPG does) so the WIMP parameter cannot step past its boundary while profiling other POIs;
-(12) the warm-LR start and fixed Hessian assume a quadratic chi2 around one centre (item 7 fixes the Hessian side);
-(13) threshold: use the asymptotic one-sided formulae of Cowan, Cranmer, Gross & Vitells, arXiv:1007.1727 (q_mu /
-q~_mu with the mu >= 0 boundary; half-chi2 law, 95% upper limit at dchi2 = 2.71; sigma and the median expected limit
-from one extra profile on the Asimov (noise-free) dataset). They rest on the Wald approximation (mu-hat Gaussian, sigma
-independent of mu): pick a WIMP parametrization whose effect on the Cls is near-linear, check the profile is a
-half-parabola; wilks.py mocks only as a cross-check if it is not.
-Before the rerun, regardless: delete scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz (built
-2026-10-12 on pre-fix code; its cache key does not include species, so it would also survive turning the massive nu on).
+**2026-10-19 (branch upstream-sync, not yet on main): profile-driver rework.** Upstream #34-#50 merged + PR #53
+(a5c9a2f, da9ad1b; vs CLASS dlmax 1250: TT/EE at l 2000-2500 1.3e-2/6.6e-3 -> 7.6e-4/1.0e-3; value +9%, gradient +8%;
+AD drift unchanged). Driver a21df86: Levenberg-Marquardt on per-row Gauss-Newton curvature, AD only; config `bounds`
+and `grid`; boundary-aware intervals (Cowan, Cranmer, Gross & Vitells, arXiv:1007.1727); configs evolve the massive nu
+(the driver refuses N_nu_massive > 0 without species.MassiveNeutrino). Harness: scan/.sync/.
+DONE in a21df86 (old TODO items, user 2026-10-19): (1-4) all finite differences removed (FD warm Hessian, FD nuisance
+Hessian, FD gradient fallback, fdbatch + calibration); (5) a row whose damping candidates all fail keeps its point and
+gradient, raises lambda, and is flagged stalled after PA_STALL_MAX; (6) converged/stalled rows leave the value and
+gradient batches (bucketed batch sizes NDEV*4^k); (7) curvature = J^T W J from the C_ell tangents + plik residual/siginv
+(PlikFull.residual) + nuisance Schur complement + exact low-ell curvature; (8-11) one-/two-sided intervals by
+themselves next to a config bound, stop rule on interval ends, grids clipped to bounds or a config range, projected
+steps; (12) warm-LR uses the warm point's GN matrix; (13) t~ thresholds (MC coverage nominal at 68/95%, with/without a
+bound). Rows on the +-XBOX box are flagged and not counted converged.
+VALIDATION OPEN: (a) .sync/gn_check.py parts 3-4 (gradient == old jvp contraction; GN predicts chi2 along test
+directions); (b) A/B old vs new optimizer, 5 h rows, AD gradients both (.sync/ab.sh; new: 2 iterations, all converged);
+(c) pytests + regenerate snapshots; (d) debug shakeout of the launcher on the real config (massive nu: measure cost);
+then merge to main, CHANGELOG, ask before the _v3 production run.
+**TODO (user 2026-10-19): multimodality.** (14) default: multistart with ~4 starts per row, spread deliberately (e.g.
++-2-3 sigma along the softest GN eigen-directions, not uniform random), at ~5-7 grid points per POI, all rows if
+flagged; extra starts drop out of the batch once converged. (15) flags: converged starts disagreeing by > ~0.1 in chi2;
+converged starts at clearly different nuisance points with similar chi2; stalled rows. (16) on a flag: deflation
+(Farrell, Birkisson & Funke 2015) from the flagged rows, all known minima deflated at once: M(x) = prod_i
+(||x - x_i||^-p + alpha); the deflated Newton/LM step is the ordinary step d rescaled, d / (1 - grad(M).d / M), so it
+reuses g and the GN matrix. Check each new stationary point's chi2/curvature (saddles show the barrier). (17) then
+multistart from each minimum found; the profile is the lower envelope over branches; branches can end (a minimum
+merging with a saddle), so a branch's runs may jump to another one. (18) poi_interval takes the connected region around
+the global minimum: make it return the UNION of all regions below threshold. (19) asymptotic thresholds assume one
+quadratic minimum; mock calibration (wilks.py) only if a second mode sits within a few dchi2 -- deferred (user: "cross
+the Wilks bridge when we come to it"). REJECTED by the user: neighbour cross-seeding (no known minimum to seed from),
+SMC seeding (SMC has a systematic; being abandoned), NeuTra (sampling-only, mode-seeking, ~25-250 node-h).
 
 **2026-10-16 (evening): grid AD task DONE (scan/HANDOFF_fork_grid_ad.md STATUS; CHANGELOG 2026-10-16 x2).**
 main = grid-ad: the save/LoS grid is frozen at the config centre in profile_prod_ad.py (PA_LNA_GRID=fixed,
