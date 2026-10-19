@@ -15,6 +15,20 @@ Same session, also TODO (bfgs_rows): (5) a row whose 12 step lengths all fail is
 Armijo) and re-gradiented; with the fixed Hessian it repeats the same failed search, and it keeps its whole rank in
 3 line-search rounds -> leave it in place and flag it stalled. (6) converged rows (gnorm < GTOL) are re-gradiented
 every iteration at an unchanged point (a third to half of each rank's rows late in _v2fix) -> skip them.
+(7) Curvature: replace the fixed centre Hessian with a per-row Gauss-Newton / Levenberg-Marquardt matrix, AD only:
+J^T C^-1 J from the Cl tangents the gradient pass already computes and plik's own data covariance (read it out of
+clipy; don't AD twice through clipy, plik_full.py notes its 2nd derivatives were unreliable), + the nuisance
+correction (first derivatives only); exact AD curvature for the non-Gaussian low-ell likelihoods (few dozen Cls). No
+prior best fit or parameter covmat needed. Also covers item 1.
+**Next model: EM-coupled WIMP, expected ONE-SIDED interval.** The driver assumes two-sided, near-Gaussian profiles:
+(8) intervals (`_crossings`/`interval_fit`) need a one-sided mode (single crossing at a chosen threshold; today one
+side comes back NaN + a centering warning); (9) the sigma1-stability stop needs both crossings, so it would never fire
+(-> stop on the one-sided limit); (10) grids are cen +- NSIG*grid_sig -> grid from the boundary outward, in a
+well-behaved variable (1/m or log m); (11) the outer optimizer only clips at +-XBOX, no physical bounds -> projected
+steps (as the nuisance SPG does) so the WIMP parameter cannot step past its boundary while profiling other POIs;
+(12) the warm-LR start and fixed Hessian assume a quadratic chi2 around one centre (item 7 fixes the Hessian side);
+(13) at a boundary Wilks fails (Chernoff 50/50 mixture of 0 and chi2_1) -> calibrate the threshold with wilks.py
+(plik-lite mocks + GN refits) using a truth at/near the boundary.
 Before the rerun, regardless: delete scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz (built
 2026-10-12 on pre-fix code; its cache key does not include species, so it would also survive turning the massive nu on).
 
