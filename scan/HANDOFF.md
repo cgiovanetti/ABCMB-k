@@ -1,5 +1,19 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-19: TODO when development resumes — remove ALL finite differences from profile_prod_ad.py.** User: "FD is
+not acceptable." FD still in the driver:
+1. `_warm_precond_hessian` — the warm Hessian (step metric for every row + the linear-response warm start; also the
+   MLE pre-pass) is central FD of the AD gradient at +-PA_FDH = 0.5 sigma. Replace with an AD Hessian (jacfwd of the
+   staged AD gradient). It is a Hessian of the PROFILED chi2, so it needs the implicit-function term for the 21 plik
+   nuisances, H = H_tt - H_tn H_nn^-1 H_nt (stop_gradient'ing the optimum drops it); plik_full.py records clipy's 2nd
+   derivatives as unreliable (Hessian-Newton SPG variants failed) -- check that first.
+2. `nuisance_hessian` — the per-row PD/condition check after the fit (PA_HESS, off in production): same FD pattern.
+3. `_safe_grad` — central-FD gradient fallback for rows with a non-finite AD gradient (never fired in _v2/_v2fix logs).
+   Replace with fixing the NaN source, or freeze the row; no FD.
+4. `fdbatch` gradient method + `calibrate_fd_step` — unused by every config (all grad_method "ad"); delete.
+Before the rerun, regardless: delete scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz (built
+2026-10-12 on pre-fix code; its cache key does not include species, so it would also survive turning the massive nu on).
+
 **2026-10-16 (evening): grid AD task DONE (scan/HANDOFF_fork_grid_ad.md STATUS; CHANGELOG 2026-10-16 x2).**
 main = grid-ad: the save/LoS grid is frozen at the config centre in profile_prod_ad.py (PA_LNA_GRID=fixed,
 Model.freeze_lna_grid) and the large-x Bessel functions are Debye through u_3. NEXT: the _v2fix profile
