@@ -30,6 +30,10 @@ the global minimum: make it return the UNION of all regions below threshold. (19
 quadratic minimum; mock calibration (wilks.py) only if a second mode sits within a few dchi2 -- deferred (user: "cross
 the Wilks bridge when we come to it"). REJECTED by the user: neighbour cross-seeding (no known minimum to seed from),
 SMC seeding (SMC has a systematic; being abandoned), NeuTra (sampling-only, mode-seeking, ~25-250 node-h).
+(20) LAST, once everything above works without it: run with bbn_type="linx" (needed for the EM-coupled WIMP). Known
+issues to plan for: LINX runs inside add_derived_parameters, so _gn_block's per-row x per-direction eager jvp of
+_phys_to_derived would push every tangent through LINX on CPU (batch/vmap it); the vendored abcmb/linx is behind LINX
+main (unsent upstream sync); LINX's Delta_Neff_init is Delta Neff at the start of BBN, not the cosmology's Neff.
 
 **2026-10-16 (evening): grid AD task DONE (scan/HANDOFF_fork_grid_ad.md STATUS; CHANGELOG 2026-10-16 x2).**
 main = grid-ad: the save/LoS grid is frozen at the config centre in profile_prod_ad.py (PA_LNA_GRID=fixed,
