@@ -1,6 +1,6 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
-**2026-10-19 (branch upstream-sync, not yet on main): profile-driver rework.** Upstream #34-#50 merged + PR #53
+**2026-10-19 (branch development, not yet on main): profile-driver rework.** Upstream #34-#50 merged + PR #53
 (a5c9a2f, da9ad1b; vs CLASS dlmax 1250: TT/EE at l 2000-2500 1.3e-2/6.6e-3 -> 7.6e-4/1.0e-3; value +9%, gradient +8%;
 AD drift unchanged). Driver a21df86: Levenberg-Marquardt on per-row Gauss-Newton curvature, AD only; config `bounds`
 and `grid`; boundary-aware intervals (Cowan, Cranmer, Gross & Vitells, arXiv:1007.1727); configs evolve the massive nu
