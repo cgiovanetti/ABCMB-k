@@ -18,17 +18,18 @@ poi = ppa.ORDER.index("h")
 rng = np.random.default_rng(0)
 PV = ppa.CENTER[poi] + ppa.SIGMA[poi] * np.linspace(-3, 3, B)
 X = rng.uniform(-1, 1, (B, ppa.P))
-POI_IDX = np.full(B, poi)
-fn = {"value": ppa.fast_values_rows, "adgrad": ppa.ad_grad_rows}[mode]
+FREE = np.tile(ppa.nuis_idx_of(poi), (B, 1))
+BASE = np.tile(ppa.CENTER, (B, 1)); BASE[:, poi] = PV
+fn = {"value": ppa.values_rows, "adgrad": ppa.grad_gn_rows}[mode]
 
 def peak_gb():
     return max(d.memory_stats().get("peak_bytes_in_use", 0) for d in jax.devices()) / 1e9
 
-tag = f"mode={mode} B={B} plf_maxit={os.environ.get('PLF_MAXIT', '800')} chunk(value)={ppa.FD_CHUNK} bchunk(ad)={ppa.AD_BCHUNK}"
-t = time.perf_counter(); out = fn(POI_IDX, X, PV); cold = time.perf_counter() - t
+tag = f"mode={mode} B={B} plf_maxit={os.environ.get('PLF_MAXIT', '3000')} chunk(value)={ppa.VAL_CHUNK} bchunk(ad)={ppa.AD_BCHUNK}"
+t = time.perf_counter(); out = fn(BASE, FREE, X); cold = time.perf_counter() - t
 chi2 = np.asarray(out if mode == "value" else out[0])
 print(f"RESULT {tag} cold={cold:.1f}s peakGB={peak_gb():.2f} nonfinite={int((~np.isfinite(chi2)).sum())}", flush=True)
 for r in range(reps):
-    t = time.perf_counter(); fn(POI_IDX, X, PV); w = time.perf_counter() - t
+    t = time.perf_counter(); fn(BASE, FREE, X); w = time.perf_counter() - t
     print(f"RESULT {tag} warm{r}={w:.1f}s per_row={w / B:.2f}s peakGB={peak_gb():.2f}", flush=True)
 print("DONE", flush=True)

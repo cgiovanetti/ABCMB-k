@@ -5,6 +5,8 @@ plik via clipy; 47 nuisances profiled inside the likelihood at fixed theory) ins
 of plik-lite. Use to cross-check the full-plik intervals against the prior plik-lite
 6-POI headline (scan/results/profiles_summary_mn6.npz) before the LCDM+Neff run.
 """
+from abcmb import species
+
 
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion"],
@@ -23,11 +25,10 @@ CONFIG = {
         "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5,
         "exp_reion": 1.5,
     },
-    "user_species": None,
+    "user_species": (species.MassiveNeutrino,),   # the massive nu in `fixed` is evolved only with this
     "high_ell": "plik_full",    # <-- FULL plik (clipy) instead of plik-lite
     "use_lowtt": True,
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    "grad_method": "ad",
 }

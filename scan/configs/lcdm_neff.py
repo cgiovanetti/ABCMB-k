@@ -8,6 +8,8 @@ the Neff / N_nu_massless / YHe triangle from Neff, so no code change is needed.
 Workstream B only SHIPS this config; Workstream C runs the headline LCDM+Neff
 benchmark with it.
 """
+from abcmb import species
+
 
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
@@ -27,14 +29,9 @@ CONFIG = {
         "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5,
         "exp_reion": 1.5,
     },
-    "user_species": None,
+    "user_species": (species.MassiveNeutrino,),   # the massive nu in `fixed` is evolved only with this
     "use_lowtt": True,
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    # Neff can be a non-Gaussian / non-convex direction -> exact AD iteration
-    # gradients (no FD truncation risk), per the user direction. Still ~9.6-14.3 h
-    # on 4 nodes for the headline run = under the 22 h CLASS+MH bar. See TOOL_PLAN
-    # section 1 cost model + the 2026-06-12 (b) USER DIRECTION block.
-    "grad_method": "ad",
 }

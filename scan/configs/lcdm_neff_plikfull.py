@@ -8,9 +8,11 @@ The headline extension run (the two user asks together):
      every other POI's profile. add_derived_parameters resolves the
      Neff / N_nu_massless / YHe triangle, so no theory-code change.
 
-Otherwise identical to configs/lcdm_neff.py (same params/priors/grad_method). Low-ell
+Otherwise identical to configs/lcdm_neff.py (same params/priors). Low-ell
 TT (Commander) + EE (SRoll2) unchanged. Run via PA_CONFIG=scan/configs/lcdm_neff_plikfull.py.
 """
+from abcmb import species
+
 
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
@@ -30,13 +32,10 @@ CONFIG = {
         "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5,
         "exp_reion": 1.5,
     },
-    "user_species": None,
+    "user_species": (species.MassiveNeutrino,),   # the massive nu in `fixed` is evolved only with this
     "high_ell": "plik_full",    # <-- FULL plik (clipy) instead of plik-lite
     "use_lowtt": True,
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    # exact AD iteration gradients for the possibly non-convex Neff direction (no FD
-    # truncation risk); the envelope theorem handles the inner-profiled plik nuisances.
-    "grad_method": "ad",
 }

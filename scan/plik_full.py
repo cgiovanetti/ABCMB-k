@@ -190,6 +190,32 @@ class PlikFull:
         return self.data_chi2(cls2d, nu_phys) + self.prior_penalty(nu_phys)
 
     # ------------------------------------------------------------------
+    # Gaussian-criterion pieces for Gauss-Newton curvature (first derivatives only)
+    # ------------------------------------------------------------------
+    def residual(self, cls2d, nu_phys):
+        """Binned data-minus-model vector r of clipy's Gaussian criterion at one cosmology,
+        with data_chi2 = r^T siginv r. Mirrors clik.__call__ -> smica_lkl.__call__; affine in cls2d."""
+        lk = self.lkl
+        cls, nd = lk.normalize(cls2d, self._full_dict(nu_phys))
+        tot = nd | lk._default
+        for old, new in lk.rename_dict.items():
+            tot[old] = tot[new]
+            del tot[new]
+        sm = lk._internal
+        rq = sm.get_model_rq(sm._calib(cls, tot), tot, sm.bins is not None)
+        return sm.rqh_f - rq.flatten()[sm.oo]
+
+    @property
+    def siginv(self):
+        """Inverse covariance of the binned criterion (data_chi2 = r^T siginv r)."""
+        return self.lkl._internal.siginv
+
+    def prior_hessian(self):
+        """d^2 prior_penalty / d nu^2 (constant): the Gaussian priors + the joint SZ prior."""
+        s = jnp.zeros(len(FLOAT_NAMES)).at[self.i_ksz].set(1.0).at[self.i_asz].set(1.6)
+        return 2.0 * jnp.diag(self.prior_invvar) + 2.0 * jnp.outer(s, s) / self.sz_sig ** 2
+
+    # ------------------------------------------------------------------
     # inner nuisance profile (scaled coords): gradient-only nonmonotone Spectral
     # Projected Gradient (SPG). See profile() for the full rationale. Short version:
     # clipy's 2nd derivative is unreliable (1st-order AD is exact, verified) so every

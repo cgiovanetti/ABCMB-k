@@ -19,6 +19,8 @@ sigma's are UNCHANGED (they set the +/-3sigma grid span and the sigma1-stop unit
 Run with PA_WARM_FROM_CEN=1 so the warm start (and warm-Hessian preconditioner) use
 this center (= the joint MLE) rather than the stale LCDM-only profile npz.
 """
+from abcmb import species
+
 
 # varies each parameter within 5 sigma of its Planck mean, one sigma at a time --> 10 pts each.
 
@@ -47,11 +49,10 @@ CONFIG = {
         "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5,
         "exp_reion": 1.5,
     },
-    "user_species": None,
+    "user_species": (species.MassiveNeutrino,),   # the massive nu in `fixed` is evolved only with this
     "high_ell": "plik_full",
     "use_lowtt": True,
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    "grad_method": "ad",
 }

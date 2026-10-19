@@ -18,20 +18,23 @@ loads it via PA_CONFIG=<path-to-this-file>. Declared fields:
                              (overridable by PA_POIS).
   fixed        : dict        ABCMB params held fixed (passed straight through;
                              add_derived_parameters forwards unknown keys).
-  user_species : tuple|None  extra Fluid species for new physics (None = LCDM).
+  user_species : tuple|None  extra Fluid species (None = the LCDM defaults). A massive
+                             neutrino (fixed N_nu_massive > 0) needs species.MassiveNeutrino
+                             here; the driver refuses the config otherwise.
   use_lowtt    : bool        include the low-ell TT (Commander) likelihood.
   use_lowee    : bool        include the low-ell EE (SRoll2) likelihood.
   npts         : int         POI grid points (PA_NPTS overrides).
   nsig         : float       POI grid half-extent in sigma (PA_NSIG overrides).
-  grad_method  : str         BFGS iteration-gradient method, a PER-PHYSICS-MODEL
-                             analysis choice (NOT an env var): "fdbatch" (central
-                             FD on the batch axis -- ~2.4-6x cheaper/dir, fine for
-                             LCDM) or "ad" (exact batched-AD iterations -- use for
-                             non-convex new-physics params where FD truncation is
-                             risky). The final stationarity certificate is ALWAYS
-                             exact AD regardless. PA_GRADMETHOD is a DEBUG-ONLY
-                             override and warns when set.
+  grid_sig     : dict        (optional) grid half-span unit per POI (default: sig).
+  grid         : dict        (optional) {poi: (lo, hi)} explicit grid range, overriding
+                             cen +- nsig*grid_sig.
+  bounds       : dict        (optional) {name: (lo, hi)} physical limits, None = open. The
+                             optimizer never steps past them, grids are clipped to them, and a
+                             POI's intervals use boundary-aware thresholds, so they come out
+                             two-sided or as a one-sided limit depending on the data.
 """
+from abcmb import species
+
 
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion"],
@@ -50,16 +53,9 @@ CONFIG = {
         "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5,
         "exp_reion": 1.5,
     },
-    "user_species": None,
+    "user_species": (species.MassiveNeutrino,),   # the massive nu in `fixed` is evolved only with this
     "use_lowtt": True,
     "use_lowee": True,
     "npts": 25,
     "nsig": 3.0,
-    "grad_method": "ad",        # was "fdbatch"; the full-l (l=2508) + low-ell 6-POI gate
-                                # STALLED on FD: it0 calibration hit the FD noise floor
-                                # (best max-rel 1.20e-2 > 1e-2 target) and BFGS plateaued
-                                # at ||g||~20 >> GTOL=0.03 with chi2 dead-flat (job
-                                # 54600444). Exact batched-AD has no truncation floor and
-                                # is actually CHEAPER here (3 staged jvp blocks vs FD's
-                                # 12 chunks of 2*P*N evals). See CHANGELOG 2026-06-19.
 }
