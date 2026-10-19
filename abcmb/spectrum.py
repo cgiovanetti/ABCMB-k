@@ -11,6 +11,7 @@ from scipy.special import spherical_jn
 
 from . import ABCMBTools as tools
 from . import constants as cnst
+from . import halofit
 
 import os
 file_dir = os.path.dirname(__file__)
@@ -45,10 +46,12 @@ try:
 except: 
     pass
 
-# large-x asymptotic expansion of spherical bessel functions: Debye's form of J_{l+1/2}(x) (DLMF 10.19.6)
-# through u_3. The leading term alone is off by up to 1.4e-3 of max|j_l| beyond the tables, and by 3.75e-5
-# at the switch from the table (a maximum), so every (k, lna) point crossing it as parameters move steps
-# the Cls, a staircase AD does not see (CHANGELOG 2026-10-16). Through u_3: <= 7e-8 at every tabulated l.
+# # large-x asymptotic expansion of spherical bessel functions
+# Q = lambda l, x : jnp.sqrt(x**2-l**2) - l*jnp.pi/2 + l * jnp.arcsin(l/x)
+# J = lambda l, x : jnp.sqrt(2/jnp.pi/jnp.sqrt(x**2-l**2)) * jnp.cos(Q(l, x) - jnp.pi/4)
+# j = lambda l, x : jnp.sqrt(jnp.pi/2/x) * J(l+1/2, x)
+# More accurate large-x asymptotic expansion of spherical Bessel functions.  Debye's expansion of
+# J_{l+1/2}(x), DLMF 10.19.6 https://dlmf.nist.gov/10.19.  
 def j(l, x):
     nu = l + 0.5
     s = jnp.sqrt(x**2 - nu**2)                      # nu tan(beta), x = nu sec(beta)
@@ -59,12 +62,25 @@ def j(l, x):
     sin_t = c*(3. + 5.*c2)/24./nu - c**3*(30375. + c2*(369603. + c2*(765765. + 425425.*c2)))/414720./nu**3
     return jnp.sqrt(1./(x*s)) * (jnp.cos(xi)*cos_t + jnp.sin(xi)*sin_t)
 
+def _j1(x):
+    """
+    Spherical bessel j_1(x) = (sin(x) - x cos(x))/x^2. 
+
+    Notes:
+    ------
+    Uses small x series for x^2 < 1e-2.
+    """
+    # for small x
+    series = x/3. * (1 - x**2/10. + x**4/280. - x**6/15120. + x**8/1330560.)
+    return jnp.where(x**2 < 1.e-2, series, (jnp.sin(x) - x * jnp.cos(x))/x**2)
+
 def phi0(i, x):
     """
     New method for computing phi0 (or just jl)
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_cubic. Otherwise we use the large x 
+    expansion above. 
     """
     l = bessel_l_tab[i]
     # use x_safe to avoid double-where gotcha in reverse AD
@@ -75,7 +91,7 @@ def phi0(i, x):
         jnp.where(
             x >= xphi0_tab[-1, i],
             j(l, x_safe),
-            tools.fast_interp_c1(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
+            tools.fast_interp_cubic(x, xphi0_tab[:, i].min(), xphi0_tab[:, i].max(), phi0_tab[:, i])
         )
     )
 
@@ -84,7 +100,8 @@ def phi1(i, x):
     New method for computing phi1, or jl'.
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_cubic. Otherwise we use the large x 
+    expansion above. 
     """
     l = bessel_l_tab[i]
     x_safe = jnp.where(x >= xphi1_tab[-1, i], x, xphi1_tab[-1, i])
@@ -94,7 +111,7 @@ def phi1(i, x):
         jnp.where(
             x >= xphi1_tab[-1, i],
             l/x_safe*j(l, x_safe) - j(l+1, x_safe),
-            tools.fast_interp_c1(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
+            tools.fast_interp_cubic(x, xphi1_tab[:, i].min(), xphi1_tab[:, i].max(), phi1_tab[:, i])
         )
     )
 
@@ -103,7 +120,8 @@ def phi2(i, x):
     New method for computing phi2 = (3 jl'' + jl)/2
     We tabulated the bessel function between its smallest value (~1.e-10) out to the fifth local maximum.
     This is a different interval for each l, but we kept identical shape so it can be a large 2D array.
-    If the incoming argument is within this interval, we use fast_interp. Otherwise we use the large x expansion above. 
+    If the incoming argument is within this interval, we use fast_interp_cubic. Otherwise we use the large x 
+    expansion above. 
     """
     l = bessel_l_tab[i]
     x_safe = jnp.where(x >= xphi2_tab[-1, i], x, xphi2_tab[-1, i])
@@ -113,7 +131,7 @@ def phi2(i, x):
         jnp.where(
             x >= xphi2_tab[-1, i],
             ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
-            tools.fast_interp_c1(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
+            tools.fast_interp_cubic(x, xphi2_tab[:, i].min(), xphi2_tab[:, i].max(), phi2_tab[:, i])
         )
     )
 
@@ -140,6 +158,13 @@ class SpectrumSolver(eqx.Module):
         Used for lensing, the Gauss-Legendre quadrature weights for the correlation function -> Cl integral.
     lensing : bool
         Whether to include gravitational lensing effects
+    use_bessel_tables : bool
+        Switch for using tabulated Bessel functions for lensing or compute as part 
+        of the lensing calculation.  Tabulated results save ~5% runtime but are 
+        only available up to ell_max = 5000.  Defaults to True.
+    l_top : int
+        Highest multipole of lensing ells (concretized), required for Bessel functions
+        computed via recurrence.
     k_axis_transfer : jnp.array
         Wavenumber grid for transfer function integration (units: Mpc^{-1})
     k_axis_Pk_output : jnp.array
@@ -154,11 +179,30 @@ class SpectrumSolver(eqx.Module):
         Multiplicative factor for Doppler term (default: 1.0)
     scale_pol : float
         Multiplicative factor for polarization term (default: 1.0)
+    use_bessel_tables : bool
+        If true, uses tabulated bessel function tables, valid up to l=5000. Else bessel functions
+        are computed analytically through recurrence relations. 
+    delta_l_max : int
+        How much to extend the theory Cl l_max if lensing is on, needed for end point convergence in 
+        unlensed -> lensed transformation. 
+    n_k_cmb : int
+        Number of k points over which the CMB source functions should be interpolated over. If lensing
+        is on, n_k will be greater than this for accurate lensing potential, but the extra portion is
+        irrelevant for just the CMB source part. 
+    nonlinear : str
+        Non-linear correction applied to the matter power spectrum and to the
+        lensing potential: "" (none, default) or "halofit".
+    halofit_prescription : str
+        HALOFIT coefficients, "takahashi2012" (default) or "smith2003".
+    halofit_lnk : jnp.array
+        Uniform ln k grid (k in Mpc^{-1}) on which the sigma(R) integrals of HALOFIT
+        are evaluated.
 
     Methods:
     --------
     primordial_spectrum : Compute primordial power spectrum
     Pk_lin : Compute linear matter power spectrum
+    Pk_nonlinear : Compute HALOFIT non-linear matter power spectrum
     get_Cl : Compute angular power spectra for multiple ℓ
     Cl_one_ell : Compute angular power spectrum for single ℓ
     integrand_T0 : Compute SW+ISW temperature source integrand
@@ -176,6 +220,13 @@ class SpectrumSolver(eqx.Module):
     lensing_ws   : jnp.array
 
     lensing : bool
+    use_bessel_tables : bool = eqx.field(static=True)
+    l_top : int = eqx.field(static=True)
+    n_k_cmb : int = eqx.field(static=True)
+
+    nonlinear : str = eqx.field(static=True)
+    halofit_prescription : str = eqx.field(static=True)
+    halofit_lnk : jnp.array
 
     k_axis_transfer  : jnp.array
     k_axis_Pk_output : jnp.array
@@ -196,7 +247,15 @@ class SpectrumSolver(eqx.Module):
                  scale_sw=1,
                  scale_isw=1,
                  scale_dop=1,
-                 scale_pol=1):
+                 scale_pol=1,
+                 use_bessel_tables=True,
+                 delta_l_max=500,
+                 n_k_cmb=-1,
+                 nonlinear="",
+                 halofit_prescription="takahashi2012",
+                 halofit_k_min=1.e-4,
+                 halofit_k_max=1.e3,
+                 halofit_k_per_decade=80):
         """
         Initialize CMB spectrum solver.
 
@@ -221,20 +280,65 @@ class SpectrumSolver(eqx.Module):
             Switch for Doppler term (default: 1)
         scale_pol : float, optional
             Switch for polarization term (default: 1)
+        use_bessel_tables : bool, optional
+            Switch for using tabulated Bessel functions for lensing or compute as part 
+            of the lensing calculation.  Tabulated results save ~5% runtime but are 
+            only available up to ell_max = 5000.  Defaults to True.
+        delta_l_max : int, optional
+            Extra multipoles computed above ellmax so the lensed spectra are accurate
+            up to ellmax. Same role as CLASS's delta_l_max precision parameter.
+            Defaults to 500.
+        n_k_cmb : int, optional
+            Number of leading nodes of the perturbation k-grid that cover the CMB
+            (transfer) range.
+        nonlinear : str, optional
+            Non-linear correction to the matter power spectrum: "" or None for
+            none (default), "halofit" for HALOFIT.
+        halofit_prescription : str, optional
+            "takahashi2012" (default) or "smith2003" HALOFIT coefficients.
+        halofit_k_min, halofit_k_max : float, optional
+            Range in k (Mpc^{-1}) over which the HALOFIT sigma(R) integrals are
+            evaluated.
+        halofit_k_per_decade : int, optional
+            Sampling of the sigma(R) integrands (default: 80).
         """
 
         self.lensing = lensing
+        self.use_bessel_tables = bool(use_bessel_tables)
+        self.n_k_cmb = int(n_k_cmb)
+
+        if nonlinear in (None, False, ""):
+            self.nonlinear = ""
+        elif nonlinear is True or str(nonlinear).lower() == "halofit":
+            self.nonlinear = "halofit"
+        else:
+            raise ValueError(f"nonlinear must be '' or 'halofit', got {nonlinear!r}")
+        if halofit_prescription not in halofit.PRESCRIPTIONS:
+            raise ValueError(
+                f"halofit_prescription must be one of {halofit.PRESCRIPTIONS}, got {halofit_prescription!r}"
+            )
+        self.halofit_prescription = halofit_prescription
+        # Odd number of points so that Simpson's rule applies.
+        n_dec = np.log10(halofit_k_max / halofit_k_min)
+        n_hf = 2 * int(np.ceil(n_dec * halofit_k_per_decade / 2.)) + 1
+        self.halofit_lnk = jnp.linspace(np.log(halofit_k_min), np.log(halofit_k_max), n_hf)
 
         self.ells = jnp.arange(ellmin, ellmax+1)
-        ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
-        ell_idx_max = jnp.where(bessel_l_tab>=ellmax)[0][0]
-        self.ells_indices = jnp.arange(ell_idx_min, ell_idx_max+1)
+        if self.use_bessel_tables:
+            ell_idx_min = jnp.where(bessel_l_tab<=ellmin)[0][-1]
+            ell_idx_max = jnp.where(bessel_l_tab>=ellmax)[0][0]
+            self.ells_indices = jnp.arange(ell_idx_min, ell_idx_max+1)
+        else:
+            self.ells_indices = jnp.array([0])
         
         if self.lensing:
-            lensing_ellmax = ellmax+500
-            lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
+            lensing_ellmax = ellmax + delta_l_max
             self.lensing_ells = jnp.arange(ellmin, lensing_ellmax+1)
-            self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
+            if self.use_bessel_tables:
+                lensing_ell_idx_max = jnp.where(bessel_l_tab>=lensing_ellmax)[0][0]
+                self.lensing_ells_indices = jnp.arange(ell_idx_min, lensing_ell_idx_max+1)
+            else:
+                self.lensing_ells_indices = self.ells_indices # not read if not using bessel tables
             #self.lensing_theta = jnp.linspace(0., jnp.pi/16., lensing_ellmax // 8) # Size recommended by CLASS
             num_mu = lensing_ellmax + 70
             mu, w = tools.gauss_legendre_weights(num_mu)
@@ -255,6 +359,9 @@ class SpectrumSolver(eqx.Module):
         self.scale_isw = scale_isw
         self.scale_dop = scale_dop
         self.scale_pol = scale_pol
+
+        # need to have this static int stored for Bessel recursion
+        self.l_top = int(self.lensing_ells[-1])
 
     def primordial_spectrum(self, k, params):
         """
@@ -305,8 +412,9 @@ class SpectrumSolver(eqx.Module):
 
         delta_m_lna = interp_over_lna(PT.delta_m)  # shape (Nk,)
 
-        # now interpolate over k
-        delta_m = jnp.interp(k, PT.k, delta_m_lna)
+        # Now interpolate over k, in log-log. Log-log matters
+        # above the CMB ceiling, where the grid is coarse (~10 nodes/decade).
+        delta_m = tools.loglog_interp(k, PT.k, jnp.abs(delta_m_lna))
 
         return delta_m**2 * self.primordial_spectrum(k, params)
 
@@ -340,20 +448,88 @@ class SpectrumSolver(eqx.Module):
             in_axes=1  # loop over columns
         )
 
-        delta_dm_lna = interp_over_lna(PT.species_perturbations["ColdDarkMatter"]["delta"])
-        delta_b_lna  = interp_over_lna(PT.species_perturbations["Baryon"]["delta"])
+        delta_cb_lna = interp_over_lna(PT.delta_cb)
 
-        # now interpolate over k
-        delta_dm = jnp.interp(k, PT.k, delta_dm_lna)
-        delta_b  = jnp.interp(k, PT.k, delta_b_lna)
+        # Now interpolate over k, in log-log, as in Pk_lin.
+        delta_cb = tools.loglog_interp(k, PT.k, jnp.abs(delta_cb_lna))
 
-        # total matter overdensity
-        delta_m = (
-            params['omega_b']   * delta_b +
-            params['omega_cdm'] * delta_dm
-        ) / params['omega_m']
+        return delta_cb**2 * self.primordial_spectrum(k, params)
 
-        return delta_m**2 * self.primordial_spectrum(k, params)
+    def _Pk_lin_table(self, lna, PT, params):
+        """
+        Linear matter power spectrum on the perturbation k-grid PT.k at one time.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns:
+        --------
+        array
+            P_lin(PT.k, lna), units Mpc^3
+        """
+        interp_over_lna = jax.vmap(
+            lambda y: jnp.interp(lna, PT.lna, y),
+            in_axes=1
+        )
+        delta_m_lna = interp_over_lna(PT.delta_m)  # shape (Nk,)
+        return delta_m_lna**2 * self.primordial_spectrum(PT.k, params)
+
+    def Pk_nonlinear(self, k, z, PT, BG, params):
+        """
+        Compute the HALOFIT non-linear matter power spectrum at wavenumbers k
+        and redshift z.
+
+        Parameters:
+        -----------
+        k : float or array
+            Wavenumber (Mpc^{-1})
+        z : float
+            Redshift to evaluate.
+        PT : perturbations.PerturbationTable
+            Perturbation evolution table
+        BG : background.Background
+            Background cosmology module
+        params : dict
+            Dictionary of input and derived parameters
+
+        Returns:
+        --------
+        float or array
+            Non-linear matter power spectrum P_NL(k, z), units Mpc^3
+        """
+        lna = -jnp.log(1. + z)
+        Pk_tab = self._Pk_lin_table(lna, PT, params)
+
+        k_grid = jnp.exp(self.halofit_lnk)
+        Delta2 = tools.loglog_interp(k_grid, PT.k, Pk_tab) * k_grid**3 / (2. * jnp.pi**2)
+        k_sigma, n_eff, C = halofit.halofit_parameters(self.halofit_lnk, Delta2)
+
+        Pk_lin = tools.loglog_interp(k, PT.k, Pk_tab)
+
+        # Fraction of the matter density in massive neutrinos; exactly 0 in their absence.
+        f_nu = 1. - params['omega_cb'] / params['omega_m']
+
+        Pk_nl = halofit.halofit_pk(
+            k, Pk_lin, k_sigma, n_eff, C,
+            BG.Omega_m(lna, params),
+            BG.Omega_de(lna, params),
+            BG.w_de(lna, params),
+            f_nu=f_nu,
+            h=params['h'],
+            prescription=self.halofit_prescription,
+        )
+
+        # No correction at high redshift, where the non-linear scale has left the k grid
+        # and the HALOFIT parameters are meaningless.
+        w = halofit.table_coverage(k_sigma, jnp.exp(self.halofit_lnk[-1]))
+
+        return Pk_lin + w * (Pk_nl - Pk_lin)
 
     def lensing_power_spectrum(self, k, lna, PT, BG, params):
         """
@@ -384,11 +560,19 @@ class SpectrumSolver(eqx.Module):
 
         Omega_m = params["omega_m"]/params["h"]**2
         Omega_L = params["omega_Lambda"]/params["h"]**2
+        Omega_r = params["omega_r"]/params["h"]**2
 
-        # Matter fraction over time after equality. 1 at early times and becomes Om0 today. 
-        Om = (Omega_m * (1.+z)**3)/ ((Omega_m * (1.+z)**3) + Omega_L)
+        # Fractional matter density rho_m/rho_tot. This must be the TRUE fraction:
+        # the combination Om**2 * aH**4 below reconstructs (4 pi G a^2 rho_m)^2 in
+        # the Poisson relation, and that identity only holds if Om = rho_m/rho_tot.
+        Om = (Omega_m * (1.+z)**3) / (
+            (Omega_m * (1.+z)**3) + Omega_r * (1.+z)**4 + Omega_L
+        )
 
-        Pk = self.Pk_lin(k, z, PT, params) # Mpc^3
+        if self.nonlinear == "halofit":
+            Pk = self.Pk_nonlinear(k, z, PT, BG, params) # Mpc^3
+        else:
+            Pk = self.Pk_lin(k, z, PT, params) # Mpc^3
 
         return 9./8./jnp.pi**2 * Om**2 * aH**4 * Pk / k
 
@@ -470,7 +654,7 @@ class SpectrumSolver(eqx.Module):
         Returns:
         --------
         tuple
-            (ClTT, ClTE, ClEE) lensed power spectra
+            (ClTT, ClTE, ClEE, Clpp, ClBB) lensed power spectra and lensing potential power spectrum
         """
         # CLASS samples angle uniformly
         # 500 points is enough for lmax < 4000
@@ -577,8 +761,9 @@ class SpectrumSolver(eqx.Module):
             (ksip[:, None]*d22 + ksim[:, None]*d2m2)*w,
             axis=0
         )
+        ClBB = 1./2. * 2*jnp.pi * jnp.sum((ksip[:, None]*d22 - ksim[:, None]*d2m2)*w, axis=0)
 
-        return (ClTT, ClTE, ClEE)
+        return (ClTT, ClTE, ClEE, Clpp, ClBB)
 
     def get_Cl(self, PT, BG, params):
         """
@@ -596,25 +781,36 @@ class SpectrumSolver(eqx.Module):
         Returns:
         --------
         tuple
-            (ClTT, ClTE, ClEE) angular power spectra
+            (ClTT, ClTE, ClEE, Clpp, ClBB) angular power spectra and lensing potential power spectrum. 
+            Clpp and ClBB are an array of zeros if specs["lensing"]=False.
         """
 
-            
-        tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
+        if self.use_bessel_tables:
+            # _transfer_sources() will be called in Cl_one_ell
+            tt_raw, te_raw, ee_raw = vmap(self.Cl_one_ell, in_axes=(0, None, None, None))(self.lensing_ells_indices, PT, BG, params)
 
-
-        # Cubic spline for smooth Cl over user requested ells
-        lensing_ells = bessel_l_tab[self.lensing_ells_indices]
-        tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
-        te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
-        ee_unlensed = CubicSpline(lensing_ells, ee_raw, check=False)(self.lensing_ells)
+            # Cubic spline for smooth Cl over user requested ells
+            lensing_ells = bessel_l_tab[self.lensing_ells_indices]
+            tt_unlensed = CubicSpline(lensing_ells, tt_raw, check=False)(self.lensing_ells)
+            te_unlensed = CubicSpline(lensing_ells, te_raw, check=False)(self.lensing_ells)
+            ee_unlensed = CubicSpline(lensing_ells, ee_raw, check=False)(self.lensing_ells)
+        
+        else:
+            sources = self._transfer_sources(PT, BG, params)
+            tt_raw, te_raw, ee_raw = self._Cl_all_ells_recurrence(sources, params)
+            # recursion will compute all ell, contract to just the lensing ells grid
+            offset = (self.l_top - 1) - self.lensing_ells.shape[0]
+            # no need to interpolate!
+            tt_unlensed = tt_raw[offset:]
+            te_unlensed = te_raw[offset:]
+            ee_unlensed = ee_raw[offset:]
 
         def get_lensed_Cls():
-            tt_lensed, te_lensed, ee_lensed = self.lensed_Cls(self.lensing_ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
-            return (tt_lensed[self.ells-2], te_lensed[self.ells-2], ee_lensed[self.ells-2])
+            tt_lensed, te_lensed, ee_lensed, clpp, bb_lensed = self.lensed_Cls(self.lensing_ells, tt_unlensed, te_unlensed, ee_unlensed, PT, BG, params)
+            return (tt_lensed[self.ells-2], te_lensed[self.ells-2], ee_lensed[self.ells-2], clpp[self.ells-2], bb_lensed[self.ells-2])
 
         def get_unlensed_Cls():
-            return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2])
+            return (tt_unlensed[self.ells-2], te_unlensed[self.ells-2], ee_unlensed[self.ells-2], jnp.zeros_like(tt_unlensed[self.ells-2]), jnp.zeros_like(tt_unlensed[self.ells-2]))
 
         return lax.cond(
             self.lensing,
@@ -682,64 +878,7 @@ class SpectrumSolver(eqx.Module):
         """
         l = bessel_l_tab[idx]
         k_axis = self.k_axis_transfer
-        lna_full = PT.lna
-        lna_axis = lna_full[:-1]
-
-        ### TRANSFER FUNCTION ###
-        # Background quantities, all Nlna 1D vectors
-        tau0 = BG.tau0
-        tau = BG.tau(lna_axis)
-        g   = vmap(BG.visibility,in_axes=[0,None])(lna_axis, params)
-        g_prime = vmap(grad(BG.visibility,argnums=0),in_axes=[0,None])(lna_axis, params) # Derivative of g w.r.t. lna
-        aH  = BG.aH(lna_axis, params)
-        expmkappa = vmap(BG.expmkappa)(lna_axis)
-        aH_dot = BG.aH_prime(lna_axis, params) * aH # Derivative of aH w.r.t. conformal time tau.
-
-        # Keep a 1D alias of aH for the rolling-accumulator scan below.
-        aH_1d = aH
-
-        g         = g[:, None]
-        g_prime   = g_prime[:, None]
-        aH        = aH[:, None]
-        expmkappa = expmkappa[:, None]
-        aH_dot    = aH_dot[:, None]
-
-        # Perturbations, all (Nlna, Nk) 2D vectors
-        # Cubic Spline is necessary here for accuracy. 
-        interp_column = lambda col : CubicSpline(jnp.log10(PT.k), col, check=False)(jnp.log10(k_axis))
-
-        # Found that this is much much faster than RegularGridInterpolator
-        photon_sp = PT.species_perturbations["Photon"]
-        baryon_sp = PT.species_perturbations["Baryon"]
-        delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["delta"][:-1, :])
-        theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(baryon_sp["theta"][:-1, :])
-        theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
-        sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["sigma"][:-1, :])
-        Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G0"][:-1, :])
-        Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G2"][:-1, :])
-        eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
-        eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
-        alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
-        alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
-
-        # Source terms
-        sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
-                + self.scale_isw * (
-                    g * (eta - aH*alpha_prime - 2.*aH*alpha) \
-                    + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
-                ) \
-                + self.scale_dop * (
-                    aH * (g*((theta_b_prime / k_axis**2) + alpha_prime) \
-                    + g_prime*((theta_b / k_axis**2) + alpha))
-                )
-
-        sourceT1 = self.scale_isw * expmkappa * \
-                ((aH*alpha_prime + 2.*aH*alpha - eta) * k_axis)
-
-        sourceT2 = self.scale_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
-
-        sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
-
+        (sourceT0, sourceT1, sourceT2, sourceE), aH_1d, tau, weights, tau0 = self._transfer_sources(PT, BG, params)
 
         # Here we perform the time integral to get transfer functions from source functions.
         # previously, this block explicitly built a 2D (Nlna, Nk) tensor for each ell and summed it down to (Nk).
@@ -771,7 +910,7 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x0_max,
                     j(l, x_safe),
-                    tools.fast_interp_c1(x, x0_min, x0_max, col_phi0_l)
+                    tools.fast_interp_cubic(x, x0_min, x0_max, col_phi0_l)
                 )
             )
 
@@ -783,7 +922,7 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x1_max,
                     l/x_safe*j(l, x_safe) - j(l+1, x_safe),
-                    tools.fast_interp_c1(x, x1_min, x1_max, col_phi1_l)
+                    tools.fast_interp_cubic(x, x1_min, x1_max, col_phi1_l)
                 )
             )
 
@@ -795,20 +934,10 @@ class SpectrumSolver(eqx.Module):
                 jnp.where(
                     x >= x2_max,
                     ((3*l*(l-1)-2*x_safe**2)*j(l, x_safe)+6*x_safe*j(l+1, x_safe))/2/x_safe**2,
-                    tools.fast_interp_c1(x, x2_min, x2_max, col_phi2_l)
+                    tools.fast_interp_cubic(x, x2_min, x2_max, col_phi2_l)
                 )
             )
 
-        Nlna = lna_axis.shape[0]
-        # Trapezoid weights for the LoS integral over the (possibly non-uniform)
-        # lna grid. lna_axis = PT.lna[:-1] drops the lna=0 endpoint, whose
-        # integrand is identically zero (phi_l(chi=0)=0), so its boundary weight
-        # is irrelevant. The per-interval form below reduces EXACTLY to the old
-        # uniform weights (full delta_lna, half on the first point) when PT.lna is
-        # evenly spaced, and stays correct on a recomb-dense non-uniform grid.
-        dl = jnp.diff(lna_full)                                     # (N-1,)
-        w_full = 0.5 * (jnp.pad(dl, (0, 1)) + jnp.pad(dl, (1, 0)))  # (N,)
-        weights = w_full[:-1].astype(sourceT0.dtype)               # (N-1,) -> lna_axis
         zero_k = jnp.zeros(k_axis.shape, dtype=sourceT0.dtype)
 
         def scan_step(carry, xs_l):
@@ -849,3 +978,198 @@ class SpectrumSolver(eqx.Module):
             jnp.trapezoid(integrandTE, k_axis),
             jnp.trapezoid(integrandEE, k_axis)
         )
+    
+    # CG: reorganizing this section into its own method
+    def _transfer_sources(self, PT, BG, params):
+            """
+            Assemble the line-of-sight source functions on (lna, k_transfer) grid.
+
+            Parameters:
+            -----------
+            PT : perturbations.PerturbationTable
+                Perturbation evolution table
+            BG : background.Background
+                Background cosmology module
+            params : dict
+                Dictionary of input and derived parameters
+
+            Returns:
+            -------
+            tuple
+                (sourceT0, sourceT1, sourceT2, sourceE) of shape (Nlna, Nk), plus
+                aH_1d, tau, weights (Nlna,) and tau0.
+            """
+            k_axis = self.k_axis_transfer 
+            lna_axis = PT.lna[:-1]
+
+            # Background quantities, all Nlna 1D vectors
+            tau0 = BG.tau0
+            tau = BG.tau(lna_axis)
+            g   = vmap(BG.visibility,in_axes=[0,None])(lna_axis, params)
+            g_prime = vmap(grad(BG.visibility,argnums=0),in_axes=[0,None])(lna_axis, params) # Derivative of g w.r.t. lna
+            aH  = BG.aH(lna_axis, params)
+            expmkappa = vmap(BG.expmkappa)(lna_axis)
+            aH_dot = BG.aH_prime(lna_axis, params) * aH # Derivative of aH w.r.t. conformal time tau.
+
+            # Keep a 1D alias of aH for the rolling-accumulator scan below.
+            aH_1d = aH
+
+            g         = g[:, None]
+            g_prime   = g_prime[:, None]
+            aH        = aH[:, None]
+            expmkappa = expmkappa[:, None]
+            aH_dot    = aH_dot[:, None]
+
+            # Perturbations, all (Nlna, Nk) 2D vectors
+            # Cubic Spline is necessary here for accuracy. 
+            # Restrict the spline to the CMB portion of the perturbation grid.
+            # Above it the grid switches to coarse logarithmic steps for the
+            # lensing potential.
+            n_cmb = self.n_k_cmb if self.n_k_cmb > 0 else PT.k.shape[0]
+            log_k_cmb = jnp.log10(PT.k[:n_cmb])
+            interp_column = lambda col : CubicSpline(log_k_cmb, col[:n_cmb], check=False)(jnp.log10(k_axis))
+
+            # Found that this is much much faster than RegularGridInterpolator
+            photon_sp = PT.species_perturbations["Photon"]
+            baryon_sp = PT.species_perturbations["Baryon"]
+            delta_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["delta"][:-1, :])
+            theta_b       = vmap(interp_column, in_axes=0, out_axes=0)(baryon_sp["theta"][:-1, :])
+            theta_b_prime = vmap(interp_column, in_axes=0, out_axes=0)(PT.theta_b_prime[:-1, :])
+            sigma_g       = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["sigma"][:-1, :])
+            Gg0           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G0"][:-1, :])
+            Gg2           = vmap(interp_column, in_axes=0, out_axes=0)(photon_sp["G2"][:-1, :])
+            eta           = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta[:-1, :])
+            eta_prime     = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_eta_prime[:-1, :])
+            alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
+            alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
+
+            # Source terms
+            sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
+                    + self.scale_isw * (
+                        g * (eta - aH*alpha_prime - 2.*aH*alpha) \
+                        + 2.*expmkappa * (aH*eta_prime - aH_dot*alpha - aH**2*alpha_prime)
+                    ) \
+                    + self.scale_dop * (
+                        aH * (g*((theta_b_prime / k_axis**2) + alpha_prime) \
+                        + g_prime*((theta_b / k_axis**2) + alpha))
+                    )
+
+            sourceT1 = self.scale_isw * expmkappa * \
+                    ((aH*alpha_prime + 2.*aH*alpha - eta) * k_axis)
+
+            sourceT2 = self.scale_pol * g * (2*sigma_g + Gg0 + Gg2) / 8.
+
+            sourceE  = jnp.sqrt(6) * g * (2*sigma_g + Gg0 + Gg2) / 8.
+
+            # Trapezoid weights for the LoS integral over the (possibly non-uniform) lna grid. lna_axis
+            # drops the lna=0 endpoint, whose integrand is identically zero (phi_l(chi=0)=0). On an evenly
+            # spaced PT.lna this is exactly the uniform rule (full delta_lna, half on the first point).
+            dl = jnp.diff(PT.lna)                                       # (N-1,)
+            w_full = 0.5 * (jnp.pad(dl, (0, 1)) + jnp.pad(dl, (1, 0)))  # (N,)
+            weights = w_full[:-1].astype(sourceT0.dtype)                # (N-1,) -> lna_axis
+
+            return (sourceT0, sourceT1, sourceT2, sourceE), aH_1d, tau, weights, tau0
+
+    def _Cl_all_ells_recurrence(self, sources, params):
+        """
+        Compute Cl at each integer ell using the recursion relation for spherical
+        Bessel functions
+
+            j_{l+1}(x) = (2l+1)/x j_l(x) - j_{l-1}(x),   x = k chi
+
+        as opposed to the tabulated Bessel functions.
+
+        Parameters:
+        -----------
+        sources : tuple
+            Output of _transfer_sources (source functions for transfer functions)
+        params : dict
+            Dictionary of the input and derived parameters.
+
+        Returns:
+        --------
+        tuple
+            (ClTT, ClTE, CLEE) for ell between ell=2 (regardless of ell_min) and l_top
+
+        
+        Notes:
+        ------
+        Stable for x > l.  Error is clamped for x < l, and a zero-mask is applied
+        below x_min(l), where |j_l| ~ 1e-10.
+        """
+        (sourceT0, sourceT1, sourceT2, sourceE), aH_1d, tau, weights, tau0 = sources
+        k_axis = self.k_axis_transfer           # (Nk,)
+
+        # same operations as scan_step above
+        chi = (tau0 - tau)[:, None]             # (Nlna, 1)
+        x = k_axis * chi                        # (Nlna, Nk)
+        inv_x = 1./x
+        inv_x2 = 1./x**2
+
+        # set up recursion
+        Phi0 = jnp.sinc(x/jnp.pi)
+        Phi1 = _j1(x)
+        Phi2 = 3. * inv_x * Phi1 - Phi0
+
+        # e.g. w_l * sT0_l * inv_aH in Cl_one_ell is row l of SW0 here
+        wa = (weights/aH_1d)[:,None]
+        SW0 = sourceT0 * wa
+        SW1 = sourceT1 * wa
+        SW2 = sourceT2 * wa
+        SWE = sourceE * wa
+
+        # k integral is the same trapezoid in Cl_one_ell; see e.g. integrandTT
+        dk = jnp.diff(k_axis)
+        wk = jnp.concatenate((dk[:1]/2., (dk[1:] + dk[:-1])/2., dk[-1:]/2.))
+        wk_prim = wk * 4.*jnp.pi * params['A_s'] * (k_axis/self.k_pivot)**(params['n_s']-1.) / k_axis
+
+        # with weights precomputed, sum over lna then sum over k
+        def step(carry, xs_l):
+            Phi_lm1, Phi_l = carry
+            lf, xmin_l = xs_l # lf is current ell as a float
+
+            # phi0 = j_l, phi1 = j_l', phi2 = (3 j_l'' + j_l)/2, 
+            # eps = sqrt(3/8 (l+2)!/(l-2)!) j_l/x^2, as in Cl_one_ell.
+            # j_l and its derivatives are now computed sequentially in this loop.
+            j_prime = Phi_lm1 - (lf+1.)*inv_x*Phi_l
+            j_2prime = -2*inv_x*j_prime + (lf*(lf+1.)*inv_x2 - 1.)*Phi_l
+            mask = x >= xmin_l
+
+            # get masked bessel arrays
+            r0 = jnp.where(mask, Phi_l, 0.)
+            r1 = jnp.where(mask, j_prime, 0.)
+            r2 = jnp.where(mask, (3.*j_2prime + Phi_l)/2., 0.)
+            eps_factor = jnp.sqrt(3./8.*(lf+2.)*(lf+1.)*lf*(lf-1.))
+            rE = eps_factor * jnp.where(mask, Phi_l * inv_x2, 0.)
+
+            transferT = jnp.sum(SW0*r0 + SW1*r1 + SW2*r2, axis=0)  # sum lna. (Nk,)
+            transferE = jnp.sum(SWE*rE, axis=0)
+
+            clTT = jnp.sum(wk_prim*transferT**2) # sum in k
+            clTE = jnp.sum(wk_prim*transferT*transferE)
+            clEE = jnp.sum(wk_prim*transferE**2)
+    
+            # clip masked growth from instability of recursion
+            Phi_next = jnp.where(mask, (2.*lf + 1.)*inv_x*Phi_l - Phi_lm1, 0.)
+            return (Phi_l, Phi_next), jnp.stack((clTT, clTE, clEE))
+
+        # Set up and run the loop.  Memory-aware to avoid spoiling reverse AD
+        CHUNK = 64
+        n = self.l_top - 1
+        npad = (-n) % CHUNK
+        # This is hyperspherical_get_xmin_from_approx in CLASS for K = 0, find xmin_l for the loops above
+        lf_all = np.arange(2, 2 + n + npad, dtype=np.float64)
+        lph = lf_all + 0.5
+        lhs = np.log(2.e-10*lph)/lph
+        alpha = -2.*lhs/5.*(1. + 2.*np.cosh(np.arccosh(1. + 375./(16.*lhs*lhs))/3.))
+        xmin_all = lph/np.cosh(alpha)
+        xs = (jnp.asarray(lf_all).reshape(-1, CHUNK), jnp.asarray(xmin_all).reshape(-1, CHUNK))
+
+        # run the loop
+        def chunk_body(carry, xs_chunk):
+            return lax.scan(step, carry, xs_chunk)
+
+        # Chunked scan over l and reshaping
+        _, outs = lax.scan(jax.checkpoint(chunk_body), (Phi1, Phi2), xs)
+        cls = outs.reshape(-1, 3)[:n]
+        return cls[:, 0], cls[:, 1], cls[:, 2]

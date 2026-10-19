@@ -169,7 +169,16 @@ class Model(eqx.Module):
             scale_sw=specs["scale_sw"],
             scale_isw=specs["scale_isw"],
             scale_dop=specs["scale_dop"],
-            scale_pol=specs["scale_pol"]
+            scale_pol=specs["scale_pol"],
+            use_bessel_tables=specs["use_bessel_tables"],
+            delta_l_max=specs["delta_l_max"],
+            n_k_cmb=specs["k_size_cmb"],
+            nonlinear=specs["nonlinear"],
+            halofit_prescription=specs["halofit_prescription"],
+            # use only k that were computed for Pk_lin
+            halofit_k_min=float(k_axis_perturbations[0]),
+            halofit_k_max=float(k_axis_perturbations[-1]),
+            halofit_k_per_decade=specs["halofit_k_per_decade"],
         )
 
         # Initialize recombination model.
@@ -203,7 +212,8 @@ class Model(eqx.Module):
         --------
         Output
             Bundle of CMB power spectra (ClTT, ClTE, ClEE) and their
-            multipole grid l, matter power spectrum Pk and its k-grid,
+            multipole grid l, linear matter power spectrum Pk (and the
+            non-linear Pk_nl when ``nonlinear="halofit"``) and its k-grid,
             the Background and PerturbationTable objects, and the
             full parameter dict including derived keys.
         """
@@ -339,21 +349,28 @@ class Model(eqx.Module):
             (BG_batch, params_batch), k_chunk_size=k_chunk_size)
 
         # --- batched spectrum: single jitted vmap over B ---
-        ClTT, ClTE, ClEE = self.SS.get_Cl_batched(
+        ClTT, ClTE, ClEE, Clpp, ClBB = self.SS.get_Cl_batched(
             PT_batched, BG_batch, params_batch)
         l = self.SS.ells
         Pk = self.SS.Pk_lin_batched(
             self.SS.k_axis_Pk_output, 0., PT_batched, params_batch)
         k = self.SS.k_axis_Pk_output
+        Pk_nl = None
+        if self.SS.nonlinear == "halofit":
+            Pk_nl = jax.vmap(self.SS.Pk_nonlinear, in_axes=(None, None, 0, 0, 0))(
+                k, 0., PT_batched, BG_batch, params_batch)
 
         # --- slice off the B-padding (if any) ---
         if len(params_list_run) != B:
-            ClTT = ClTT[:B]; ClTE = ClTE[:B]; ClEE = ClEE[:B]; Pk = Pk[:B]
+            ClTT, ClTE, ClEE, Clpp, ClBB, Pk = (x[:B] for x in (ClTT, ClTE, ClEE, Clpp, ClBB, Pk))
+            Pk_nl = None if Pk_nl is None else Pk_nl[:B]
             params_batch = jax.tree.map(lambda x: x[:B], params_batch)
+        if not self.specs["lensing"]:          # as Output: no lensing potential / BB without lensing
+            Clpp = ClBB = None
 
         return BatchedOutput(
-            ClTT=ClTT, ClTE=ClTE, ClEE=ClEE,
-            Pk=Pk, l=l, k=k, params=params_batch,
+            ClTT=ClTT, ClTE=ClTE, ClEE=ClEE, Clpp=Clpp, ClBB=ClBB,
+            Pk=Pk, l=l, k=k, params=params_batch, Pk_nl=Pk_nl,
         )
 
     def lna_grid(self, params):
@@ -587,10 +604,24 @@ class Model(eqx.Module):
         Pk = self.SS.Pk_lin(self.SS.k_axis_Pk_output, 0., PT, params)
         k = self.SS.k_axis_Pk_output
 
+        # Non-linear matter power spectrum (HALOFIT), if requested
+        if self.SS.nonlinear == "halofit":
+            Pk_nl = self.SS.Pk_nonlinear(k, 0., PT, BG, params)
+        else:
+            Pk_nl = None
+
+        if self.specs["lensing"]:
+            Clpp = Cls[3]
+            ClBB = Cls[4]
+        else:
+            Clpp = None
+            ClBB = None
+
         # Package
         output = Output(
-            Cls[0], Cls[1], Cls[2], Pk,
-            l, k, BG, PT, params
+            Cls[0], Cls[1], Cls[2], Clpp, ClBB, Pk,
+            l, k, BG, PT, params,
+            Pk_nl=Pk_nl
         )
 
         return output
@@ -862,10 +893,14 @@ class Model(eqx.Module):
 
         # Loop over matter fluids to compute total matter density today.
         rho_m = 0.
+        rho_cb = 0.
         for s in self.species_list:
             if s.is_matter:
                 rho_m += s.rho(0., params)
+                if "neutrino" not in s.name.lower():
+                    rho_cb += s.rho(0., params)
         params['omega_m']      = rho_m / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Fractional matter density
+        params['omega_cb']     = rho_cb / (3 * cnst.H0_over_h**2/8/jnp.pi/cnst.G) # Matter density excluding massive neutrinos, used by HyRex
         params['R_b']          = params['omega_b'] / params['omega_m'] # Baryon fraction
     
         # Loop over all fluids and compute energy density at very early time, inferring radiation energy density this way.
@@ -896,7 +931,7 @@ class Model(eqx.Module):
             'tau_reion', 'z_reion', 'Delta_z_reion', 'z_reion_He', 'Delta_z_reion_He', 'exp_reion',
             'omega_Lambda', 'T_nu_massive', 'N_nu_massive', 'm_nu_massive',
             'N_nu_massless', 'Neff', 'T_nu_massless', 'YHe',
-            'omega_m', 'R_b', 'omega_r', 'R_nu', 'om'
+            'omega_m', 'omega_cb', 'R_b', 'omega_r', 'R_nu', 'om'
         }
         
         for key, value in param_in.items():
@@ -917,8 +952,12 @@ class Output(eqx.Module):
         Temperature-polarization power spectrum
     ClEE : jnp.array
         Polarization-polarization power spectrum
+    Clpp : jnp.array or None
+        Lensing potential power spectrum.  None if specs["lensing"]=False.
+    ClBB : jnp.array or None
+        Lensed B-mode power spectrum (induced from scalar perturbations).  None if specs["lensing"]=False.
     Pk : jnp.array
-        Matter power spectrum
+        Linear matter power spectrum at z=0
     l : jnp.array
         Multipoles l at which ClTT/ClTE/ClEE are output
     k : jnp.array
@@ -929,12 +968,18 @@ class Output(eqx.Module):
         Perturbation table including perturbations for all fluids
     params : dict
         Complete parameter dictionary including derived parameters
+    Pk_nl : jnp.array or None
+        HALOFIT non-linear matter power spectrum at z=0 on the same k-grid,
+        or None if the model was built without ``nonlinear="halofit"``
+    
     """
 
     # Power spectra
     ClTT : jnp.array
     ClTE : jnp.array
     ClEE : jnp.array
+    Clpp : jnp.array
+    ClBB : jnp.array
     Pk   : jnp.array
 
     l  : jnp.array
@@ -943,6 +988,7 @@ class Output(eqx.Module):
     PT : perturbations.PerturbationTable
     params : dict
 
+    Pk_nl : jnp.array = None
 
 class BatchedOutput(eqx.Module):
     """Batched output of ``Model.call_batched(params_list)``.
@@ -956,16 +1002,21 @@ class BatchedOutput(eqx.Module):
     Attributes
     ----------
     ClTT, ClTE, ClEE : jnp.array, shape (B, len(l))
+    Clpp, ClBB : jnp.array, shape (B, len(l)), or None without lensing
     Pk : jnp.array, shape (B, len(k))
     l : jnp.array, shape (len(l),)
     k : jnp.array, shape (len(k),)
     params : dict
         Each leaf has leading B axis. Includes derived keys.
+    Pk_nl : jnp.array, shape (B, len(k)), or None unless ``nonlinear="halofit"``
     """
     ClTT : jnp.array
     ClTE : jnp.array
     ClEE : jnp.array
+    Clpp : jnp.array
+    ClBB : jnp.array
     Pk   : jnp.array
     l : jnp.array
     k : jnp.array
     params : dict
+    Pk_nl : jnp.array = None

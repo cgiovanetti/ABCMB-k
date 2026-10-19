@@ -45,6 +45,9 @@ class BackgroundPreRecomb(eqx.Module):
     --------
     rho_tot : Compute total energy density (units: eV cm^{-3})
     P_tot : Compute total pressure (units: eV cm^{-3})
+    Omega_m : Compute matter density fraction (units: dimensionless)
+    Omega_de : Compute dark energy density fraction (units: dimensionless)
+    w_de : Compute dark energy equation of state (units: dimensionless)
     H : Compute Hubble parameter (units: s^{-1})
     aH : Compute conformal Hubble parameter (units: Mpc^{-1})
     aH_prime : Compute derivative of conformal Hubble (units: Mpc^{-1})
@@ -144,6 +147,85 @@ class BackgroundPreRecomb(eqx.Module):
         for i in range(len(self.species_list)):
             P_tot += self.species_list[i].P(lna, params)
         return P_tot
+
+    def Omega_m(self, lna, params):
+        """
+        Compute the matter density fraction.
+
+        Sums the energy density of all species flagged ``is_matter`` and
+        divides by the total.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            Omega_m(a) (units: dimensionless)
+        """
+        rho_m = 0.
+        for s in self.species_list:
+            if s.is_matter:
+                rho_m += s.rho(lna, params)
+        return rho_m / self.rho_tot(lna, params)
+
+    def Omega_de(self, lna, params):
+        """
+        Compute the dark energy density fraction.
+
+        Sums the energy density of all species flagged ``is_dark_energy`` and
+        divides by the total.  Returns 0 if the cosmology has no such species.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            Omega_de(a) (units: dimensionless)
+        """
+        rho_de = 0.
+        for s in self.species_list:
+            if s.is_dark_energy:
+                rho_de += s.rho(lna, params)
+        return rho_de / self.rho_tot(lna, params)
+
+    def w_de(self, lna, params):
+        """
+        Compute the dark energy equation of state P/rho.
+
+        Uses all species flagged ``is_dark_energy``.  Returns -1 if the
+        cosmology has no such species.
+
+        Parameters:
+        -----------
+        lna : float
+            Logarithm of scale factor
+        params : dict
+            Cosmological parameters
+
+        Returns:
+        --------
+        float
+            w(a) (units: dimensionless)
+        """
+        if not any(s.is_dark_energy for s in self.species_list):
+            return -1.
+        rho_de = 0.
+        P_de = 0.
+        for s in self.species_list:
+            if s.is_dark_energy:
+                rho_de += s.rho(lna, params)
+                P_de += s.P(lna, params)
+        return P_de / rho_de
 
     def H(self, lna, params):
         """
@@ -475,6 +557,9 @@ class Background(BackgroundPreRecomb):
     --------
     rho_tot : Compute total energy density (units: eV cm^{-3})
     P_tot : Compute total pressure (units: eV cm^{-3})
+    Omega_m : Compute matter density fraction (units: dimensionless)
+    Omega_de : Compute dark energy density fraction (units: dimensionless)
+    w_de : Compute dark energy equation of state (units: dimensionless)
     H : Compute Hubble parameter (units: s^{-1})
     aH : Compute conformal Hubble parameter (units: Mpc^{-1})
     aH_prime : Compute derivative of conformal Hubble (units: Mpc^{-1})
@@ -568,11 +653,11 @@ class Background(BackgroundPreRecomb):
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
         vis_vals = vmap(self.visibility, in_axes=[0, None])(lna_vals, params)
-        # Parabolic vertex around the grid argmax: a bare argmax snaps lna_rec (the lensing-window
-        # grid start) to this 2.7e-3 grid and steps the lensed Cls as parameters move.
-        i_rec = jnp.clip(jnp.argmax(vis_vals), 1, lna_vals.shape[0] - 2)
+        # lna_rec must be continuous for grad.  Move continuously with parameter shifts
+        # rather than just stepping through the discrete grid
+        i_rec = jnp.clip(jnp.argmax(vis_vals), 1, lna_vals.shape[0] - 2) # find max within lna grid
         v0, v1, v2 = vis_vals[i_rec - 1], vis_vals[i_rec], vis_vals[i_rec + 1]
-        self.lna_rec = lna_vals[i_rec] + 0.5 * (lna_vals[1] - lna_vals[0]) * (v0 - v2) / (v0 - 2. * v1 + v2)
+        self.lna_rec = lna_vals[i_rec] + 0.5 * (lna_vals[1] - lna_vals[0]) * (v0 - v2)/(v0 - 2.*v1 + v2) # refine with parabola through neighbors
         self.lna_visibility_stop = lna_vals[jnp.argmin((vis_vals - 1.e-3)**2)]
         self.rA_rec = self.tau0 - self.tau(self.lna_rec)
 
@@ -580,7 +665,8 @@ class Background(BackgroundPreRecomb):
         lna_vals = jnp.linspace(-15.0, -6.0, 5000)
         aH_tau_c_vals = vmap(self.aH, in_axes=[0, None])(lna_vals, params) * self.tau_c(lna_vals, params)
         # Interpolated crossing (aH tau_c increases monotonically here): an argmin snaps the LoS grid
-        # start to this 1.8e-3 grid and shifts all its nodes at once as parameters move.
+        # start to this 1.8e-3 grid and shifts all its nodes at once as parameters move. Upstream
+        # stop_gradients it; with the visibility grid that made the per-ell AD worse (CHANGELOG 2026-10-15).
         self.lna_transfer_start = jnp.interp(0.008, aH_tau_c_vals, lna_vals)
 
     ### RECOMBINATION RELATED ###
@@ -616,9 +702,7 @@ class Background(BackgroundPreRecomb):
             jnp.where(
                 lna >= self.lna_xe_tab.lastval,
                 self.xe_tab.lastval,
-                # C^1: grad(visibility) sees d x_e / d lna; a linear lookup makes it jump at
-                # every knot, and the cosmology-dependent LoS grid crossing one steps the Cls
-                tools.fast_interp_c1(lna, self.lna_xe_tab.arr[0],
+                tools.fast_interp_cubic(lna, self.lna_xe_tab.arr[0],
                 self.lna_xe_tab.arr[0] + len(self.lna_xe_tab.arr) * (self.lna_xe_tab.arr[1]-self.lna_xe_tab.arr[0]),
                 self.xe_tab.arr)
             )
@@ -732,7 +816,7 @@ class Background(BackgroundPreRecomb):
         # grad(visibility) then differentiates (wrong AD of the T Doppler source).
         sol = diffeqsolve(
             term,
-            solver=Tsit5(),
+            solver=Tsit5(), # no kappa dependence-->quadrature, not stiff.  Kvaerno5 produces noisy gradients
             stepsize_controller=stepsize_controller,
             t0=0.,
             t1=-10.,
@@ -872,7 +956,7 @@ class Background(BackgroundPreRecomb):
         """
         integrand = lambda lna, y, args: jnp.float64(-1./self.tau_c(lna, params)/self.aH(lna, params)/(self.R_ratio_lna(lna, params)))
         term = ODETerm(integrand)
-        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
+        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-6, atol=1.e-6) # need better accuracy for DESI
         adjoint=self.adjoint()
 
         solution = diffeqsolve(
@@ -912,7 +996,7 @@ class Background(BackgroundPreRecomb):
 
         integrand = lambda lna, y, args: 1./jnp.sqrt(3*(1+self.R_ratio_lna(lna, params))) / (self.aH(lna, params))
         term = ODETerm(integrand)
-        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-3, atol=1.e-6)
+        stepsize_controller = PIDController(pcoeff=0.4, icoeff=0.3, dcoeff=0, rtol=1.e-6, atol=1.e-6) # need better accuracy for DESI
         adjoint=self.adjoint()
 
         solution = diffeqsolve(

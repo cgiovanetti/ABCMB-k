@@ -23,6 +23,25 @@ def load_specs(input_specs):
     specs["lensing"]   = input_specs.get("lensing", False)
     specs["k_max"] = input_specs.get("k_max", 0.5)
 
+    ### BESSEL FUNCTION OPTIONS ###
+    specs["use_bessel_tables"] = input_specs.get("use_bessel_tables", True)
+
+    ### NON-LINEAR MATTER POWER SPECTRUM ###
+    # "" for linear only, "halofit" to apply HALOFIT (abcmb.halofit) to the
+    # P(k) output (Output.Pk_nl) and to the lensing potential.  HALOFIT's
+    # sigma(R) integrals need P_lin(k) out to k ~ 100 Mpc^-1.
+    # Rather than extrapolating, they run over the perturbation k-grid, so 
+    # log-spaced high-k extension (k_tail_max; off by default) is switched 
+    # on by "halofit".
+    nonlinear = input_specs.get("nonlinear", "")
+    if nonlinear in (None, False):
+        nonlinear = ""
+    elif nonlinear is True:
+        nonlinear = "halofit"
+    specs["nonlinear"]            = str(nonlinear).lower()
+    specs["halofit_prescription"] = input_specs.get("halofit_prescription", "takahashi2012")
+    specs["halofit_k_per_decade"] = input_specs.get("halofit_k_per_decade", 80)  # sampling of the sigma(R) integrands
+
     ### BBN ###
     specs["bbn_type"] = input_specs.get("bbn_type", "")
     specs["linx_reaction_net"] = input_specs.get("linx_reaction_net", "key_PRIMAT_2023")
@@ -40,6 +59,23 @@ def load_specs(input_specs):
     specs["k_step_super_reduction"] = input_specs.get("k_step_super_reduction", 1.e-1)
     specs["k_min_tau0"]             = input_specs.get("k_min_tau0", 1.e-1)
     specs["k_max_tau0_over_l_max"]  = input_specs.get("k_max_tau0_over_l_max", 1.8)
+    # Extra multipoles computed beyond l_max so that the lensed spectra are
+    # accurate up to l_max. Mirrors CLASS's precision parameter of the same
+    # name (precisions.h, default 500), which CLASS folds into l_scalar_max
+    # before deriving k_max (input.c: ppt->l_scalar_max += ppr->delta_l_max).
+    specs["delta_l_max"]            = input_specs.get("delta_l_max", specs["l_max"]//2)
+    # Sampling of the k-grid above the CMB ceiling, used only for the CMB lensing potential and HALOFIT.
+    specs["k_per_decade_for_pk"]    = input_specs.get("k_per_decade_for_pk", 20. if specs["nonlinear"] == "halofit" else 10.)
+    specs["k_per_decade_for_bao"]   = input_specs.get("k_per_decade_for_bao", 70.)
+    specs["k_bao_center"]           = input_specs.get("k_bao_center", 3.)
+    specs["k_bao_width"]            = input_specs.get("k_bao_width", 4.)
+    # CLASS's "full Limber" k_max for C_l^phiphi. Set to 0 to disable the extension.
+    specs["k_max_limber_over_l_max"] = input_specs.get("k_max_limber_over_l_max", 1.e-3)
+    # k_tail_max > 0 continues the same log-spaced extension at least up to k_tail_max (Mpc^-1), with or
+    # without lensing, e.g. for P(k) beyond the CMB range.
+    # HALOFIT is only accurate while k_tail_max is well above the non-linear scale k_sigma(z), 
+    # and so using HALOFIT automatically sets this parameter to 100 Mpc^-1.
+    specs["k_tail_max"]             = input_specs.get("k_tail_max", 100. if specs["nonlinear"] == "halofit" else 0.)
     specs["H0_fid"]                 = input_specs.get("H0_fid", 2.255560e-04)
     specs["tau0_fid"]               = input_specs.get("tau0_fid",1.418668e+04)
     specs["rs_rec_fid"]             = input_specs.get("rs_rec_fid", 1.446279e+02)
@@ -101,6 +137,12 @@ def load_specs(input_specs):
     specs["rtol_large_k_PE"] = input_specs.get("rtol_large_k_PE", 1.e-4)
     specs["atol_small_k_PE"] = input_specs.get("atol_small_k_PE", 1.e-10)
     specs["atol_large_k_PE"] = input_specs.get("atol_large_k_PE", 1.e-6)
+    # The lensing potential needs k modes above the CMB power spectrum 
+    # These modes only need phi+psi at late times, which is
+    # smooth; resolving their photon oscillations to rtol_large_k_PE costs more
+    # solver steps than every CMB mode combined, so we split this solve:
+    specs["rtol_limber_k_PE"] = input_specs.get("rtol_limber_k_PE", 1.e-3)
+    specs["atol_limber_k_PE"] = input_specs.get("atol_limber_k_PE", 1.e-5)
     specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)
     specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)
@@ -155,7 +197,7 @@ def populate_species(user_species, specs):
     return species_list, species_dict
 
 def get_k_axis_perturbations(specs):
-    ks = np.zeros(2000)
+    ks = []   # grown dynamically; k_max now scales with delta_l_max
 
     H0_fid     = specs["H0_fid"]
     tau0_fid   = specs["tau0_fid"]
@@ -163,11 +205,14 @@ def get_k_axis_perturbations(specs):
     k_rec_fid  = 2.*jnp.pi/rs_rec_fid
 
     k_min = specs["k_min_tau0"] / tau0_fid
-    k_max = specs["k_max_tau0_over_l_max"] / tau0_fid * specs["l_max"]
+    # CLASS raises l_scalar_max by delta_l_max when lensing is on *before*
+    # computing k_max, so the transfer integral stays accurate over the whole
+    # buffered range. Do the same here.
+    l_max_eff = specs["l_max"] + (specs["delta_l_max"] if specs["lensing"] else 0)
+    k_max = specs["k_max_tau0_over_l_max"] / tau0_fid * l_max_eff
 
-    k = k_min   
-    ks[0] = k
-    i = 0
+    k = k_min
+    ks.append(k)
     while k < k_max:
         step = (specs["k_step_super"]
                 + 0.5 * (jnp.tanh((k-k_rec_fid)/k_rec_fid/specs["k_step_transition"])+1.)
@@ -178,22 +223,10 @@ def get_k_axis_perturbations(specs):
         step *= (k**2/scale2+1.)/(k**2/scale2+1./specs["k_step_super_reduction"])
 
         k += step
-        i += 1
-        ks[i] = k
+        ks.append(k)
 
     specs["k_min"]     = k_min
     specs["k_max_cmb"] = k
-
-    # If lensing is needed, we need to extend max k by some amount to accurately compute high-l lensing.
-    if specs["lensing"]:
-        k_max = k + 0.3
-        
-        while k < k_max:
-            step = 0.005
-
-            k += step
-            i += 1
-            ks[i] = k
 
     # If the user specified a k_max above the current, we should add these as well.
     if k < specs["k_max"]:
@@ -203,28 +236,61 @@ def get_k_axis_perturbations(specs):
             step = 0.005
 
             k += step
-            i += 1
-            ks[i] = k
+            ks.append(k)
 
-    ks = ks[np.where(ks>0)]
+    # --- CMB lensing potential extension ------------------------------------
+    # CLASS's "full Limber" scheme for C_l^phiphi. The Limber integral samples
+    # k = (l+1/2)/chi and therefore runs far past the ceiling the line-of-sight
+    # transfer functions need.
+    #
+    # Only the lensing k-integral sees these modes: the transfer grid still stops
+    # at k_max_cmb.
+    
+    specs["k_limber_start"] = np.inf
+    k_max_limber = specs["k_max_limber_over_l_max"] * l_max_eff if specs["lensing"] else 0.
+    k_max_limber = max(k_max_limber, specs["k_tail_max"])
+    if k < k_max_limber:
+        specs["k_limber_start"] = float(k)
+        ln_bao_center = np.log(specs["k_bao_center"] * k_rec_fid)
+        ln_bao_width  = np.log(specs["k_bao_width"])
+        while k < k_max_limber:
+            k_per_decade = (
+                specs["k_per_decade_for_pk"]
+                + (specs["k_per_decade_for_bao"] - specs["k_per_decade_for_pk"])
+                * (1. - np.tanh(((np.log(k) - ln_bao_center)/ln_bao_width)**4))
+            )
+            k = k * 10.**(1./k_per_decade)
+            ks.append(k)
+
+    ks = np.asarray(ks)
+    # Number of leading nodes that cover the CMB range -- CLASS's k_size_cl. 
+    specs["k_size_cmb"] = int(np.searchsorted(ks, specs["k_max_cmb"], side="right"))
+    # CLASS takes the transfer q_max straight off the top of that slice
+    # (transfer.c: q_max = ppt->k[...k_size_cl-1]). Record it so the transfer
+    # grid cannot run past the range the source spline was built on.
+    specs["k_max_pert"] = float(ks[specs["k_size_cmb"]-1])
     k_axis_Pk_output = ks[np.where(ks<=specs["k_max"])]
 
     return jnp.array(ks), jnp.array(k_axis_Pk_output)
 
 def get_k_axis_transfer(specs):
-    ks = np.zeros(8000)
+    ks = [] 
 
     k_period = 2*jnp.pi/(specs["tau0_fid"] - specs["tau_rec_fid"])
 
     k = specs["k_min"]
-    ks[0] = k
-    i = 0
+    ks.append(k)
     while k < specs["k_max_cmb"]:
         k = k \
             + k_period * specs["k_transfer_linstep"] * k \
             / (k + specs["k_transfer_linstep"]/specs["k_transfer_logstep"])
-        i += 1
-        ks[i] = k
+        ks.append(k)
 
-    ks = jnp.array(ks[np.where(ks>0)])
-    return ks
+    ks = np.asarray(ks)
+    # The loop above exits one step *past* k_max_cmb, which would put the final
+    # node beyond PT.k[-1] and make the source interpolation in spectrum.py
+    # extrapolate (interpax CubicSpline does not clamp). CLASS discards the
+    # overshooting node for the same reason (transfer.c: "also checking if we
+    # overshot the last point").
+    ks = ks[ks <= specs["k_max_pert"]]
+    return jnp.array(ks)

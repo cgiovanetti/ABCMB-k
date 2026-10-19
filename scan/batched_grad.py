@@ -93,6 +93,13 @@ def hyrex_cpu_mesh(model, B):
 
 
 # ---------- per-stage jvp helper (partition static, thread array tangents) ----------
+@eqx.filter_jit
+def _cls_tt_te_ee(SS, PT, BG, params):
+    """TT/TE/EE of SS.get_Cl_batched. It also returns Clpp and lensed BB; slicing them off inside
+    one jit lets XLA drop their primal and tangent work."""
+    return SS.get_Cl_batched(PT, BG, params)[:3]
+
+
 def jvp_stage(fn, primals_full, tangents_diff, n_dirs=None):
     """fn(*primals_full) with forward-mode. primals_full: tuple of full pytrees
     (eqx.Modules / dicts). tangents_diff: tuple of DIFF pytrees (arrays where the
@@ -297,10 +304,11 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
             (BG, params_batch), (BG_dot, pdot), n_dirs=n_d)
         _memlog("stage4 perturbations jvp", PT, PT_dot)
         # ---- stage 5: spectrum (GPU), in sub-batches of spec_b_local x n_dev ----
+        get_cls3 = lambda PT_, BG_, p_: _cls_tt_te_ee(SS, PT_, BG_, p_)
         Brun = len(full_ps_run)
         spec_chunk = None if spec_b_local is None else spec_b_local * (n_dev if do_shard else 1)
         if spec_chunk is None or spec_chunk >= Brun:
-            cls, cl_dot = jvp_stage(SS.get_Cl_batched, (PT, BG, params_batch),
+            cls, cl_dot = jvp_stage(get_cls3, (PT, BG, params_batch),
                                     (PT_dot, BG_dot, pdot), n_dirs=n_d)
         else:
             def _sl(tree, s, e, axis):
@@ -314,7 +322,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
                 tang = _sl((PT_dot, BG_dot, pdot), s0, e0, 1)       # leaves (n_d, b, ...)
                 if do_shard:                                        # keep the B sharding
                     prim = shardfn(prim); tang = dir_shardfn(tang)
-                c, cd = jvp_stage(SS.get_Cl_batched, prim, tang, n_dirs=n_d)
+                c, cd = jvp_stage(get_cls3, prim, tang, n_dirs=n_d)
                 cls_parts.append(c); dot_parts.append(cd)
                 del prim, tang
             cls = tuple(jnp.concatenate([c[i] for c in cls_parts], axis=0) for i in range(3))
