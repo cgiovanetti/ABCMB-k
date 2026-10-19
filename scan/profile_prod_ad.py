@@ -81,8 +81,8 @@ from abcmb import species as _species
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
-from scan.lm_tools import (proj_grad, lm_step, deflate_step, deflated_resid, spread_starts,
-                           flag_point, union_regions, is_multimodal)
+from scan.lm_tools import (proj_grad, lm_step, deflate_step, spread_starts, flag_point,
+                           union_regions, is_multimodal)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 CL1, CL2, CL95 = 0.682689492137, 0.954499736104, 0.95
@@ -1064,10 +1064,12 @@ def profile_lockstep(pois, outdir):
                 if len(mins):
                     far = np.array([(np.abs(mins - s).max(1) > MS_DX).all() for s in starts], bool)
                     starts = starts[far]
-                    if len(starts) < MS_K + 1:
-                        b0 = reps[0]
-                        starts = np.concatenate([starts, spread_starts(
-                            T["X"][b0], T["H"][b0], T["XLO"][b0], T["XHI"][b0], MS_K + 1 - len(starts), MS_SPREAD)])
+                if len(starts) < MS_K + 1:         # top up around the best end point on its own GN matrix
+                    b1 = reps[0] if reps else int(r[np.argmin(T["F"][r])])
+                    Hb = T["H"][b1] if np.isfinite(T["H"][b1]).all() and np.abs(T["H"][b1]).max() > 0 \
+                        else _hwarm()[np.ix_(T["FREE"][b1], T["FREE"][b1])]
+                    starts = np.concatenate([starts, spread_starts(
+                        T["X"][b1], Hb, T["XLO"][b1], T["XHI"][b1], MS_K + 1 - len(starts), MS_SPREAD)])
                 b0 = int(r[0])
                 for s_i, s in enumerate(starts):
                     dB.append(T["BASE"][b0]); dFR.append(T["FREE"][b0]); dLO.append(T["XLO"][b0]); dHI.append(T["XHI"][b0])
