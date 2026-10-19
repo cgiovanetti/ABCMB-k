@@ -27,8 +27,11 @@ side comes back NaN + a centering warning); (9) the sigma1-stability stop needs 
 well-behaved variable (1/m or log m); (11) the outer optimizer only clips at +-XBOX, no physical bounds -> projected
 steps (as the nuisance SPG does) so the WIMP parameter cannot step past its boundary while profiling other POIs;
 (12) the warm-LR start and fixed Hessian assume a quadratic chi2 around one centre (item 7 fixes the Hessian side);
-(13) at a boundary Wilks fails (Chernoff 50/50 mixture of 0 and chi2_1) -> calibrate the threshold with wilks.py
-(plik-lite mocks + GN refits) using a truth at/near the boundary.
+(13) threshold: use the asymptotic one-sided formulae of Cowan, Cranmer, Gross & Vitells, arXiv:1007.1727 (q_mu /
+q~_mu with the mu >= 0 boundary; half-chi2 law, 95% upper limit at dchi2 = 2.71; sigma and the median expected limit
+from one extra profile on the Asimov (noise-free) dataset). They rest on the Wald approximation (mu-hat Gaussian, sigma
+independent of mu): pick a WIMP parametrization whose effect on the Cls is near-linear, check the profile is a
+half-parabola; wilks.py mocks only as a cross-check if it is not.
 Before the rerun, regardless: delete scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz (built
 2026-10-12 on pre-fix code; its cache key does not include species, so it would also survive turning the massive nu on).
 
