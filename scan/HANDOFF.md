@@ -11,6 +11,10 @@ not acceptable." FD still in the driver:
 3. `_safe_grad` — central-FD gradient fallback for rows with a non-finite AD gradient (never fired in _v2/_v2fix logs).
    Replace with fixing the NaN source, or freeze the row; no FD.
 4. `fdbatch` gradient method + `calibrate_fd_step` — unused by every config (all grad_method "ad"); delete.
+Same session, also TODO (bfgs_rows): (5) a row whose 12 step lengths all fail is still moved by alpha = 2^-12 (no
+Armijo) and re-gradiented; with the fixed Hessian it repeats the same failed search, and it keeps its whole rank in
+3 line-search rounds -> leave it in place and flag it stalled. (6) converged rows (gnorm < GTOL) are re-gradiented
+every iteration at an unchanged point (a third to half of each rank's rows late in _v2fix) -> skip them.
 Before the rerun, regardless: delete scan/results/warm_hessian_lcdm_neff_plikfull_rc_l2508_tt1_ee1.npz (built
 2026-10-12 on pre-fix code; its cache key does not include species, so it would also survive turning the massive nu on).
 
