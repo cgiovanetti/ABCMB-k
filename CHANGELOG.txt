@@ -92,6 +92,28 @@ saddles are not identifiable with the PSD GN matrix (barrier along the segment r
 still describes the BFGS driver (not touched); no genuinely flagged point has been seen on the real likelihood.
 
 
+2026-10-19 — Upstream merge (#34-#50, #53) and the profile-driver rework: LM on per-row GN curvature, AD only, bounds, one-sided intervals
+-----------------------------------------------------------------------------------------------------------------------------------------------
+Branch development (= upstream-sync). Upstream merged (a5c9a2f: Bessel tables/recurrence, lensing k buffer + Limber
+extension, omega_cb, HALOFIT, grad_bumps, Clpp/ClBB, Debye j_l) + the open PR #53 (da9ad1b: x_e/T_m lookup
+off-by-one, T_m through reionization). vs CLASS at dlmax 1250: TT/EE at l 2000-2500 1.3e-2/6.6e-3 -> 7.6e-4/1.0e-3;
+value call +9%, gradient +8%; AD drift unchanged.
+Driver a21df86 (scan/profile_prod_ad.py rewritten, 1785 lines): Levenberg-Marquardt on each row's Gauss-Newton
+matrix J^T W J from the C_ell tangents (plik residual / siginv + the nuisance Schur complement + the exact low-ell
+curvature), AD only -- every finite difference is gone (FD warm Hessian, FD nuisance Hessian, FD gradient fallback,
+fdbatch + its calibration). PA_LM_K damping candidates per active row in one batched value call with a gain-ratio
+test; a row whose candidates all fail keeps its point and gradient and raises lambda, stalled after PA_STALL_MAX;
+converged and stalled rows leave the batches (bucketed sizes). Config `bounds` / `grid`: projected steps, grids
+clipped to the bounds; intervals from the boundary-aware thresholds of Cowan, Cranmer, Gross & Vitells 2011 (t~,
+Wald sigma from the profile), one- or two-sided by themselves, stop rule on the interval ends; linear-response warm
+start on the warm point's GN matrix; the massive neutrino is evolved (the driver refuses N_nu_massive > 0 without
+species.MassiveNeutrino). Rows on the +-XBOX box are flagged and not counted converged.
+Validation (scan/.sync/): merge vs CLASS passed; the gradient equals the old jvp contraction to 1e-8; the GN
+curvature predicts chi2 changes along test directions to ~4%; interval coverage nominal (wilks); old vs new A/B on
+5 h rows with AD gradients on both: new converges in 2 iterations, every row under GTOL, same intervals (68%
+[0.65021, 0.68114]); 5.4 vs 3.6 min per iteration came from the 4x batch padding, fixed the same night (doubling).
+
+
 2026-10-16 (night) — Debye j_l diff for upstream, rebased on upstream main 29667dd and checked there
 ------------------------------------------------------------------------------------------------------
 scan/.gridad/upstream_debye_bessel.diff now applies to upstream main 29667dd (grad_bumps merged: cubic table
