@@ -23,7 +23,12 @@ took every base row to chi2 2759-2766 (|g| 130 -> ~3), minimum 2759.08 at h = 0.
 xstar are relative to the NEW centre (compare_profile_runs.py CEN_V3). Costs on one node with the massive
 nu, warm cache: value call 39 cosmologies 4.5 min (bucket 64), 156 cosmologies <= 19 min (bucket 256, with
 its compile), 39-row gradient 17.4 min (bucket 64); a production node (78 rows) is ~45 min per iteration,
-so 12 h ~ 15 iterations and 48 h ~ 60. On completion: add '_v3' to scan/compare_profile_runs.py RUNS (expect a shifted
+so 12 h ~ 15 iterations and 48 h ~ 60. 60025795 STARTED 2026-10-20 08:36 on 40 GB nodes (nid0018xx; the
+shakeout node nid200372 was an 80 GB one): the centre now has |g| 0.64 and chi2 2759.07, LR starts kept for
+40/42 rows, 78-row gradient 16.6 min, 156-cosmology value call 18 min. call_batched prints "estimated GPU
+peak ~56 GB/device ... ~32 GB limit" for the 256-cosmology value chunks (64 per GPU) on these nodes: BENIGN,
+measured 19-20 GB per GPU flat through the whole call (scan/.mm/v3_gpumem_nid001861.log); the estimate
+assumes 500 lna nodes and the full persistent trajectory. On completion: add '_v3' to scan/compare_profile_runs.py RUNS (expect a shifted
 best fit vs _v2fix: the massive nu is new), check the per-POI logs for flagged points / branches, and that
 every POI's 68% ends are inside its grid. A twin of this Claude session on another login node mirrored tool
 calls for ~3 h on 2026-10-19 (CHANGELOG night entry): if two of anything appear, check `scontrol show step`.
