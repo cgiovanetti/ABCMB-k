@@ -39,7 +39,7 @@ points + 9 spreads, PA_MAXIT=1, scan/.mm/linx_shake2.log, npz tag _linxshake): r
 best fit) has chi2 2759.37 with the BBN helium (0.2428 vs the fixed 0.2454) and |g| 8.5, one LM step takes the base
 rows to |g| 0.03-0.09; preliminary Neff best 2.821, 68% [2.665, 3.036]; per call: LINX Jacobians 48 s per 16-row
 block on top of the ~12 min ABCMB gradient, LINX values 6-23 s per value call. Production _v4linx submitted from
-main: job 60055523 (6 h, --deadline 2026-10-21T06:00) and 60055524 (48 h, after the maintenance, resumes).
+main: job 60057734 (6 h, --deadline 2026-10-21T06:00) and 60057736 (48 h, after the maintenance, resumes).
 
 
 2026-10-20 — _v3 LCDM+Neff full-plik profile DONE: 7 POIs in 3h52m on 4 nodes, multistart on, no multimodality found

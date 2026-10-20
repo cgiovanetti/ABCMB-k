@@ -14,7 +14,7 @@ Steigman style) exposed as a BackgroundModel input, then a stage input + config 
 driver side (bounds, one-sided intervals, bbn stage) is ready for it. Open: the vmapped-Jacobian failure
 (jvp through diffrax+Kvaerno under vmap) deserves an upstream minimal repro; the 4-device Jacobian dispatch
 only overlaps ~1.4x. PRODUCTION _v4linx SUBMITTED (7 POIs incl. Delta_Neff_init, multistart defaults): job
-60055523 (6 h, deadline 2026-10-21T06:00, before the maintenance if it starts in time) and 60055524 (48 h,
+60057734 (6 h, deadline 2026-10-21T06:00, before the maintenance if it starts in time) and 60057736 (48 h,
 after it, resumes from the checkpoints); logs logs/abcmb_pf_linx_<jobid>.out. On completion compare with
 _v3 (add a '_v4linx' RUNS entry with CEN_V3 but Delta_Neff_init in place of Neff -- compare_profile_runs.py
 needs a small generalisation for the renamed POI) and read the "[Delta_Neff_init] as Neff" line.
