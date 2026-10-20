@@ -1,5 +1,15 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-20 12:30: _v3 DONE (job 60025795, 3h52m on 4 nodes; CHANGELOG 2026-10-20).** All 7 POIs converged
+(every row under GTOL, 0 stalled, 0 flagged points, no deflation/branches needed; the spread starts agree with
+the warm rows), min chi2 2759.06 at the recentred centre, clean two-sided parabolas inside the grids:
+scan/results/profile_prod_ad_<poi>_v3.{npz,png} and the comparison profile_neff_runs_compared_v2fix_v3.png.
+The 48 h copy 60025762 is cancelled. NEXT: (20) bbn_type="linx" for the EM-coupled WIMP (see the 2026-10-19
+block below for the known LINX issues: LINX inside add_derived_parameters makes _gn_block's per-row x
+per-direction eager jvp of _phys_to_derived push every tangent through LINX on CPU -- batch/vmap it; the
+vendored abcmb/linx is behind LINX main; Delta_Neff_init is Delta Neff at the start of BBN). Also still open:
+scan/manual describes the BFGS driver; (19) Wilks only if a second mode ever appears.
+
 **2026-10-19 (23:00): development merged to main (253bedb, fast-forward); PRODUCTION _v3 SUBMITTED as job
 60025762** (scan/profile_prod_plikfull_neff48.slurm: 4 nodes, 48 h, regular, 7 POIs x 21 points, multistart
 defaults 3 spreads at 6 points per POI, tag _v3, log logs/abcmb_pf_neff_60025762.out). The whole machine is
