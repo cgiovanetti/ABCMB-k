@@ -1,0 +1,153 @@
+W1019 14:38:42.200962 2075112 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.202266 2075114 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.202813 2075113 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.203046 2075111 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.213483 2074838 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.216856 2074838 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.220011 2074838 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 14:38:42.223160 2074838 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+----
+clipy_0.15
+Checking likelihood '/pscratch/sd/c/carag/Neal_ACTDR6/baseline/plc_3.0/hi_l/plik/plik_rd12_HM_v22b_TTTEEE.clik' on test data. got -1172.47 expected -1172.47 (diff 4.00569e-06)
+----
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+[grid] lna grid frozen at the config centre: 300 nodes from -7.271544
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+(2) chi2 values path [4346.2772 2758.0838 4456.9918]  gradient path [4346.277  2758.0838 4456.9917]  max diff 0.00014719583214173326
+(1) r^T W r + prior = 2343.33756475  clipy penalized chi2 = 2343.33756475  diff 1.82e-12
+(3) max |g_new - g_old| / max|g_old| per row: [1.60445560e-09 1.41360794e-08 4.74657367e-11]
+(4) row0 newton: actual dchi2 -603.9219  model -601.2982 (lin -674.4562 quad +73.1580)  curvature ratio actual-lin/quad = 0.964
+(4) row0 random: actual dchi2 +270.4633  model +271.1470 (lin +254.2016 quad +16.9454)  curvature ratio actual-lin/quad = 0.960
+(4) row0 random: actual dchi2 -313.0824  model -313.1028 (lin -338.6781 quad +25.5753)  curvature ratio actual-lin/quad = 1.001
+(4) row1 newton: actual dchi2   -0.1718  model   -0.1788 (lin   -0.3576 quad  +0.1788)  curvature ratio actual-lin/quad = 1.039
+(4) row1 random: actual dchi2   +5.8906  model   +5.9452 (lin   -0.5971 quad  +6.5424)  curvature ratio actual-lin/quad = 0.992
+(4) row1 random: actual dchi2  +33.1478  model  +33.3979 (lin   +1.9295 quad +31.4684)  curvature ratio actual-lin/quad = 0.992
+(4) row2 newton: actual dchi2 -387.8690  model -389.0128 (lin -415.1498 quad +26.1370)  curvature ratio actual-lin/quad = 1.044
+(4) row2 random: actual dchi2 +493.0570  model +494.2806 (lin +459.1643 quad +35.1164)  curvature ratio actual-lin/quad = 0.965
+(4) row2 random: actual dchi2 -152.0075  model -151.8525 (lin -156.5120 quad  +4.6595)  curvature ratio actual-lin/quad = 0.967
+eig(H) per row: [[0.45, 1.179, 3.495, 4.967, 32.308, 357.842], [0.471, 1.215, 3.499, 5.13, 32.027, 361.846], [0.484, 1.364, 3.452, 5.191, 31.957, 357.114]]
+=== gn_check exit 0

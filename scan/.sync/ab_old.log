@@ -1,0 +1,162 @@
+W1019 15:49:01.225284 1072569 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.228310 1072568 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.230202 1072571 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.231128 1072570 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.241863 1072297 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.245005 1072297 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.248116 1072297 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W1019 15:49:01.257523 1072297 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+[profile] WARNING: PA_GRADMETHOD=ad is a DEBUG-ONLY env override and SHADOWS the config grad_method='fdbatch'. Production runs should set grad_method in the config file, not the environment.
+----
+clipy_0.15
+Checking likelihood '/pscratch/sd/c/carag/Neal_ACTDR6/baseline/plc_3.0/hi_l/plik/plik_rd12_HM_v22b_TTTEEE.clik' on test data. got -1172.47 expected -1172.47 (diff 4.00569e-06)
+----
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+[grid] lna grid frozen at the config centre: 300 nodes from -7.271544
+rank 0/1 devices=[CudaDevice(id=0), CudaDevice(id=1), CudaDevice(id=2), CudaDevice(id=3)] config=/pscratch/sd/c/carag/ABCMB-k/scan/.sync/cfg_ab.py POIs=['h'] NPTS=5 NSIG=2.5 GTOL=0.03 rtol=1e-05 grad=ad shard=True lowEE=True lowTT=True hess=False warm=True multistart=False rank_slice=False poi_slice=False nproc=1
+[lockstep] N=5 rows (1 POIs x 5) P=6 D=7 grad=ad shard=True warm: config CENTER (PA_WARM_FROM_CEN; = joint MLE for a recentered run)
+[precond] loaded cached warm Hessian (/pscratch/sd/c/carag/ABCMB-k/scan/.sync/results/warm_hessian_cfg_ab_l2508_tt1_ee1.npz)
+[precond] warm Hessian eig (scaled): [9.023e-02 6.663e-01 1.380e+00 3.463e+00 7.251e+00 3.166e+01 4.217e+02]
+[precond] inverse-Fisher Hinv0 from warm Hessian (0s); nuis-Hessian cond per POI: {'h': 357.0}
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+[warm-lr] linear-response start kept for 4/5 rows; chi2 centre-start median 3155.1 -> 2760.2
+/global/common/software/m3166/carag/envs/actdr6/lib/python3.11/site-packages/equinox/_jit.py:429: UserWarning: 
+Possibly assigning a JAX-transformed callable as an attribute on
+equinox._jit._JitWrapper. This will not have any of its parameters updated.
+
+For example, the following code is buggy:
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = jax.vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+This is because the callable returned from `jax.vmap` is *not* a PyTree. This means that
+the parameters inside the `eqx.nn.Linear` layer will not receive gradient updates.
+
+You can most easily fix this either by applying the wrapper at `__call__` time:
+```python
+class MyModule(eqx.Module):
+linear: Callable
+
+def __init__(self, ...):
+    self.linear = eqx.nn.Linear(...)
+
+def __call__(self, ...):
+    ... = jax.vmap(self.linear)(...)
+```
+or by using `eqx.filter_vmap` instead (which *does* return a PyTree):
+```python
+class MyModule(eqx.Module):
+vmap_linear: Callable
+
+def __init__(self, ...):
+    self.vmap_linear = eqx.filter_vmap(eqx.nn.Linear(...))
+
+def __call__(self, ...):
+    ... = self.vmap_linear(...)
+```
+
+  jit_wrapper = _JitWrapper(
+  [lock] it0: min=2757.91 ||g||max=1.90e+00 active=5 (16:03:51)
+  [lock] it1: min=2757.91 ||g||max=2.04e+00 active=5 (16:07:25)
+  [lock] it2: min=2757.91 ||g||max=1.14e+00 active=4 (16:10:59)
+  [lock] it3: min=2757.91 ||g||max=6.45e-01 active=4 (16:14:34)
+  [lock] it4: min=2757.91 ||g||max=3.79e-01 active=4 (16:18:08)
+  [lock] it5: min=2757.91 ||g||max=2.21e-01 active=4 (16:21:43)
+  [lock] it6: min=2757.91 ||g||max=1.32e-01 active=3 (16:25:17)
+  [lock] it7: min=2757.91 ||g||max=7.89e-02 active=3 (16:30:09)
+  [lock] it8: min=2757.91 ||g||max=5.94e-02 active=3 (16:35:01)
+  [lock] it9: min=2757.91 ||g||max=5.94e-02 active=3 (16:42:16)
+  [lock] it10: min=2757.91 ||g||max=5.93e-02 active=3 (16:48:26)
+  [lock] it11: min=2757.91 ||g||max=5.93e-02 active=2 (16:54:36)
+[cert] AD ||g|| certificate over 5 rows ...
+[lockstep] BFGS+cert done 3823s RSS=9.7GB; converged 4/5 (||g||_AD<3.0e-02); max||g||_AD=5.93e-02
+[h] minchi2=2757.91 at h=0.66620; 1sig=[0.65021,0.68114] (fit +/-0.01547, best 0.66620; pchip [0.65021,0.68114]; parab=0.01601); converged 4/5; max||g||_AD=5.93e-02; PD 0/5 -> /pscratch/sd/c/carag/ABCMB-k/scan/.sync/results/profile_prod_ad_h_ab_old.npz
+rank 0: done

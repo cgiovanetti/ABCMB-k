@@ -25,3 +25,10 @@ scan/*.log
 scan/.mm/
 scan/.jobid_mm
 scan/.mm_salloc.log
+
+# validation harness scratch: an exported copy of the tree, npz outputs, allocation ids
+scan/.sync/tree_main/
+scan/.sync/out/
+scan/.sync/results/
+scan/.sync/.jobid*
+scan/results/
