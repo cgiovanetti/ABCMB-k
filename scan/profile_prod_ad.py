@@ -54,7 +54,7 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_LM_K(4) PA_STEP_MAX(1.0) PA_XBOX(5) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
   PA_WARM_LR(0) PA_MLE_PREPASS(0) PA_POI_SLICE(0) PA_TRACE_EVALS(0)
   PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
-  PA_MS_ROUNDS(1) PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10) PA_DF_MAXIT(10) PA_DF_P(2) PA_DF_ALPHA(1)
+  PA_MS_ROUNDS(1) PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10) PA_DF_MAXIT(10) PA_DF_P(2) PA_DF_ALPHA(0)
   PA_MS_FORCE(0) PA_MS_BRANCH_FROM(new)   [the last two: shakeout knobs]
 """
 # Host devices for the HyRex jvp (scan/batched_grad.hyrex_cpu_mesh): must be set before JAX
@@ -270,10 +270,14 @@ _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 # +-MS_SPREAD profile sigmas along the softest warm Gauss-Newton directions; converged starts more
 # than MS_DX (scaled sigma, max-norm) apart are distinct minima, closer ones must agree in chi2 to
 # MS_DCHI2; the interval stop waits for the extra starts (MS_WAIT). Flagged points go through
-# MS_ROUNDS rounds of deflation (DF_MAXIT deflated steps; M = prod (r^-DF_P + DF_ALPHA), reach
-# ~ DF_ALPHA^(-1/DF_P) scaled sigma) and branches (at most MS_BRANCH_MAX new stationary points per
-# POI per round, BR_MAXIT iterations). Shakeout knobs: MS_FORCE=1 flags every multistart point;
-# MS_BRANCH_FROM=any branches from every deflation end point, not only the new stationary ones.
+# MS_ROUNDS rounds of deflation (DF_MAXIT deflated steps; M = prod (r^-DF_P + DF_ALPHA)) and
+# branches (at most MS_BRANCH_MAX new stationary points per POI per round, BR_MAXIT iterations).
+# DF_ALPHA=0 (unshifted) lets the deflation act at any distance: a full Newton step toward a known
+# minimum is reversed wherever the walk is, so it leaves that basin along the ray through its start.
+# Farrell's shift alpha > 0 limits the reach to ~alpha^(-1/DF_P) scaled sigma; beyond it the step is
+# amplified past the minimum instead of reversed and the walk hops around it (then: recaptured).
+# Shakeout knobs: MS_FORCE=1 flags every multistart point; MS_BRANCH_FROM=any branches from every
+# deflation end point, not only the new stationary ones.
 MS_K = int(os.environ.get("PA_MS_K", "3"))
 MS_NPTS = int(os.environ.get("PA_MS_NPTS", "6"))
 MS_SPREAD = float(os.environ.get("PA_MS_SPREAD", "2.0"))
@@ -287,7 +291,7 @@ MS_BRANCH_FROM = os.environ.get("PA_MS_BRANCH_FROM", "new")
 BR_MAXIT = int(os.environ.get("PA_BR_MAXIT", "10"))
 DF_MAXIT = int(os.environ.get("PA_DF_MAXIT", "10"))
 DF_P = float(os.environ.get("PA_DF_P", "2"))
-DF_ALPHA = float(os.environ.get("PA_DF_ALPHA", "1"))
+DF_ALPHA = float(os.environ.get("PA_DF_ALPHA", "0"))
 USE_LOWTT = (os.environ["PA_USE_LOWTT"] != "0") if "PA_USE_LOWTT" in os.environ \
     else bool(CFG.get("use_lowtt", True))
 USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ \
