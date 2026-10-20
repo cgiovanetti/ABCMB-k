@@ -69,6 +69,11 @@ if _ncpu not in ("0", "1") and "xla_force_host_platform_device_count" not in _os
 import os, time, importlib.util
 _SCRATCH = os.environ.get("SCRATCH", "/pscratch/sd/c/carag")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+# equinox runtime errors become NaNs instead of aborting (read by equinox at import): a failed ODE solve is
+# then a NaN chi2 the step test rejects, and the vmapped LINX stage needs it -- under vmap a lax.cond runs
+# both branches, and lineax's error_if inside the implicit solver's untaken branch would otherwise raise on
+# the discarded garbage (scan/bbn_stage.py).
+os.environ.setdefault("EQX_ON_ERROR", "nan")
 os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", os.path.join(_SCRATCH, ".jax_cache_abcmb"))
 import numpy as np
 from scipy.special import ndtr, ndtri
@@ -365,6 +370,23 @@ else:
     _toy_f = TOY["chi2"]
     _toy_chi2_B = jax.jit(jax.vmap(_toy_f))
     _toy_cgh_B = jax.jit(jax.vmap(lambda t: (_toy_f(t), jax.grad(_toy_f)(t), jax.hessian(_toy_f)(t))))
+# BBN stage: config "bbn": "linx" runs LINX for every row of a call at once on the host CPUs
+# (scan/bbn_stage.py) and feeds the engine, built with bbn_type="", YHe / Neff / T_nu_massless from
+# (omega_b, Delta_Neff_init) with their tangents by the chain rule. ORDER must contain omega_b and
+# Delta_Neff_init (the START-of-BBN Delta Neff: Neff ~ 3.045 + 0.272 x); fixed must not set YHe or Neff.
+BBN = None
+if TOY is None and str(CFG.get("bbn", "")).lower() == "linx":
+    from scan.bbn_stage import LinxStage, B_CHUNK as _BBN_CHUNK
+    for _k in ("omega_b", "Delta_Neff_init"):
+        if _k not in ORDER:
+            raise ValueError(f"{CONFIG_ABS}: bbn=linx needs {_k} in order")
+    for _k in ("YHe", "Neff", "N_nu_massless", "T_nu_massless"):
+        if _k in FIXED:
+            raise ValueError(f"{CONFIG_ABS}: bbn=linx sets {_k}; remove it from fixed")
+    BBN = LinxStage(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
+    I_OB, I_DN = ORDER.index("omega_b"), ORDER.index("Delta_Neff_init")
+    print(f"[bbn] LINX stage ({CFG.get('linx_reaction_net', 'key_PRIMAT_2023')}) on one host device, vmapped in "
+          f"chunks of {_BBN_CHUNK}", flush=True)
 CEN = jnp.asarray(CENTER); SIG = jnp.asarray(SIGMA)
 try:
     NDEV = len(jax.devices('gpu'))
@@ -396,22 +418,35 @@ def scaled_box(free):
     return lo, hi
 
 
-def build_dict(theta):
+def build_dict(theta, bbn_y=None):
     """physical D-vector (ORDER) -> ABCMB param dict (host floats, call_batched).
-    ln10As is stored as A_s; everything else passes through by name."""
+    ln10As is stored as A_s; everything else passes through by name. With the BBN stage, bbn_y =
+    (YHe, Neff, T_nu_massless) of this row replaces Delta_Neff_init."""
     p = dict(FIXED)
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = float(np.exp(theta[i]) / 1e10)
+        elif name == "Delta_Neff_init":
+            continue
         else:
             p[name] = float(theta[i])
+    if bbn_y is not None:
+        p["YHe"], p["Neff"], p["T_nu_massless"] = (float(v) for v in bbn_y)
     return p
+
+
+def _bbn_values(thetas):
+    """(N, 3) [YHe, Neff, T_nu_massless] of physical D-vectors through the LINX stage; None without it."""
+    if BBN is None:
+        return None
+    th = np.asarray(thetas, float)
+    return BBN.values(th[:, I_OB], th[:, I_DN])
 
 
 if TOY is not None:
     pass
 elif LNA_GRID == "fixed":
-    model = model.freeze_lna_grid(build_dict(CENTER))
+    model = model.freeze_lna_grid(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
     print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "
           f"{float(model.specs['lna_grid_nodes'][0]):.6f}", flush=True)
 elif LNA_GRID != "visibility":
@@ -498,7 +533,9 @@ def values_rows(BASE, FREE, X):
     N = len(X); out = np.empty(N)
     _trace("value", BASE, FREE, X)
     for s, e, (b, f, x) in _padded(N, VAL_CHUNK, BASE, FREE, X):
-        batch = [build_dict(theta_of(b[k], f[k], x[k])) for k in range(len(x))]
+        th = [theta_of(b[k], f[k], x[k]) for k in range(len(x))]
+        ys = _bbn_values(th)
+        batch = [build_dict(th[k], None if ys is None else ys[k]) for k in range(len(x))]
         out[s:e] = _chi2_from_out(model.call_batched(batch, shard=DO_SHARD))[:e - s]
     if TRACE_EVALS:
         print(f"[eval] value END {time.strftime('%H:%M:%S')} chi2 " + " ".join(f"{v:.3f}" for v in out), flush=True)
@@ -508,15 +545,23 @@ def values_rows(BASE, FREE, X):
 # ======================================================================
 # gradient + Gauss-Newton curvature (AD only)
 # ======================================================================
-def _phys_to_derived(thD):
+def _phys_to_derived(thD, bbn=None):
     """physical D-vector -> derived param dict, _to_float'd so the jvp tangent's
-    inexact-array tree matches staged_cl_and_grad's _to_float'd primal."""
+    inexact-array tree matches staged_cl_and_grad's _to_float'd primal. With the BBN stage, bbn =
+    (y, J, th0) of the row: YHe / Neff / T_nu_massless enter as y + J (thD - th0)[omega_b, Delta_Neff_init],
+    exact at th0 with the exact first derivative, so the jvp carries LINX's tangent without re-running it."""
     p = dict(FIXED)
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = jnp.exp(thD[i]) / 1e10
+        elif name == "Delta_Neff_init":
+            continue
         else:
             p[name] = thD[i]
+    if bbn is not None:
+        y, J, th0 = bbn
+        lin = jnp.asarray(y) + jnp.asarray(J) @ jnp.stack([thD[I_OB] - th0[I_OB], thD[I_DN] - th0[I_DN]])
+        p["YHe"], p["Neff"], p["T_nu_massless"] = lin[0], lin[1], lin[2]
     return _bg_to_float(model.add_derived_parameters(p))
 
 
@@ -590,14 +635,24 @@ def _gn_block(BASE, FREE, X):
     """One staged AD call over a block of rows: (chi2 (B,), grad (B,P'), GN (B,P',P')). Direction j
     of row b is SIGMA[i] e_i, i = FREE[b, j] (so gradient and curvature are in scaled coords)."""
     B, Pp = X.shape
-    thetas = [jnp.asarray(theta_of(BASE[b], FREE[b], X[b])) for b in range(B)]
-    full_ps = [_phys_to_derived(t) for t in thetas]
+    th_np = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(B)])
+    thetas = [jnp.asarray(t) for t in th_np]
+    bbn = [None] * B
+    if BBN is not None:                            # one batched LINX call (values + 3x2 Jacobians) per block
+        n0 = BBN.n_fallback; t0 = time.perf_counter()
+        ys, Js = BBN.values_and_jac(th_np[:, I_OB], th_np[:, I_DN])
+        if TRACE_EVALS:
+            print(f"[eval] bbn jac {B} rows {time.perf_counter() - t0:.0f}s, {BBN.n_fallback - n0} lanes "
+                  f"recomputed without vmap", flush=True)
+        bbn = [(ys[b], Js[b], th_np[b]) for b in range(B)]
+    full_ps = [_phys_to_derived(t, bb) for t, bb in zip(thetas, bbn)]
     per = []                                       # [B][P'] filtered tangent dicts
     for b in range(B):
         dots = []
         for j in range(Pp):
             i = int(FREE[b, j])
-            _, fd = jax.jvp(_phys_to_derived, (thetas[b],), (jnp.zeros(D).at[i].set(SIG[i]),))
+            _, fd = jax.jvp(lambda t: _phys_to_derived(t, bbn[b]), (thetas[b],),
+                            (jnp.zeros(D).at[i].set(SIG[i]),))
             dots.append(eqx.filter(fd, eqx.is_inexact_array))
         per.append(dots)
     params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs), *[per[b][j] for b in range(B)])
@@ -1240,6 +1295,18 @@ def profile_lockstep(pois, outdir):
         lo2, _, hi2, reg2 = poi_interval(grid, chi2, CL2, bnd)
         lo95, _, hi95, reg95 = poi_interval(grid, chi2, CL95, bnd)
         sw, mw, dw = wald_fit(grid, chi2)
+        extra = {}
+        if BBN is not None:                          # BBN outputs of the envelope rows; the Delta_Neff_init
+            yb = _bbn_values(np.array([theta_of(T["BASE"][r], T["FREE"][r], T["X"][r]) for r in e]))
+            extra["derived_bbn"] = yb                # profile also mapped to Neff (monotone in the input)
+            if poi == "Delta_Neff_init":
+                neff = yb[:, 1]
+                fn = lambda v: float(np.interp(v, grid, neff)) if np.isfinite(v) else np.nan
+                extra.update(derived_neff=neff, sigma1_neff=np.array([fn(lo1), fn(mid), fn(hi1)]),
+                             cl95_neff=np.array([fn(lo95), fn(hi95)]))
+                print(f"[{poi}] as Neff: best {fn(mid):.4f}; 68% [{fn(lo1):.4f},{fn(hi1):.4f}]; "
+                      f"95% [{fn(lo95):.4f},{fn(hi95):.4f}]; YHe at the best fit {np.interp(mid, grid, yb[:, 0]):.5f}",
+                      flush=True)
         mmax = max(1, max(len(flags[(i, j)][2]) for j in range(NPTS)))
         minima_x = np.full((NPTS, mmax, P), np.nan); minima_chi2 = np.full((NPTS, mmax), np.nan)
         minima_kind = np.full((NPTS, mmax), "", dtype="U12")
@@ -1267,7 +1334,7 @@ def profile_lockstep(pois, outdir):
                  rows_converged=conv[rows], rows_stalled=T["stalled"][rows], rows_at_box=at_box[rows],
                  rows_barrier=T["barrier"][rows], kinds=np.array(KINDS),
                  ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2, DF_P, DF_ALPHA]),
-                 gtol=GTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS)
+                 gtol=GTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
         edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
         warn = ""

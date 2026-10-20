@@ -1,5 +1,24 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-20 (afternoon): item (20) LINX in the driver DONE as a batched BBN stage (CHANGELOG 2026-10-20
+afternoon).** Config "bbn": "linx" (scan/configs/lcdm_dneff_linx_plikfull.py, POI Delta_Neff_init in place of
+Neff, no fixed YHe); scan/bbn_stage.py computes YHe / Neff / T_nu_massless per row with the vendored LINX and
+the driver feeds the engine (bbn_type="") values + chain-rule tangents. Validated against the engine's own
+LINX branch (4e-6) and single-cosmology jacfwd (3e-6). Costs: ~23 s per 64 values, ~3 min per 64 Jacobians
+(~+20% per production iteration). Pitfalls recorded in the CHANGELOG: do NOT vmap the LINX Jacobian (NaN on
+lane-specific inputs, poisons the batch), no Mesh sharding (collective timeouts), no pmap (lineax). Launcher
+scan/profile_prod_linx_dneff.slurm (tag _v4linx). The EM-coupled WIMP itself is NOT implemented anywhere
+(neither the vendored abcmb/linx nor /pscratch/sd/c/carag/LINX has it): it needs a LINX thermodynamics
+extension (a light particle in equilibrium with the EM plasma heating photons vs neutrinos, Boehm/Nollett-
+Steigman style) exposed as a BackgroundModel input, then a stage input + config POI with a lower bound; the
+driver side (bounds, one-sided intervals, bbn stage) is ready for it. Open: the vmapped-Jacobian failure
+(jvp through diffrax+Kvaerno under vmap) deserves an upstream minimal repro; the 4-device Jacobian dispatch
+only overlaps ~1.4x. PRODUCTION _v4linx SUBMITTED (7 POIs incl. Delta_Neff_init, multistart defaults): job
+60055523 (6 h, deadline 2026-10-21T06:00, before the maintenance if it starts in time) and 60055524 (48 h,
+after it, resumes from the checkpoints); logs logs/abcmb_pf_linx_<jobid>.out. On completion compare with
+_v3 (add a '_v4linx' RUNS entry with CEN_V3 but Delta_Neff_init in place of Neff -- compare_profile_runs.py
+needs a small generalisation for the renamed POI) and read the "[Delta_Neff_init] as Neff" line.
+
 **2026-10-20 12:30: _v3 DONE (job 60025795, 3h52m on 4 nodes; CHANGELOG 2026-10-20).** All 7 POIs converged
 (every row under GTOL, 0 stalled, 0 flagged points, no deflation/branches needed; the spread starts agree with
 the warm rows), min chi2 2759.06 at the recentred centre, clean two-sided parabolas inside the grids:

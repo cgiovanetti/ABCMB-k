@@ -9,6 +9,39 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-20 (afternoon) — LINX in the profile driver (HANDOFF item 20): a batched BBN stage, YHe / Neff / T_nu per row
+-------------------------------------------------------------------------------------------------------------------------
+Config "bbn": "linx" (scan/configs/lcdm_dneff_linx_plikfull.py: the rc profile with Delta_Neff_init in place of Neff
+and no fixed YHe). The engine stays on bbn_type="" and the driver does the BBN step itself (scan/bbn_stage.py,
+LinxStage, the vendored abcmb.linx): (omega_b, Delta_Neff_init) -> (YHe, Neff, T_nu_massless), the same three lines
+as the engine's own LINX branch, for all rows of a call at once; build_dict injects the values, _phys_to_derived
+injects y + J (theta - theta_row) so the staged jvp carries LINX's exact tangent by the chain rule without re-running
+it; grad_gn_rows gets one LINX call per block. Checks (scan/.mm/linx_stage_check*.log, CPU node): stage = the engine's
+add_derived_parameters(bbn_type="linx") to 4e-6 in YHe, 6e-7 in Neff (solver tolerance); the 3x2 Jacobian = jacfwd of
+one cosmology to 3e-6; dNeff/dDelta_Neff_init = 0.2726 (the 0.272 dilution), dYHe/dNeff = 0.013, dYHe/domega_b =
+0.43. What did not work, and why (scan/.mm/linx_batch_repro.log, linx_nan_scan.log, linx_jac_localize.log,
+linx_jac_bisect*.log): a Mesh-sharded vmap over 16 host devices turns the ODE loops' batch-wide stop test into a
+cross-device all-reduce per step and XLA aborts the rendezvous; pmap(vmap) trips lineax's linear_solve primitive
+("pytree does not match out_structure"); per-device dispatch of the vmapped values is slower than one device (31 vs
+23 s per 64); and the vmapped JACOBIAN is wrong: the jvp through the implicit Kvaerno network solve goes NaN on
+lane-specific inputs under vmap (one lane in five, with a batch of one too, never without vmap; every piece of the
+chain is finite under a plain jvp), and one such lane poisons the whole batch (all 64 NaN at B=64). Final design:
+values vmapped on one host device in chunks of 64 padded to multiples of 16 (23 s per 64 warm, ~40 s compile per
+shape); Jacobians one un-vmapped jvp program per cosmology (exact on every lane, ~4 s), dispatched round-robin over
+JAC_DEVICES=4 host devices (each compiles its own copy, ~40 s, and the persistent cache refuses them: host
+callbacks). Timings on a CPU node (scan/.mm/linx_stage_timing.log): values 6 s per 16 and 23 s per 64; Jacobians
+46 s per 16 and 184 s per 64 (~2.9 s per lane, the 4 devices only overlap ~1.4x), i.e. ~4 min on top of a ~17 min
+78-row ABCMB gradient call in production. max_steps raised above the engine's defaults change nothing. The driver now sets EQX_ON_ERROR=nan before
+importing equinox (the launcher did already). Delta_Neff_init profiles also get derived_neff / sigma1_neff /
+cl95_neff in the npz and an "as Neff" log line. Launcher scan/profile_prod_linx_dneff.slurm (= the _v3 one with the
+linx config, tag _v4linx). Shakeout on the real likelihood (interactive 60054653, 80 GB node, Delta_Neff_init x 5
+points + 9 spreads, PA_MAXIT=1, scan/.mm/linx_shake2.log, npz tag _linxshake): runs end to end; the centre (the _v3
+best fit) has chi2 2759.37 with the BBN helium (0.2428 vs the fixed 0.2454) and |g| 8.5, one LM step takes the base
+rows to |g| 0.03-0.09; preliminary Neff best 2.821, 68% [2.665, 3.036]; per call: LINX Jacobians 48 s per 16-row
+block on top of the ~12 min ABCMB gradient, LINX values 6-23 s per value call. Production _v4linx submitted from
+main: job 60055523 (6 h, --deadline 2026-10-21T06:00) and 60055524 (48 h, after the maintenance, resumes).
+
+
 2026-10-20 — _v3 LCDM+Neff full-plik profile DONE: 7 POIs in 3h52m on 4 nodes, multistart on, no multimodality found
 ----------------------------------------------------------------------------------------------------------------------
 Job 60025795 (the 12 h pre-maintenance copy; the 48 h copy 60025762 cancelled, nothing left to resume). First
