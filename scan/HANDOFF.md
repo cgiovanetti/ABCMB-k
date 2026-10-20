@@ -7,9 +7,8 @@ reserved for maintenance 2026-10-21 06:00 -> 10-27 23:00, so the 48 h job cannot
 copy, job 60025795 (same launcher, --time=12:00:00 --deadline=2026-10-21T06:00:00, name abcmb_pf_neff12,
 log logs/abcmb_pf_neff_60025795.out), runs the first ~12 h if it can start before the maintenance (Slurm
 drops it otherwise, so the two never overlap) and the 48 h job resumes from its checkpoints afterwards
-(done POIs skipped, LM STATE + TABLE files in scan/results). Note: origin/main (the fork) has one commit
-c653b26 "Update accuracy.yml" that conflicts with the merged .github/workflows/accuracy.yml; local main
-(253bedb) is not pushed -- resolve by taking one side of that CI file; development is pushed.
+(done POIs skipped, LM STATE + TABLE files in scan/results). main and development are pushed (4892ab3: the
+fork's CI workflow stays manual-only, Python pinned to 3.12 because jax 0.8.1 has no 3.15 wheels).
 Validation on development before the merge (scan/.mm/val_tests.log): snapshots
 regenerated on GPU after the upstream merge; test_snapshots 5, test_fixed_grid 1, halofit 9, k_tail 3,
 lm_tools 7, profile_toy 2 all pass; accuracy_test fails only by the known classy 3.3.4 delta_l_max=500 vs
