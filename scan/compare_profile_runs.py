@@ -8,9 +8,9 @@ parabola fit to that envelope gives an indicative best fit and 1-sigma.
 `sig` per run is hardcoded because configs/lcdm_neff_plikfull_rc.py was edited in
 place between _pfrc and _widecdm (xstar is stored in each run's own sigma units).
 
-_v2fix ran on the Cl-step + AD fixes (branch xe-c1), a different chi2 surface: its rows
-are offset by their own best chi2, and the envelope/parabola uses only those runs when
-any is selected.
+_v2fix ran on the Cl-step + AD fixes (branch xe-c1) and _v3 on the upstream merge with the
+massive neutrino evolved: different chi2 surfaces (SURFACE), each offset by its own best
+chi2; the envelope/parabola uses the newest surface present among the selected runs.
 
 CPU only:  python scan/compare_profile_runs.py [TAG ...]   (default: every run in RUNS)
 """
@@ -24,17 +24,26 @@ import matplotlib.pyplot as plt
 RES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 ORDER = ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"]
 CEN_PF = [0.6736, 0.02237, 0.1200, 0.9649, 3.044, 0.0544, 3.044]      # lcdm_neff_plikfull.py
-CEN_RC = [0.6662, 0.02229, 0.11654, 0.95986, 3.0446, 0.05933, 2.8268]  # lcdm_neff_plikfull_rc.py
+CEN_RC = [0.6662, 0.02229, 0.11654, 0.95986, 3.0446, 0.05933, 2.8268]  # lcdm_neff_plikfull_rc.py to 2026-10-19
+CEN_V3 = [0.65895, 0.022221, 0.116773, 0.958684, 3.041751, 0.057532, 2.821114]  # rc recentred (massive nu)
 SIG_OLD = [0.0054, 0.00015, 0.0012, 0.0042, 0.014, 0.0073, 0.2]
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]         # 2026-07-07 edit
 RUNS = {"_pf": (CEN_PF, SIG_OLD), "_pfrc": (CEN_RC, SIG_OLD), "_widecdm": (CEN_RC, SIG_NEW),
         "_fixprec": (CEN_RC, SIG_NEW), "_fixprec2": (CEN_RC, SIG_NEW), "_v2": (CEN_RC, SIG_NEW),
-        "_v2fix": (CEN_RC, SIG_NEW)}
+        "_v2fix": (CEN_RC, SIG_NEW), "_v3": (CEN_V3, SIG_NEW)}
 STYLE = {"_pf": ("#1baf7a", "s"), "_pfrc": ("#2a78d6", "o"), "_widecdm": ("#eb6834", "^"),
          "_fixprec": ("#eda100", "D"), "_fixprec2": ("#e87ba4", "v"), "_v2": ("#222222", "*"),
-         "_v2fix": ("#7b3fbf", "P")}
-XBOX = {"_v2": 10.0, "_v2fix": 10.0}                                    # PA_XBOX; 5.0 otherwise
-FIXED_CL = {"_v2fix"}                                                   # Cl-step + AD fixes (xe-c1)
+         "_v2fix": ("#7b3fbf", "P"), "_v3": ("#d62728", "h")}
+XBOX = {"_v2": 10.0, "_v2fix": 10.0, "_v3": 10.0}                       # PA_XBOX; 5.0 otherwise
+# chi2 surface of each run (runs on different surfaces are offset by their own best chi2 and never share
+# an envelope): "pre-fix" = the original Cls; "xe-c1" = Cl-step + AD fixes; "massive-nu" = the upstream
+# merge (#34-#50, #53) with the massive neutrino evolved (2026-10-19). The envelope uses the newest present.
+SURFACE = {"_v2fix": "xe-c1", "_v3": "massive-nu"}
+SURF_ORDER = ["pre-fix", "xe-c1", "massive-nu"]
+
+
+def _surf(tag):
+    return SURFACE.get(tag, "pre-fix")
 
 
 def load_rows(tags):
@@ -64,13 +73,13 @@ def main():
     smc = np.load(os.path.join(RES, "smc_plikfull_neff.npz"), allow_pickle=True)
     SMC = {str(k): (m, s) for k, m, s in zip(smc["cosmo_order"], smc["marg_mean"], smc["marg_std"])}
     gmins = {}
-    for fixed in (False, True):
-        cs = [r[2] for r in rows if not r[3] and (r[0] in FIXED_CL) == fixed]
+    for surf in SURF_ORDER:
+        cs = [r[2] for r in rows if not r[3] and _surf(r[0]) == surf]
         if cs:
-            gmins[fixed] = min(cs)
-            print(f"global best chi2 over unpinned rows, {'fixed' if fixed else 'pre-fix'} Cl: {gmins[fixed]:.3f}")
-    env_fixed = True in gmins
-    gmin = gmins[env_fixed]
+            gmins[surf] = min(cs)
+            print(f"global best chi2 over unpinned rows, {surf} Cl surface: {gmins[surf]:.3f}")
+    env_surf = [s for s in SURF_ORDER if s in gmins][-1]
+    gmin = gmins[env_surf]
     print(f"{'POI':10s} {'envelope best':>13s} {'+/-1sig':>9s}   {'SMC mean +/- std':>20s}")
     fig, axes = plt.subplots(2, 4, figsize=(17, 8.2))
     axes = axes.ravel()
@@ -81,13 +90,13 @@ def main():
             rr = sorted([r for r in rows if r[0] == tag and r[1] == poi], key=lambda r: r[4][j])
             if not rr:
                 continue
-            fixed = tag in FIXED_CL
-            x = np.array([r[4][j] for r in rr]); c = np.array([r[2] for r in rr]) - gmins[fixed]
+            surf = _surf(tag)
+            x = np.array([r[4][j] for r in rr]); c = np.array([r[2] for r in rr]) - gmins[surf]
             ok = ~np.array([r[3] for r in rr])
             col, mk = STYLE[tag]
             ax.plot(x[ok], c[ok], marker=mk, ms=6, lw=1.4, color=col, label=tag.lstrip("_"))
             ax.plot(x[~ok], np.minimum(c[~ok], 9.6), "x", ms=8, color=col)
-            if fixed != env_fixed:
+            if surf != env_surf:
                 continue
             for xi, ci in zip(x[ok], c[ok]):
                 if ci < 30:

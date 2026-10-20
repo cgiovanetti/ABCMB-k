@@ -26,9 +26,15 @@ from abcmb import species
 
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"],
+    # 2026-10-19: recentred on the best fit WITH the massive neutrino evolved (the runs before a21df86
+    # silently dropped it: chi2 2788.8 at the old centre vs 2757.9 massless). Source: the one-node
+    # launcher shakeout (scan/.mm/prod_shake.log, tag _v3shake), the h = 0.65895 row after one LM step from
+    # the linear-response start, chi2 2759.08, ||g|| 0.84; shifts from the old centre <= 0.5 grid_sig.
+    # Old centre (massless joint MLE, job 54980729): h 0.6662, omega_b 0.02229, omega_cdm 0.11654,
+    # n_s 0.95986, ln10As 3.0446, tau_reion 0.05933, Neff 2.8268.
     "cen": {
-        "h": 0.6662, "omega_b": 0.02229, "omega_cdm": 0.11654,
-        "n_s": 0.95986, "ln10As": 3.0446, "tau_reion": 0.05933, "Neff": 2.8268,
+        "h": 0.65895, "omega_b": 0.022221, "omega_cdm": 0.116773,
+        "n_s": 0.958684, "ln10As": 3.041751, "tau_reion": 0.057532, "Neff": 2.821114,
     },
     "sig": {
         "h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0013, # CG changed from 0.0012

@@ -9,6 +9,23 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-19 (23:00) — development -> main; _v3 production submitted; rc config recentred on the massive-nu best fit
+------------------------------------------------------------------------------------------------------------------
+Validation on development (scan/.mm/val_tests.log): snapshots regenerated on GPU after the upstream merge;
+test_snapshots 5, test_fixed_grid 1, halofit 9, k_tail 3, lm_tools 7, profile_toy 2 pass; accuracy_test fails
+only by the known classy 3.3.4 delta_l_max=500 vs ABCMB l_max/2 mismatch (TT 1.17e-2 at l~2500). Launcher
+shakeout with the massive neutrino evolved (scan/.mm/prod_shake.sh, interactive 60023717, 1 node, h x 21 + 18
+spread starts, PA_MAXIT=1): the old centre (massless joint MLE) has chi2 2788.8 and |g| ~130 with the massive
+nu; one LM step from the linear-response start takes every row to 2759-2766 (|g| ~3), minimum 2759.08 at
+h = 0.65895. Costs, warm cache, 1 node: value 39 cosmologies 4.5 min (bucket 64), 156 <= 19 min (bucket 256
+incl. compile), 39-row gradient 17.4 min (bucket 64) -> ~45 min per production iteration (78 rows/node).
+scan/configs/lcdm_neff_plikfull_rc.py `cen` recentred on that row (shifts <= 0.5 grid_sig; old values in the
+comment). main = development (e0c3740 + this), pushed; the fork's CI workflow stays manual-only with Python
+pinned to 3.12 (jax 0.8.1 has no 3.15 wheels). Production _v3: job 60025762 (48 h) waits for the machine-wide
+maintenance (2026-10-21 06:00 -> 10-27 23:00); job 60025795 (12 h, --deadline 10-21 06:00) runs before it if
+it can start in time and 60025762 resumes from its checkpoints.
+
+
 2026-10-19 (late night) — Toy bimodal end-to-end test of the multimodality phases; branches also seed from spread starts
 -------------------------------------------------------------------------------------------------------------------------
 User request: check the machinery on an invented bimodal problem. The driver now accepts a config `toy` = {"chi2":

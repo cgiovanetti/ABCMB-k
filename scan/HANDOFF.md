@@ -16,11 +16,14 @@ ABCMB l_max/2 mismatch (TT 1.17e-2 at l~2500; the merge-vs-CLASS check at matche
 Launcher shakeout with the massive neutrino actually evolved (scan/.mm/prod_shake.sh, interactive 60023717,
 1 node, h x 21 points + 18 spread starts, PA_MAXIT=1, log scan/.mm/prod_shake.log, npz tag _v3shake; still
 running when this was written -- read the log): the config centre is NOT the massive-nu best fit (chi2 2788.8
-there vs 2757.9 in the earlier, effectively massless runs; |g| ~130 at the centre; the minimum along h at the
-centre nuisances sits near h~0.661), so the first LM steps are large and the grids may need recentering
-(PA_MLE_PREPASS=1 or a new `cen`) if a POI's minimum rails; costs on one node with the massive nu: value call
-39 cosmologies 4.5 min (bucket 64, warm cache), 42-cosmology call 7.4 min and the 39-row gradient 24 min with
-their one-time compiles. On completion: add '_v3' to scan/compare_profile_runs.py RUNS (expect a shifted
+there vs 2757.9 in the earlier, effectively massless runs; |g| ~130 at the centre). DONE 22:45: one LM step
+took every base row to chi2 2759-2766 (|g| 130 -> ~3), minimum 2759.08 at h = 0.65895, preliminary 68%
+[0.643, 0.675] (the 95% lower end fell just off the old grid). The rc config `cen` is now that row's point
+(shifts <= 0.5 grid_sig; old centre kept in the config comment), which the pending jobs pick up; _v3 rows'
+xstar are relative to the NEW centre (compare_profile_runs.py CEN_V3). Costs on one node with the massive
+nu, warm cache: value call 39 cosmologies 4.5 min (bucket 64), 156 cosmologies <= 19 min (bucket 256, with
+its compile), 39-row gradient 17.4 min (bucket 64); a production node (78 rows) is ~45 min per iteration,
+so 12 h ~ 15 iterations and 48 h ~ 60. On completion: add '_v3' to scan/compare_profile_runs.py RUNS (expect a shifted
 best fit vs _v2fix: the massive nu is new), check the per-POI logs for flagged points / branches, and that
 every POI's 68% ends are inside its grid. A twin of this Claude session on another login node mirrored tool
 calls for ~3 h on 2026-10-19 (CHANGELOG night entry): if two of anything appear, check `scontrol show step`.
