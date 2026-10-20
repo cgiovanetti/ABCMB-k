@@ -404,11 +404,13 @@ elif LNA_GRID != "visibility":
 
 
 def _bucket(n, cap):
-    """batch size for n rows: the smallest NDEV * 4^k >= n, at most cap. A few fixed sizes keep the
-    compiled shapes few while converged and stalled rows leave the batches."""
+    """batch size for n rows: the smallest NDEV * 2^k >= n, at most cap. A few fixed sizes keep the
+    compiled shapes few while converged and stalled rows leave the batches; doubling (not 4x: a
+    production node's 168-cosmology value call padded to 256 and its 42-row gradient call to 64, ~50%
+    wasted work per iteration, 2026-10-19) caps the padding at 2x for a few more compiles."""
     b = NDEV
     while b < n and b < cap:
-        b *= 4
+        b *= 2
     return min(b, cap)
 
 
