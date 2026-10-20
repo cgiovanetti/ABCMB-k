@@ -9,6 +9,28 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-19 (late night) — Toy bimodal end-to-end test of the multimodality phases; branches also seed from spread starts
+-------------------------------------------------------------------------------------------------------------------------
+User request: check the machinery on an invented bimodal problem. The driver now accepts a config `toy` = {"chi2":
+f(theta)} (jax) in place of ABCMB + the likelihoods: only values_rows / grad_gn_rows change (AD gradient; the
+Hessian with floored eigenvalues as the PSD curvature), the row machinery, phases and outputs are the production
+code. scan/configs/toy_bimodal.py: POI a, nuisance b with two Gaussian wells at +-3 coupled to a through tanh(b)
+(each branch a full parabola, centres +-1.1, the b < 0 one 0.5 higher, a weak b^2 confinement so the tails are
+not flat), stiff spectator c; exact profile = lower envelope of the two parabolas, 68% region a union of two
+intervals, 95% one. pytests/test_profile_toy.py (CPU, 10 s, 2 tests): with the defaults (3 spreads at 6 of 21
+points, spread 2.5) the -b spread finds the second well at a = -3, -1.8, -0.6 (flags: 2 distinct minima), the 12
+deflation walks end recaptured/escaped (no third point: correct), one branch seed carries the second well to all
+21 points, the envelope matches the exact profile to 2e-3, 68% union [-1.812, -0.413] U [0.133, 2.100] vs exact
+[-1.807, -0.393] U [0.100, 2.100] (pchip on a 0.3 grid), 95% [-2.926, off-grid] vs -2.928; with PA_MS_K=0 the
+driver follows the warm start's branch alone and is wrong by > 1 left of the crossing. Found and fixed on the
+way: branch seeds were taken only from deflation end points, so a second minimum found by a spread start was
+never propagated across the grid (item 17 says every minimum found) -- seeds are now every converged row whose
+minimum differs from the warm start's at that point (spread rows in round 1, walks in their round), clustered by
+MS_DX, <= MS_BRANCH_MAX per POI; and the toy path returned read-only views of jax arrays that lm_rows updates in
+place. Plot + npz of the run: scan/.mm/toy/. Before the confinement term the flat Gaussian tails were reported
+as stationary points (gradient < GTOL there) -- the driver was right, the toy was not.
+
+
 2026-10-19 (night) — Profile driver: multimodality (spread starts, flags, deflation walks, branches, union intervals)
 --------------------------------------------------------------------------------------------------------------------
 HANDOFF TODO 14-18, branch multimodal in the worktree ../ABCMB-k-multimodal (off development 5487640; a worktree

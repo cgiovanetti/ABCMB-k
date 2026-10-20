@@ -1,5 +1,10 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-19 (late night): the multimodality phases pass an end-to-end test on a toy bimodal objective**
+(config `toy`, scan/configs/toy_bimodal.py, pytests/test_profile_toy.py, CPU 10 s; CHANGELOG): the second
+branch is found, propagated and the 68% interval is a union; branch seeds now also come from spread starts.
+Still unseen: a genuinely multimodal point on the real likelihood.
+
 **2026-10-19 (night): TODO (14)-(18) DONE; branch `multimodal` merged into development (fast-forward), its
 worktree removed (CHANGELOG 2026-10-19 night).** scan/lm_tools.py (pure numpy: LM step, deflation, spread
 starts, clustering/flags, union regions) + pytests/test_lm_tools.py (toy double well, 7 pass). Driver phases:

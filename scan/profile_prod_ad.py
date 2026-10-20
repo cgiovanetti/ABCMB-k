@@ -41,9 +41,10 @@ physical bound), and a per-point AD convergence certificate.
      sigma apart) or when they disagree in chi2 by > PA_MS_DCHI2. Flagged points are
      re-run with every known minimum deflated at once (Farrell, Birkisson & Funke 2015:
      the ordinary LM step d becomes d / (1 - grad(log M).d), M = prod_i (|x - x_i|^-p +
-     alpha)), which converges to stationary points other than the known ones; each new
-     one (a second minimum, or a saddle, whose chi2 is the barrier) seeds a branch: an
-     ordinary LM run from it at every grid point of that POI. The profile is the lower
+     alpha)), which converges to stationary points other than the known ones. Each
+     distinct minimum found at a grid point, by a spread start or by a walk (a second
+     minimum, or a saddle, whose chi2 is the barrier), seeds a branch: an ordinary LM run
+     from it at every grid point of that POI. The profile is the lower
      envelope over all starts and branches; the intervals are the union of the regions
      below threshold (one region for a unimodal profile). The per-POI npz keeps every row.
 
@@ -81,7 +82,7 @@ from abcmb import species as _species
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
-from scan.lm_tools import (proj_grad, lm_step, deflate_step, spread_starts, flag_point,
+from scan.lm_tools import (proj_grad, lm_step, deflate_step, spread_starts, flag_point, cluster_points,
                            union_regions, is_multimodal)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -276,8 +277,9 @@ _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 # minimum is reversed wherever the walk is, so it leaves that basin along the ray through its start.
 # Farrell's shift alpha > 0 limits the reach to ~alpha^(-1/DF_P) scaled sigma; beyond it the step is
 # amplified past the minimum instead of reversed and the walk hops around it (then: recaptured).
-# Shakeout knobs: MS_FORCE=1 flags every multistart point; MS_BRANCH_FROM=any branches from every
-# deflation end point, not only the new stationary ones.
+# Branch seeds: every distinct minimum a spread start or a walk found (not the warm start's one at that
+# point). Shakeout knobs: MS_FORCE=1 flags every multistart point; MS_BRANCH_FROM=any also seeds from
+# every deflation end point, converged or not.
 MS_K = int(os.environ.get("PA_MS_K", "3"))
 MS_NPTS = int(os.environ.get("PA_MS_NPTS", "6"))
 MS_SPREAD = float(os.environ.get("PA_MS_SPREAD", "2.0"))
@@ -339,19 +341,30 @@ POIS = [p.strip() for p in POIS if p.strip() in ORDER]
 RANK = int(os.environ.get("SLURM_PROCID", 0))
 NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 
-pl = PlikLite()          # always built: its abcmb_cl_to_Dl feeds the low-ell likelihoods
-lowee = LowLEE() if USE_LOWEE else None
-lowtt = LowLTT() if USE_LOWTT else None
-plf = None
-_plf_prof_B = None       # jitted batched inner nuisance profile
-if USE_PLIK_FULL:
-    from scan.plik_full import PlikFull
-    plf = PlikFull()
-    _plf_prof_B = jax.jit(lambda c: plf.profile_batched(c))
-model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
-              output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
-              rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
-              rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384)
+# A config may carry toy = {"chi2": f(theta_D) -> chi2 (jax)}: a toy objective in place of ABCMB and the
+# likelihoods (scan/configs/toy_bimodal.py, pytests/test_profile_toy.py). Only values_rows / grad_gn_rows
+# change (gradient by AD, curvature = the Hessian with its eigenvalues floored, standing in for J^T W J);
+# the row machinery, the phases and the outputs are the production code.
+TOY = CFG.get("toy", None)
+if TOY is None:
+    pl = PlikLite()          # always built: its abcmb_cl_to_Dl feeds the low-ell likelihoods
+    lowee = LowLEE() if USE_LOWEE else None
+    lowtt = LowLTT() if USE_LOWTT else None
+    plf = None
+    _plf_prof_B = None       # jitted batched inner nuisance profile
+    if USE_PLIK_FULL:
+        from scan.plik_full import PlikFull
+        plf = PlikFull()
+        _plf_prof_B = jax.jit(lambda c: plf.profile_batched(c))
+    model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
+                  output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+                  rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
+                  rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384)
+else:
+    pl = lowee = lowtt = plf = _plf_prof_B = model = None
+    _toy_f = TOY["chi2"]
+    _toy_chi2_B = jax.jit(jax.vmap(_toy_f))
+    _toy_cgh_B = jax.jit(jax.vmap(lambda t: (_toy_f(t), jax.grad(_toy_f)(t), jax.hessian(_toy_f)(t))))
 CEN = jnp.asarray(CENTER); SIG = jnp.asarray(SIGMA)
 try:
     NDEV = len(jax.devices('gpu'))
@@ -395,7 +408,9 @@ def build_dict(theta):
     return p
 
 
-if LNA_GRID == "fixed":
+if TOY is not None:
+    pass
+elif LNA_GRID == "fixed":
     model = model.freeze_lna_grid(build_dict(CENTER))
     print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "
           f"{float(model.specs['lna_grid_nodes'][0]):.6f}", flush=True)
@@ -453,9 +468,33 @@ def _trace(tag, BASE, FREE, X):
                   flush=True)
 
 
+def _toy_values(BASE, FREE, X):
+    th = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(len(X))])
+    return np.array(_toy_chi2_B(jnp.asarray(th)), dtype=float)      # a copy: lm_rows updates it in place
+
+
+def _toy_gn(BASE, FREE, X):
+    """chi2, gradient and a PSD curvature of the toy objective in each row's scaled free coordinates:
+    the Hessian with its eigenvalues floored stands in for the Gauss-Newton matrix (PSD like J^T W J,
+    so a saddle is as invisible to it as to the production curvature)."""
+    N, Pp = X.shape
+    th = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(N)])
+    c, g, H = (np.array(v, dtype=float) for v in _toy_cgh_B(jnp.asarray(th)))
+    G = np.empty((N, Pp)); HH = np.empty((N, Pp, Pp))
+    for b in range(N):
+        f = FREE[b]; s = SIGMA[f]
+        G[b] = g[b, f] * s
+        Hb = H[b][np.ix_(f, f)] * s[:, None] * s[None, :]
+        ev, V = np.linalg.eigh(0.5 * (Hb + Hb.T))
+        HH[b] = (V * np.maximum(ev, 1e-6 * max(float(ev.max()), 1e-12))) @ V.T
+    return c, G, HH
+
+
 def values_rows(BASE, FREE, X):
     """(N,) total chi^2 (profiled + low-ell) of the rows, through call_batched in bucketed chunks of
     <= VAL_CHUNK cosmologies (the per-device working set is set by the chunk, not by N)."""
+    if TOY is not None:
+        return _toy_values(BASE, FREE, X)
     N = len(X); out = np.empty(N)
     _trace("value", BASE, FREE, X)
     for s, e, (b, f, x) in _padded(N, VAL_CHUNK, BASE, FREE, X):
@@ -577,6 +616,8 @@ def _gn_block(BASE, FREE, X):
 
 def grad_gn_rows(BASE, FREE, X):
     """(chi2 (N,), grad (N,P'), GN (N,P',P')) for every row, in bucketed blocks of <= AD_BCHUNK."""
+    if TOY is not None:
+        return _toy_gn(BASE, FREE, X)
     N, Pp = X.shape
     c = np.empty(N); G = np.empty((N, Pp)); H = np.empty((N, Pp, Pp))
     _trace("adgrad", BASE, FREE, X)
@@ -1130,14 +1171,30 @@ def profile_lockstep(pois, outdir):
             stage = f"defl{rnd}"
             _save_table(tpath, T, stage)
         if _stage_rank(stage) < 2 * rnd:
-            # ---- branches: an ordinary LM run from each new stationary point of this round at every
-            # grid point of its POI (at most MS_BRANCH_MAX seeds per POI, lowest chi2 first) ----
+            # ---- branches: every distinct minimum found at a grid point by a spread start (round 1) or
+            # by a deflation walk (this round) that is not the one the warm start reached there, clustered
+            # across the POI's grid points by MS_DX so each branch is seeded once, at most MS_BRANCH_MAX
+            # per POI (lowest chi2 first); each seed is an ordinary LM run from its point at every grid
+            # point of its POI ----
+            conv, _ = _row_conv(T)
             seeds = []
             for p in pois_idx:
-                cand = np.where((T["POI"] == p) & (T["KIND"] == 2) & (T["ROUND"] == rnd)
-                                & ((T["status"] == "new") if MS_BRANCH_FROM == "new" else True))[0]
-                cand = cand[np.argsort(T["F"][cand])]
-                seeds += [(p, int(c)) for c in cand[:MS_BRANCH_MAX]]
+                cand = []
+                for j in range(NPTS):
+                    r = np.where((T["POI"] == p) & (T["J"] == j))[0]
+                    w = r[T["KIND"][r] == 0]
+                    xw = T["X"][w[0]] if len(w) and conv[w[0]] else None
+                    for i in r:
+                        k = T["KIND"][i]
+                        if not ((k == 1 and rnd == 1) or (k == 2 and T["ROUND"][i] == rnd)):
+                            continue
+                        distinct = xw is None or np.abs(T["X"][i] - xw).max() > MS_DX
+                        if (conv[i] and distinct) or (MS_BRANCH_FROM == "any" and k == 2):
+                            cand.append(int(i))
+                if cand:
+                    cand = np.array(cand, int)
+                    _, reps = cluster_points(T["X"][cand], T["F"][cand], MS_DX)
+                    seeds += [(p, int(cand[i])) for i in reps[:MS_BRANCH_MAX]]
             if seeds:
                 bB, bFR, bLO, bHI, bX0, bP, bJ, bPV, bST = ([] for _ in range(9))
                 for s_i, (p, c) in enumerate(seeds):
@@ -1283,6 +1340,8 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None):
         ax.set_ylim(0, top); ax.legend(fontsize=7)
         like = ["full plik (nuisances profiled)" if USE_PLIK_FULL else "plik-lite"] if USE_PLIK else []
         like += ["lowTT"] * bool(USE_LOWTT) + ["lowEE"] * bool(USE_LOWEE)
+        if TOY is not None:
+            like = ["toy objective " + os.path.basename(CONFIG_ABS)]
         ax.set_title(f"profile of {poi}: {' + '.join(like)}")
         fig.tight_layout(); fig.savefig(npz.replace(".npz", ".png"), dpi=120)
     except Exception as e:
