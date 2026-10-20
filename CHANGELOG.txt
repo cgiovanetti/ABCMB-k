@@ -9,6 +9,67 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-19 (night) — Profile driver: multimodality (spread starts, flags, deflation walks, branches, union intervals)
+--------------------------------------------------------------------------------------------------------------------
+HANDOFF TODO 14-18, branch multimodal in the worktree ../ABCMB-k-multimodal (off development 5487640; a worktree
+because another session was validating development in this checkout). New scan/lm_tools.py holds the pure-numpy
+pieces: the projected LM step (moved out of the driver), deflation (Farrell, Birkisson & Funke 2015, SIAM J. Sci.
+Comput. 37, A2026), eigen-spread starts, minima clustering + flags, the union of below-threshold regions and the
+multimodality test of a profile's points; pytests/test_lm_tools.py runs them on a toy double well (7 tests, CPU).
+profile_prod_ad.py, by item:
+  (14) MS_K=3 spread starts at MS_NPTS=6 grid points per POI (both ends included), +-MS_SPREAD=2 profile sigmas
+       (sqrt(2/lambda_k)) along the softest eigen-directions of the warm GN matrix on the row's free dims,
+       shortened along their direction to stay inside the box. They run in the same lockstep; a point's profile
+       value is the lowest chi2 over its starts; the interval-stability stop waits for them (MS_WAIT=1). The old
+       uniform-random PA_MULTISTART mode is gone.
+  (15) flags per grid point: a stalled start; converged starts > MS_DX=0.5 scaled sigma apart (distinct minima);
+       converged starts at one point > MS_DCHI2=0.1 apart in chi2.
+  (16) flagged points: deflated Newton walks from the point's warm + spread starts (those within MS_DX of a known
+       minimum replaced by spreads around the best minimum on its own GN matrix), every known minimum deflated at
+       once, M = prod_i (|x - x_i|^-p + alpha). The step is the undamped GN step d rescaled to d / (1 - grad(log
+       M).d) (Sherman-Morrison on the deflated Jacobian M J + g grad(M)^T), capped at STEP_MAX and projected; no
+       damping and no acceptance test -- a bounded walk of <= DF_MAXIT=10 steps; walks still going are finished
+       by ordinary LM (BR_MAXIT). End states: new / recaptured (within MS_DX of a known minimum) / escaped (on the
+       +-XBOX box) / stalled (ABCMB failed) / maxit. Default alpha=0, unshifted: a full Newton step toward a known
+       minimum is reversed at any distance, so the walk leaves the basin along the ray through its start (a start
+       on the far side escapes; the +- spread pairs put one on each side). Farrell's shift alpha=1 limits the
+       reach to 1 scaled sigma and beyond it the step is amplified past the minimum instead of reversed, so the
+       walk hops around it: in the shakeout (run with alpha=1 before the default was changed) every walk came
+       back recaptured or unfinished. The GN matrix is PSD, so a saddle cannot be told from a minimum by its
+       curvature; each new stationary point is reported with its chi2 against the known minimum and the chi2
+       along the straight segment between them (7 value calls; the barrier it shows is an upper bound).
+  (17) each new stationary point (<= MS_BRANCH_MAX=4 per POI, lowest chi2 first) seeds a branch: an ordinary LM
+       run from it at every grid point of its POI (BR_MAXIT=10, interval stop on the branch's own profile). The
+       profile is the lower envelope over every row; MS_ROUNDS (1) repeats flags -> deflation -> branches with the
+       branch rows included.
+  (18) poi_interval returns (lo, best, hi, regions): regions = the union of the regions below threshold
+       (lm_tools.union_regions, the bound-aware thresholds unchanged), lo/hi its outer ends; the stop also
+       requires the number of regions to be unchanged over its window. A profile whose points show two minima
+       separated by a barrier > MS_DCHI2 is interpolated (pchip) instead of quartic-fitted (_interval_mode).
+  Outputs: the per-POI npz keeps the old fields on the envelope rows and adds regions1/2/95, flag/flag_reason,
+  n_starts/n_minima, minima_x/chi2/kind and the full row table (rows_j/kind/start/round/status/x0/x/chi2/gnorm/
+  converged/stalled/at_box/barrier); the png shows every row above the envelope and shades a multi-region 68%
+  union. The phases checkpoint a row table (profile_prod_ad_TABLE<tag>[_r<rank>].npz, resumable per phase) next
+  to the LM state file (which now also stores X0).
+Shakeout (interactive 60018759, 1 node / 4 GPUs, scan/.mm/shake.sh: the massless-nu copy of the rc config, h,
+5 points, 3 spreads at 3 points, PA_MS_FORCE=1, PA_MS_BRANCH_FROM=any, MAXIT 4 / DF_MAXIT 2 / BR_MAXIT 2):
+spread starts 3.1 scaled sigma out on average; lockstep 4 iterations 3055 s (5.5 min/iteration at 14 rows; the
+5 base rows converged at it1, the spreads walk back at STEP_MAX=1 per iteration and 3/9 were under GTOL by it3);
+the stop reported stable intervals from it1 on and kept going for the active spreads; no flag on the real profile
+(all converged starts agree); forced deflation: 12 walks, 3 min per deflated step, 2 recaptured + 10 unfinished
+after the 2-iteration finish, no new point; forced branch from the best end point ran as 5 rows. Killed after the deflation table checkpoint and relaunched with PA_RESUME=1: the run skipped the LM and deflation phases, ran the branch (converged 1/5 in its 2 iterations, nothing below the envelope) and wrote the npz/png: 68% [0.65021, 0.68114], 95% [0.63520, 0.69811], identical to the .sync A/B of the plain driver; 31 rows in the table, flagged 0/5; the png shows every row. Gotcha: every relaunch produced TWO job steps running
+the same script (sacct .5/.6, .12/.13): a stale instance of this Claude session on login05 (the process the
+restarted session had declared ended) kept mirroring the tool calls about a minute apart, including the kills and
+relaunches and these doc edits; `scontrol show step` (SrunHost:Pid) tells the launching login node apart.
+Also from the validation session's notes (user, 2026-10-19): _bucket now rounds to doubling sizes NDEV*2^k (4x
+padded a production node's 168-cosmology value call to 256 and its 42-row gradient to 64, ~50% wasted work per
+iteration; each new size compiles once, ~15 min for the AD path, cached across runs). Merged into development
+(fast-forward) and the worktree removed, as the user asked.
+Open: the spread starts need ~6-8 lockstep iterations to come back (STEP_MAX=1), which the stop now waits for;
+saddles are not identifiable with the PSD GN matrix (barrier along the segment reported instead); scan/manual
+still describes the BFGS driver (not touched); no genuinely flagged point has been seen on the real likelihood.
+
+
 2026-10-16 (night) — Debye j_l diff for upstream, rebased on upstream main 29667dd and checked there
 ------------------------------------------------------------------------------------------------------
 scan/.gridad/upstream_debye_bessel.diff now applies to upstream main 29667dd (grad_bumps merged: cubic table

@@ -1277,7 +1277,10 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None):
                 ax.axvline(b, color="k", lw=1.0, label="physical bound")
         ax.axvline(CENTER[i], ls=":", color="gray", lw=0.8, label=f"fiducial {poi}")
         ax.set_xlabel(poi); ax.set_ylabel(r"$\Delta\chi^2$ (profiled)")
-        ax.set_ylim(0, max(10, float(np.nanmax(d)) * 1.05)); ax.legend(fontsize=7)
+        top = max(10, float(np.nanmax(d)) * 1.05)
+        if rows is not None and np.isfinite(rows[1]).any():    # show the other rows too, within reason
+            top = max(top, min(float(np.nanmax(rows[1])) - c0, 30.0) * 1.05)
+        ax.set_ylim(0, top); ax.legend(fontsize=7)
         like = ["full plik (nuisances profiled)" if USE_PLIK_FULL else "plik-lite"] if USE_PLIK else []
         like += ["lowTT"] * bool(USE_LOWTT) + ["lowEE"] * bool(USE_LOWEE)
         ax.set_title(f"profile of {poi}: {' + '.join(like)}")

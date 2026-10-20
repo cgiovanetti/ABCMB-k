@@ -1,5 +1,23 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-19 (night): TODO (14)-(18) DONE; branch `multimodal` merged into development (fast-forward), its
+worktree removed (CHANGELOG 2026-10-19 night).** scan/lm_tools.py (pure numpy: LM step, deflation, spread
+starts, clustering/flags, union regions) + pytests/test_lm_tools.py (toy double well, 7 pass). Driver phases:
+spread starts in the lockstep (the interval stop waits for them) -> flags -> deflation walks (unshifted,
+undamped GN step rescaled by 1/(1 - grad(log M).d), capped) -> LM finish -> branches from new stationary points
+-> lower envelope, union intervals, full row table in the npz, per-phase table checkpoint. Shakeout on the h
+profile (scan/.mm/, massless-nu config, every phase forced): mechanics run end to end, resume from the table checkpoint after the deflation phase verified (the relaunch skipped to the branch phase and wrote the npz; intervals identical to the .sync A/B); no
+multimodality on the real profile (all starts agree). Default alpha=0: Farrell's shift (alpha=1) makes the walks
+hop around the known minimum instead of leaving its basin (CHANGELOG). _bucket rounds to doubling sizes now
+(validation notes). NEXT: (a) still open on development from the validation session (user notes 2026-10-19;
+passed there: merge vs CLASS, gradient = old code to 1e-8, curvature predicts chi2 to ~4%, interval coverage
+nominal, the old/new head-to-head): the test suite + snapshot regeneration, a debug-queue launcher test with the
+massive neutrino (cost), the CHANGELOG entry for the driver rework (a21df86), then merge development to main;
+(b) the production launcher needs no change for the defaults (MS_K=3 at 6 points per POI); budget ~6-8 extra
+lockstep iterations for the spread starts to come back at STEP_MAX=1, plus one compile per new bucket size; (c)
+saddles: the GN matrix is PSD, so a new stationary point is classified by chi2 only, with the chi2 along the
+straight segment to the known minimum as the barrier (values only); (19) Wilks deferred as before; (20) LINX last.
+
 **2026-10-19 (branch development, not yet on main): profile-driver rework.** Upstream #34-#50 merged + PR #53
 (a5c9a2f, da9ad1b; vs CLASS dlmax 1250: TT/EE at l 2000-2500 1.3e-2/6.6e-3 -> 7.6e-4/1.0e-3; value +9%, gradient +8%;
 AD drift unchanged). Driver a21df86: Levenberg-Marquardt on per-row Gauss-Newton curvature, AD only; config `bounds`
