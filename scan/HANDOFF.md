@@ -1,5 +1,31 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-19 (23:00): development merged to main (253bedb, fast-forward); PRODUCTION _v3 SUBMITTED as job
+60025762** (scan/profile_prod_plikfull_neff48.slurm: 4 nodes, 48 h, regular, 7 POIs x 21 points, multistart
+defaults 3 spreads at 6 points per POI, tag _v3, log logs/abcmb_pf_neff_60025762.out). The whole machine is
+reserved for maintenance 2026-10-21 06:00 -> 10-27 23:00, so the 48 h job cannot start before 10-28; a second
+copy, job 60025795 (same launcher, --time=12:00:00 --deadline=2026-10-21T06:00:00, name abcmb_pf_neff12,
+log logs/abcmb_pf_neff_60025795.out), runs the first ~12 h if it can start before the maintenance (Slurm
+drops it otherwise, so the two never overlap) and the 48 h job resumes from its checkpoints afterwards
+(done POIs skipped, LM STATE + TABLE files in scan/results). Note: origin/main (the fork) has one commit
+c653b26 "Update accuracy.yml" that conflicts with the merged .github/workflows/accuracy.yml; local main
+(253bedb) is not pushed -- resolve by taking one side of that CI file; development is pushed.
+Validation on development before the merge (scan/.mm/val_tests.log): snapshots
+regenerated on GPU after the upstream merge; test_snapshots 5, test_fixed_grid 1, halofit 9, k_tail 3,
+lm_tools 7, profile_toy 2 all pass; accuracy_test fails only by the known classy 3.3.4 delta_l_max=500 vs
+ABCMB l_max/2 mismatch (TT 1.17e-2 at l~2500; the merge-vs-CLASS check at matched settings is 7.6e-4).
+Launcher shakeout with the massive neutrino actually evolved (scan/.mm/prod_shake.sh, interactive 60023717,
+1 node, h x 21 points + 18 spread starts, PA_MAXIT=1, log scan/.mm/prod_shake.log, npz tag _v3shake; still
+running when this was written -- read the log): the config centre is NOT the massive-nu best fit (chi2 2788.8
+there vs 2757.9 in the earlier, effectively massless runs; |g| ~130 at the centre; the minimum along h at the
+centre nuisances sits near h~0.661), so the first LM steps are large and the grids may need recentering
+(PA_MLE_PREPASS=1 or a new `cen`) if a POI's minimum rails; costs on one node with the massive nu: value call
+39 cosmologies 4.5 min (bucket 64, warm cache), 42-cosmology call 7.4 min and the 39-row gradient 24 min with
+their one-time compiles. On completion: add '_v3' to scan/compare_profile_runs.py RUNS (expect a shifted
+best fit vs _v2fix: the massive nu is new), check the per-POI logs for flagged points / branches, and that
+every POI's 68% ends are inside its grid. A twin of this Claude session on another login node mirrored tool
+calls for ~3 h on 2026-10-19 (CHANGELOG night entry): if two of anything appear, check `scontrol show step`.
+
 **2026-10-19 (late night): the multimodality phases pass an end-to-end test on a toy bimodal objective**
 (config `toy`, scan/configs/toy_bimodal.py, pytests/test_profile_toy.py, CPU 10 s; CHANGELOG): the second
 branch is found, propagated and the 68% interval is a union; branch seeds now also come from spread starts.
