@@ -12,8 +12,8 @@ One device: a vmap over 64 cosmologies runs in ~23 s warm on a Perlmutter CPU no
 linear algebra); splitting the batch over 16 host devices is slower (every device's program competes for the
 same cores, 31 s, plus one compile per device), a sharded Mesh turns the ODE loops' batch-wide stop test into
 a cross-device all-reduce per step that times out, and pmap trips lineax's linear_solve primitive
-(ravel_vector "pytree does not match out_structure", lineax 0.0.x / jax 0.8.1). The LINX solver settings
-are the engine's (max_steps 512 / 4096): raising them changes nothing (scan/.mm/linx_nan_scan.log).
+(ravel_vector "pytree does not match out_structure", lineax 0.0.x / jax 0.8.1). Solver settings: the
+constants below (the network 100x tighter than the engine's; see SMOOTHNESS).
 
 The Jacobian is NOT vmapped: the jvp through the implicit (Kvaerno) network solve goes wrong under vmap on
 lane-specific inputs (about one in five, with a batch of one as well, never without vmap;
@@ -23,9 +23,24 @@ lineax's error_if aborts the call ("A linear solver received non-finite input").
 exact on every lane (~4 s each), so values_and_jac runs one jitted jvp program per cosmology, dispatched
 asynchronously round-robin over JAC_DEVICES host CPU devices so they run concurrently. Each device
 compiles its own copy on first use in every process (~2 min; the persistent compilation cache refuses
-these executables, they carry host callbacks), hence the small default. The vmapped values are fine
-(they equal the per-lane ones on every lane). EQX_ON_ERROR=nan (the driver sets it before importing
-equinox) keeps a failed solve a NaN rather than an abort.
+these executables, they carry host callbacks), hence the small default. EQX_ON_ERROR=nan (the driver
+sets it before importing equinox) keeps a failed solve a NaN rather than an abort.
+
+SMOOTHNESS (2026-10-22). With LINX as the engine runs it, YHe is rough in Delta_Neff_init at 1.5e-5 over
++-0.3 sigma (1e-3..1e-2 in chi2 with dchi2/dYHe ~ 100-1000) and every distinct executable disagrees with
+every other at the same ~1e-5 level; in the first _v4linx run that rejected LM steps once the predicted
+drop reached ~1e-2: 7-16 stalled rows per rank at ||g|| 0.15-0.4 (none in _v3 with fixed YHe), spurious
+flags, deflation walks and branches, and the 6 h job timed out. The roughness is not a tolerance: the
+network's rtol does not touch it (1e-6, 1e-8, 1e-9 all give 1.5e-5) and the background only reaches it at
+rtol 1e-10 (16384-step budget, ~1900 steps, 8e-8 at 6x the time per cosmology; 1e-9: 3.8e-7 at 3.6x;
+the 2048 / 4096 budgets fail). It is the background's output GRID: the ~300 steps the network interpolates
+LINEARLY in t (abundances.py dY: a(t), T(t); mid-step error ~1e-4 in a) and which move with
+Delta_Neff_init. _regrid re-samples the background onto N_FINE log-spaced times with a cubic before the
+network sees it: roughness 8e-8 along Delta_Neff_init, 2e-8 along omega_b (network at 1e-8 / 1e-11),
+executables within 3e-8..8e-8 of each other, +25% time; the re-gridded YHe sits 6-8e-5 above the raw-grid
+one (the interpolation bias). What is left is the background's own global error in T_nu / T_g (6e-7 in
+T_nu, 7e-6 in Neff, ~1e-4 in chi2), untouched by the re-grid. scan/.mm/linx_roughness.log,
+linx_bg_roughness.log, linx_regrid_check.log.
 
 Delta_Neff_init is LINX's Delta Neff at the START of BBN (inert radiation at T_start): the cosmology's Neff is
 ~ 3.045 + 0.272 * Delta_Neff_init and is read back from the background solution, never computed from the input.
@@ -34,6 +49,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import equinox as eqx
+from interpax import interp1d
 from abcmb.linx.background import BackgroundModel
 from abcmb.linx.abundances import AbundanceModel
 from abcmb.linx.nuclear import NuclearRates
@@ -49,8 +65,15 @@ JAC_DEVICES = 4         # host devices the per-cosmology Jacobian programs are s
                         # its own copy (~2 min, and the persistent cache cannot store them: host callbacks), so
                         # more devices buy concurrency at a fixed cost: for ~10 gradient calls of 64 rows at ~4 s
                         # per lane, 4 devices minimise compile + run time (~20 min total; 16 devices ~35 min)
-BG_MAX_STEPS = 512      # the engine's defaults
-AB_MAX_STEPS = 4096
+BG_RTOL, BG_ATOL = 1e-8, 1e-10   # the background: the engine's defaults. Tighter needs a bigger step budget (rtol
+BG_MAX_STEPS = 512               # 1e-10: ~1900 steps, 6x the time; scan/.mm/linx_regrid_check.log) -- see N_FINE
+AB_RTOL, AB_ATOL = 1e-8, 1e-11   # the network: 100x tighter than the engine's 1e-6 / 1e-9 for +12% time; YHe
+AB_MAX_STEPS = 8192              # roughness along omega_b 7.8e-7 -> 3.4e-8 (scan/.mm/linx_roughness.log)
+N_FINE = 8192           # the background's ~300 adaptive steps are re-gridded (cubic) to this many log-spaced
+                        # times before the network sees them (_regrid): the network interpolates LINEARLY in t
+                        # on whatever grid it is given, and on the raw step grid that error (~1e-4 in a(t)
+                        # mid-step) moves with the step sequence, i.e. with Delta_Neff_init: 1.5e-5 roughness
+                        # in YHe (1e-3..1e-2 in chi2) that no tolerance touches (scan/.mm/linx_bg_roughness.log)
 
 
 class LinxStage:
@@ -63,19 +86,45 @@ class LinxStage:
         self.nq = len(self.ab.nuclear_net.reactions)
         self.cpus = jax.devices("cpu")
         self.dev = self.cpus[0]
-        self._v = eqx.filter_jit(jax.vmap(self._one_x))
-        self._vj1 = eqx.filter_jit(self._one_vj)       # per cosmology, never vmapped (module docstring)
-        self.n_fallback = 0                            # kept for the driver's trace line (always 0 now)
+        self._v = eqx.filter_jit(jax.vmap(self._one_x))   # values()
+        self._v1 = eqx.filter_jit(self._one_x)             # per cosmology, unbatched: the check scripts
+        self._vj1 = eqx.filter_jit(self._one_vj)           # per cosmology: the Jacobian (module docstring)
+        self.n_fallback = 0                                # kept for the driver's trace line (always 0)
 
     # ---- one cosmology: exactly the engine's bbn_type="linx" branch (abcmb/main.py) ----
     def _background(self, dneff):
-        return self.bg(dneff, max_steps=BG_MAX_STEPS)
+        return self._regrid(self.bg(dneff, rtol=BG_RTOL, atol=BG_ATOL, max_steps=BG_MAX_STEPS))
+
+    @staticmethod
+    def _regrid(bg_out):
+        """The background's (t, a, rho_g, rho_nu, rho_NP, P_NP, Neff) on its raw step grid (t[0] = 0, then the
+        adaptive steps, then the event step repeated up to max_steps) -> the same on t[0] plus N_FINE - 1
+        log-spaced times up to the event step: log a, log rho_g, log rho_nu cubic in log t (interpax), the
+        repeated tail first continued as power laws so the cubic sees distinct smooth nodes; rho_NP, P_NP from
+        their exact a^-4 law; Neff untouched (only its last entry is used). The last fine node is the event step,
+        so [-1] values are unchanged."""
+        t, a, rg, rn, rNP, PNP, Neff = bg_out
+        n = t.shape[0]; i = jnp.arange(n)
+        last = jnp.argmax(t)                                   # first index of the repeated tail
+        lt, la, lg, ln = jnp.log(t), jnp.log(a), jnp.log(rg), jnp.log(rn)
+        k = jnp.maximum(i - last, 0)
+        ext = lambda f: jnp.where(i > last, f[last] + k * (f[last] - f[last - 1]), f)
+        ltx = ext(lt)
+        ltq = jnp.linspace(lt[1], lt[last], N_FINE - 1)
+        fq = interp1d(ltq, ltx[1:], jnp.stack([ext(la), ext(lg), ext(ln)], 1)[1:], method="cubic")
+        af = jnp.concatenate([a[:1], jnp.exp(fq[:, 0])])
+        rgf = jnp.concatenate([rg[:1], jnp.exp(fq[:, 1])])
+        rnf = jnp.concatenate([rn[:1], jnp.exp(fq[:, 2])])
+        tf = jnp.concatenate([t[:1], jnp.exp(ltq)])
+        rNPf = rNP[0] * (a[0] / af) ** 4
+        return tf, af, rgf, rnf, rNPf, rNPf / 3, Neff
 
     def _rest(self, bg_out, eta_fac):
         """(YHe, Neff, T_nu) from the background outputs and eta_fac = omega_b * Omegabh2_to_eta0 / eta0."""
         t_vec, a_vec, rho_g, rho_nu, rho_NP, P_NP, Neff_vec = bg_out
         Y = self.ab(rho_g, rho_nu, rho_NP, P_NP, t_vec=t_vec, a_vec=a_vec, eta_fac=eta_fac,
-                    tau_n_fac=jnp.asarray(1.0), nuclear_rates_q=jnp.zeros(self.nq), max_steps=AB_MAX_STEPS)
+                    tau_n_fac=jnp.asarray(1.0), nuclear_rates_q=jnp.zeros(self.nq),
+                    rtol=AB_RTOL, atol=AB_ATOL, max_steps=AB_MAX_STEPS)
         YHe_BBN = 4 * Y[5]
         Yp_CMB = 1.0 / (4 * cnst.mH / cnst.mHe * (1 / YHe_BBN - 1) + 1)
         T_nu = linxThermo.T_nu(rho_nu[-1]) / linxThermo.T_g(rho_g[-1])
@@ -113,16 +162,25 @@ class LinxStage:
                 xc = np.concatenate([xc, np.repeat(xc[-1:], m - n, 0)])
             yield n, jax.device_put(jnp.asarray(xc), self.dev)
 
+    def _per_lane(self, fn, x, n_dev):
+        """fn on each row of x (B, 2), one jitted program per row dispatched asynchronously round-robin over
+        n_dev host devices; identical rows (the driver pads its batches by repeating a row) run once."""
+        n = min(n_dev, len(self.cpus))
+        uniq, inv = np.unique(np.round(x, 15), axis=0, return_inverse=True)
+        outs = [fn(jax.device_put(jnp.asarray(uniq[k]), self.cpus[k % n])) for k in range(len(uniq))]
+        return outs, np.asarray(inv).reshape(-1)
+
     def values(self, omega_b, dneff):
-        """(B, 3) = [YHe, Neff, T_nu_massless] per cosmology."""
+        """(B, 3) = [YHe, Neff, T_nu_massless] per cosmology, the vmapped program on one host device in chunks
+        (~0.5 s per cosmology warm)."""
         return np.concatenate([np.array(self._v(xc), dtype=float)[:n] for n, xc in self._chunks(omega_b, dneff)])
 
     def values_and_jac(self, omega_b, dneff):
-        """((B, 3) values, (B, 3, 2) d[YHe, Neff, T_nu] / d[omega_b, Delta_Neff_init]): one un-vmapped jvp
-        program per cosmology, dispatched asynchronously round-robin over the host devices."""
+        """((B, 3) values, (B, 3, 2) d[YHe, Neff, T_nu] / d[omega_b, Delta_Neff_init]): the values from
+        values(), the Jacobian from one un-vmapped two-jvp program per cosmology over JAC_DEVICES devices
+        (its primal agrees with values() to ~5e-8 in YHe, scan/.mm/linx_regrid_check.log)."""
         x = np.stack([np.asarray(omega_b, float), np.asarray(dneff, float)], 1)
-        n = min(JAC_DEVICES, len(self.cpus))
-        outs = [self._vj1(jax.device_put(jnp.asarray(x[k]), self.cpus[k % n])) for k in range(len(x))]
-        y = np.array([np.asarray(o[0], dtype=float) for o in outs]).reshape(-1, 3)
+        y = self.values(omega_b, dneff)
+        outs, inv = self._per_lane(self._vj1, x, JAC_DEVICES)
         J = np.array([np.asarray(o[1], dtype=float) for o in outs]).reshape(-1, 3, 2)
-        return y, J
+        return y, J[inv]

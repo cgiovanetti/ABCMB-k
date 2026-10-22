@@ -1,5 +1,17 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-22: the first _v4linx run (60057734, 6 h) TIMED OUT on stalled rows -- LINX's YHe is rough in
+Delta_Neff_init at 1.5e-5 (1e-2 in chi2) because the network interpolates linearly on the background's ~300
+adaptive steps, which move with Delta_Neff_init (CHANGELOG 2026-10-22).** Fixed in scan/bbn_stage.py (LINX
+untouched): _regrid (cubic re-sampling onto 8192 log-spaced times) + network rtol 1e-8 / atol 1e-11; roughness
+8e-8, executables agree to 5e-8, +25% time (background rtol 1e-10 gets the same 8e-8 at 6x the time). The
+48 h copy 60057736 (logs/abcmb_pf_linx_60057736.out) starts fresh with the fix (old row tables in
+scan/.mm/v4linx_timeout/). Expect ~+15 min per iteration for LINX (values 0.5 s x cosmologies, vmapped;
+Jacobians ~6 s x rows, nearly serial over 4 devices). If rows stall again at ||g|| 0.1-0.4 with lambda blowing
+up, the next suspect is the background's own global error (7e-6 in Neff). Known: LINX's AD dNeff/dDelta_Neff_init
+is 0.3% above the secant (0.2726 vs 0.2718; linx_neff_slope.log), harmless here. No GPU shakeout of this fix (CPU
+numbers only; the stage's interface and the driver are unchanged).
+
 **2026-10-20 (afternoon): item (20) LINX in the driver DONE as a batched BBN stage (CHANGELOG 2026-10-20
 afternoon).** Config "bbn": "linx" (scan/configs/lcdm_dneff_linx_plikfull.py, POI Delta_Neff_init in place of
 Neff, no fixed YHe); scan/bbn_stage.py computes YHe / Neff / T_nu_massless per row with the vendored LINX and

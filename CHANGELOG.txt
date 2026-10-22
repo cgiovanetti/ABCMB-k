@@ -9,6 +9,30 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-22 — _v4linx 6 h run timed out on stalled rows: LINX's YHe is rough in Delta_Neff_init; re-grid fix
+----------------------------------------------------------------------------------------------------------
+Job 60057734 (the 6 h pre-maintenance copy) ran 20:44 -> 02:45 and died in the deflation phase with no POI
+written: the LM phase took 4.7-5.4 h per rank (2.7-3.8 h in _v3) with 7-16 STALLED rows per rank stuck at ||g||
+0.15-0.4 (lambda 1e5-1e10; _v3 had none), which then flagged 7-15 grid points per rank, 16-60 deflation walks, 7
+"new" stationary points and branches -- all artefacts. Cause (scan/.mm/linx_roughness.log, linx_bg_roughness.log):
+YHe from LINX is rough in Delta_Neff_init at 1.5e-5 over +-0.3 sigma (1e-3..1e-2 in chi2 with dchi2/dYHe 100-1000)
+and every distinct executable disagrees with every other at the same level. Not a tolerance: the network's rtol
+leaves it at 1.5e-5 (1e-6, 1e-8, 1e-9 alike) and the background only reaches 8e-8 at rtol 1e-10 with a 16384-step
+budget (~1900 steps, 6x the time per cosmology; 1e-9: 3.8e-7 at 3.6x). It is the background's output grid: its
+~300 adaptive steps, on which the network interpolates linearly in t (mid-step error ~1e-4 in a(t)) and which
+move with Delta_Neff_init. Fix (scan/bbn_stage.py, LINX untouched): LinxStage._regrid re-samples the background
+onto 8192 log-spaced times with a cubic (interpax) before the network sees it, and the network runs at rtol 1e-8 /
+atol 1e-11 (max_steps 8192): roughness 8e-8 along Delta_Neff_init, 2e-8 along omega_b, executables within
+3e-8..8e-8 in YHe, jvp finite and 0.14% from the fitted slope, +25% per cosmology (0.5 s vmapped, 5.7 s per-lane
+jvp; scan/.mm/linx_regrid_check.log). The re-gridded YHe is 6-8e-5 above the raw-grid value (the interpolation
+bias; the engine's own LINX path still carries it). Left: the background's global error in T_nu / T_g (7e-6 in
+Neff, ~1e-4 in chi2), and a 0.3% AD-vs-value mismatch in LINX's own dNeff/dDelta_Neff_init (jvp 0.2726, secants
+0.2717-0.2718 at every spacing, scan/.mm/linx_neff_slope.log; harmless here, ~3e-3 sigma). values() is vmapped
+again; the serial one-executable path tried first today is gone (with
+the re-grid the executables agree). The timed-out run's row tables are in scan/.mm/v4linx_timeout/ (not resumed:
+they encode the stalls); the 48 h copy 60057736 was held until the fix was on disk and starts fresh.
+
+
 2026-10-20 (afternoon) — LINX in the profile driver (HANDOFF item 20): a batched BBN stage, YHe / Neff / T_nu per row
 -------------------------------------------------------------------------------------------------------------------------
 Config "bbn": "linx" (scan/configs/lcdm_dneff_linx_plikfull.py: the rc profile with Delta_Neff_init in place of Neff
