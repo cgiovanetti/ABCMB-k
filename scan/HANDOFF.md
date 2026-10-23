@@ -1,5 +1,18 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-22 (evening): the pure-LINX route is READY BUT NOT APPLIED (CHANGELOG 2026-10-22 evening).** Three
+diffs for review: scan/.mm/linxdev/vendored_dense_loglog.diff (abcmb/linx: dense-interpolant output grid +
+log-log interpolation; replaces the stage's _regrid), scan/.mm/linxdev/stage_new.diff (bbn_stage: no _regrid,
+BG_N_OUT 4096, AB_MAX_STEPS 16384, batched 64-lane Jacobian with per-lane fallback, lineax.linear_solve
+non-throwing process-wide), /pscratch/sd/c/carag/LINX/dense_grid_loglog.diff (LINX main, on top of the
+normalization fix). Why the non-throwing solve: optimistix's implicit-function-theorem jvp of the network's
+Newton stages raises on a diverged stage that the primal simply rejects; it was the cause of every
+"lane-specific" LINX Jacobian NaN (jacfwd, batches > 1, three lanes alone) and probably of ABCMB's all-NaN
+gradient block in the timed-out run. Measured on CPU: YHe roughness 5e-8, YHe 0.244238 = converged, batched
+Jacobian 64/64 finite at 1.25 s per row (vs 5.7 serial), batched = per-lane to 1e-4. Not yet run inside the
+driver on GPU: do a --qos=debug shakeout before the 48 h job (hold -> apply -> shakeout -> release). The
+pending job 60057736 runs the re-grid stage as is.
+
 **2026-10-22 (late afternoon): LINX BUG FIXED in the vendored copy (abcmb/linx/background.py): the inert
 radiation was normalized at the first saved step instead of the initial state, so Neff for Delta_Neff_init != 0
 was off by ~4% of the extra species' contribution and drifted with the tolerance. Now Neff = 3.0444 + 0.2619 x

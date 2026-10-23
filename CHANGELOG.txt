@@ -9,6 +9,51 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-22 (evening) — pure-LINX route: dense-grid output + log-log interpolation inside LINX; batched Jacobian
+------------------------------------------------------------------------------------------------------------
+Developed in a scratch copy of the vendored LINX (scan/.mm/linxdev/, gitignored) so the pending 48 h job keeps
+the validated on-disk stage; NOTHING APPLIED to abcmb/linx or scan/bbn_stage.py yet. Diffs for review:
+scan/.mm/linxdev/vendored_dense_loglog.diff (abcmb/linx), /pscratch/sd/c/carag/LINX/dense_grid_loglog.diff (LINX
+main, on top of rho_extra_norm.diff; dry-run clean on main + fix, NOT on the grace checkout, which lacks the
+fix), scan/.mm/linxdev/bbn_stage_new.py (the stage without _regrid, BG_N_OUT, AB_MAX_STEPS 16384, batched
+Jacobian with per-lane fallback).
+(1) background.py: SaveAt(steps=True, dense=True); the outputs are n_out (4096) log-spaced times from the first
+step to the event step read from the dense interpolant, end points pinned exactly (exp(log t) can land one ulp
+past the last step, where the interpolant holds garbage: whole-batch NaN for some inputs before the pin); no
+padding, no inf tail. (2) abundances.py: a(t), T_g(t) interpolated as log against log t (power laws). Measured
+(scan/.mm/linxdev/val12_pinned.log, steps_dev.log, main_port/steps_main.log): YHe roughness along
+Delta_Neff_init 1.5e-5 -> 5.4e-8 (omega_b 1.7e-8), YHe_BBN 0.244238 = the converged reference (0.244236 at
+background rtol 1e-10), Neff 2.829201, 0.45-0.54 s per cosmology (no penalty), network steps 1191 -> 1157 at
+rtol 1e-6 and 5119 -> 4958 at 1e-8 (fewer rejections; ~5000 at 1e-8 everywhere, so AB_MAX_STEPS 8192+). On
+LINX main's own stack (linx312, jax 0.8.3) the port gives YHe_BBN 0.244236 = the vendored value to 2e-6: the old
+1.4e-4 "LINX main vs abcmb.linx" offset was each code's raw-grid interpolation bias. Note: at rtol 1e-8 the
+network needs ~5000 steps on LINX main with or without the port (default max_steps 4096 is exceeded).
+(3) Batched Jacobian: with the dense grid a vmapped two-jvp over 4-16 lanes is finite in every equinox error
+mode and host-device count (batched_jvp_matrix.log), where the raw-grid code raised for any batch > 1. Larger
+batches (61-64 lanes) and three specific lanes alone still raise "A linear solver received non-finite input" from
+optimistix's implicit-function-theorem jvp of the network's implicit stage (optimistix/_ad.py: the tangent of the
+Newton residual is non-finite), flaky across compiled programs (host-device count, fused vs separate jvps), the
+same mechanism behind the original jacfwd NaN; in EQX_ON_ERROR=nan mode one such lane nan-s its whole chunk
+(equinox reduces the predicate over the batch), so the drafted stage's 64-lane chunks fell back to per-lane
+(no speed gain yet; correctness fine: stage_new_test.log). diffrax stop-gradients the step-size factor, so the
+step sizes carry no tangent; the culprit component / fix: see below.
+Culprit and fix (tangent_comp.log, nothrow_test.log): a batch with an identically ZERO input tangent raises too,
+and so does a fixed (input-independent) grid, so it is not what enters the network. diffrax calls the implicit
+stage's optx.root_find with throw=False, but optimistix's implicit-function-theorem jvp (optimistix/_ad.py)
+runs lineax.linear_solve with throw=True: a Newton stage that diverged, which the primal rejects and retries
+smaller, raises inside the tangent. Fix in the stage (3 lines, no LINX change): lineax.linear_solve made
+non-throwing process-wide; the garbage tangent of a rejected stage is masked by the rejection like its primal.
+Result: 64-lane batched Jacobian 64/64 finite, 1.25 s per row (vs 5.7 s per lane, nearly serial), batched =
+per-lane to 1e-4 (dNeff/ddn to 5 digits). The same mechanism very likely produced the all-NaN gradient block
+of the timed-out run in ABCMB's implicit perturbation solves; the patch covers those too. Worth reporting
+upstream (diffrax/optimistix: throw=False should reach the adjoint's solve).
+Status: NOT applied (the 48 h job 60057736 is pending on the regrid stage and picks up on-disk code). To switch
+the production stack: scontrol hold 60057736; git apply scan/.mm/linxdev/vendored_dense_loglog.diff
+scan/.mm/linxdev/stage_new.diff; a --qos=debug shakeout of scan/profile_prod_linx_dneff.slurm (the batched
+Jacobian has not run inside the driver on GPU); scontrol release. Expected: gradient blocks ~4-5x faster
+(1.25 vs 5.7 s per row), YHe at the converged value, no re-grid. Port to LINX main: dense_grid_loglog.diff
+(tested on LINX's own stack: linx312, jax 0.8.3).
+
 2026-10-22 (late afternoon) — LINX background bug (inert radiation normalized at the first saved step); tolerance decision
 ----------------------------------------------------------------------------------------------------------------------
 The background-tolerance scan for the LINX stage (scan/.mm/linx_bg_mid.log, linx_neff_sm.log) showed LINX's final
