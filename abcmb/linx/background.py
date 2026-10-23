@@ -155,15 +155,19 @@ class BackgroundModel(eqx.Module):
             rho_nu_vec == jnp.inf, rho_nu_vec[last_step_ind], rho_nu_vec
         )
 
+        # Trivial relation between rho_extra and a, normalized at the initial state
+        # a = exp(lna_init) as in dY (SaveAt(steps=True) does not save the initial
+        # state: a_vec[0] is the end of the first step, and normalizing there
+        # overstated rho_extra by (a_vec[0] / a_init)^4, a few percent that only
+        # shrank slowly with the tolerance).
+        rho_extra_vec = rho_extra_init * (jnp.exp(lna_init)**4 / a_vec**4)
+
         # Rescale a so that the present day CMB temperature is correct.
         final_a = const.T0CMB / (
             sol.ys[1][last_step_ind]
         )
-        
-        a_vec  *= final_a / a_vec[-1]
 
-        # Trivial relation between rho_extra and a. 
-        rho_extra_vec = rho_extra_init * (a_vec[0]**4 / a_vec**4)
+        a_vec  *= final_a / a_vec[-1]
 
         P_extra_vec = rho_extra_vec / 3
 

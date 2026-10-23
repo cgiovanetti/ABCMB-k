@@ -1,5 +1,13 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-22 (late afternoon): LINX BUG FIXED in the vendored copy (abcmb/linx/background.py): the inert
+radiation was normalized at the first saved step instead of the initial state, so Neff for Delta_Neff_init != 0
+was off by ~4% of the extra species' contribution and drifted with the tolerance. Now Neff = 3.0444 + 0.2619 x
+(not 0.272), converged across tolerances; YHe untouched. PORT TO LINX MAIN (linx/background.py:200) and
+../ABCMB. Tolerance route rejected on cost (background 3e-10: 3.0 s per cosmology, 18.7 s per Jacobian lane,
+~70 min per gradient block): production = re-grid + network 1e-8 + default background (CHANGELOG 2026-10-22
+late afternoon). The 0.3% jvp-vs-secant gap in dNeff/dx remains (decoupling piece, wrong sign, ~0.01 sigma).**
+
 **2026-10-22 (afternoon): deflation REMOVED from the driver (CHANGELOG 2026-10-22 afternoon).** The
 multimodality machinery is now: spread starts -> flags -> branches from every distinct spread-start
 minimum -> lower envelope -> union-of-regions intervals (items 14, 15, 17, 18). Item 16 (deflated Newton

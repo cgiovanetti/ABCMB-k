@@ -9,6 +9,30 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-22 (late afternoon) — LINX background bug (inert radiation normalized at the first saved step); tolerance decision
+----------------------------------------------------------------------------------------------------------------------
+The background-tolerance scan for the LINX stage (scan/.mm/linx_bg_mid.log, linx_neff_sm.log) showed LINX's final
+Neff for Delta_Neff_init != 0 moving with the tolerance without converging (x = -0.823: 2.8095 / 2.8155 / 2.8206 /
+2.8238 / 2.8262 / 2.8264 at rtol 1e-6 .. 3e-11; the standard-model 3.0444 is stable). Decomposition
+(linx_neff_drift.log): the neutrino part and the entropy ratio R = (a_0 T_0 / a_last T_last)^4 = 0.26190 are
+stable, the inert-species part is not: abcmb/linx/background.py normalized rho_extra_vec at a_vec[0], and with
+SaveAt(steps=True) that is the END OF THE FIRST STEP, not the initial state the ODE itself uses (lna_init), so
+rho_extra came out (a_1 / a_0)^4 ~ 4% too large at the default tolerance and only shrank with the first step.
+Fixed (one line, normalize at exp(lna_init)): Neff(x = -0.823) = 2.82916 / 2.82920 / 2.82917 at rtol 1e-7 / 1e-8 /
+3e-10, converged to 4e-5, inert part = x R exactly; Neff = 3.0444 + 0.2619 x (the documented 0.272 was the bug:
+(4/11)^(4/3) = 0.2605 plus incomplete decoupling). YHe is unchanged to the bit (with t(T), a(t) given, the
+network never reads rho_NP). LINX main (/pscratch/sd/c/carag/LINX, linx/background.py:200) and ../ABCMB carry
+the same line and are NOT fixed: every LINX Neff for Delta_Neff_init != 0 so far is off by ~4% of the extra
+species' contribution (-8e-3 at x = -0.8, +1e-2 at x = +1). Still open, now tolerance-independent: dNeff/dx by
+jvp 0.2624 vs secant 0.2614-0.2616 (0.35%): the jvp of the small decoupling piece has the wrong sign
+(d log(aT_nu)/dx +4.7e-5 vs secant -3e-5..-4e-5), ~1e-3 absolute in the slope, ~0.01 sigma here.
+Tolerance decision (the request was to tighten rather than re-grid): a tight background does reach the
+re-grid's YHe smoothness (3e-10: 9.7e-8) but at 3.0 s per cosmology (vs 0.49) and 18.7 s per Jacobian lane
+(vs 5.7; the per-lane programs run nearly serially, host callbacks), ~70 min per 312-row gradient block, an LM
+phase beyond the 48 h job; 5e-10 is already 2.8 / 17.6 s and 2e-10 3.1 / 19.1 s, no middle ground. With the
+Neff drift gone the only reason for a tight background was YHe, which the re-grid handles at 1.25x. Production
+stays re-grid + network 1e-8 + default background, now on the fixed normalization; job 60057736 released.
+
 2026-10-22 (afternoon) — deflation removed from the profile driver
 ------------------------------------------------------------------
 The deflated Newton walks (Farrell, Birkisson & Funke 2015; HANDOFF item 16) are gone from
