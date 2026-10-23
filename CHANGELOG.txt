@@ -9,6 +9,17 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-22 (night) — pure-LINX route APPLIED (dense grid + log-log inside the vendored LINX, batched Jacobian)
+-----------------------------------------------------------------------------------------------------------
+Applied vendored_dense_loglog.diff and stage_new.diff (evening entry) to abcmb/linx and scan/bbn_stage.py with
+job 60057736 held, then a GPU shakeout of the driver (scan/.mm/linx_shake3.sh / .log: the Delta_Neff_init
+config, 1 POI x 5 points + 9 spread starts, one LM iteration on full plik, 4 GPUs, 44 min wall, rc 0): the
+batched LINX Jacobian ran inside the driver with 0 lanes recomputed alone (16 rows in 29-30 s per gradient
+block, vs ~4-6 s per lane nearly serial before), no NaN, min chi2 2759.10 at the centre (2759.11 on the re-grid
+stage: the 8e-5 YHe bias is gone), "as Neff" 2.8292 with the corrected slope. The stage re-grids nothing any
+more; lineax.linear_solve is non-throwing process-wide (why: evening entry). 60057736 released; it starts fresh
+on this code. Scratch package copies under scan/.mm/linxdev/ removed; the logs and diffs stay.
+
 2026-10-22 (evening) — pure-LINX route: dense-grid output + log-log interpolation inside LINX; batched Jacobian
 ------------------------------------------------------------------------------------------------------------
 Developed in a scratch copy of the vendored LINX (scan/.mm/linxdev/, gitignored) so the pending 48 h job keeps

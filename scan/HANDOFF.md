@@ -1,6 +1,7 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
-**2026-10-22 (evening): the pure-LINX route is READY BUT NOT APPLIED (CHANGELOG 2026-10-22 evening).** Three
+**2026-10-22 (night): the pure-LINX route is APPLIED and shaken out on GPU (CHANGELOG 2026-10-22 night); job
+60057736 runs on it. How it was built (CHANGELOG 2026-10-22 evening):** three
 diffs for review: scan/.mm/linxdev/vendored_dense_loglog.diff (abcmb/linx: dense-interpolant output grid +
 log-log interpolation; replaces the stage's _regrid), scan/.mm/linxdev/stage_new.diff (bbn_stage: no _regrid,
 BG_N_OUT 4096, AB_MAX_STEPS 16384, batched 64-lane Jacobian with per-lane fallback, lineax.linear_solve
@@ -9,9 +10,8 @@ normalization fix). Why the non-throwing solve: optimistix's implicit-function-t
 Newton stages raises on a diverged stage that the primal simply rejects; it was the cause of every
 "lane-specific" LINX Jacobian NaN (jacfwd, batches > 1, three lanes alone) and probably of ABCMB's all-NaN
 gradient block in the timed-out run. Measured on CPU: YHe roughness 5e-8, YHe 0.244238 = converged, batched
-Jacobian 64/64 finite at 1.25 s per row (vs 5.7 serial), batched = per-lane to 1e-4. Not yet run inside the
-driver on GPU: do a --qos=debug shakeout before the 48 h job (hold -> apply -> shakeout -> release). The
-pending job 60057736 runs the re-grid stage as is.
+Jacobian 64/64 finite at 1.25 s per row (vs 5.7 serial), batched = per-lane to 1e-4. Shaken out inside the driver on 4 GPUs (scan/.mm/linx_shake3.log): batched Jacobian 16 rows in
+30 s per gradient block, 0 fallbacks, min chi2 2759.10, one LM iteration, rc 0.
 
 **2026-10-22 (late afternoon): LINX BUG FIXED in the vendored copy (abcmb/linx/background.py): the inert
 radiation was normalized at the first saved step instead of the initial state, so Neff for Delta_Neff_init != 0

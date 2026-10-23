@@ -56,7 +56,7 @@ class BackgroundModel(eqx.Module):
     def __call__(
         self, Delt_Neff_init, T_start=const.T_start, 
         T_end=const.T_end, rtol=1e-8, atol=1e-10, 
-        solver=Tsit5(), max_steps=512
+        solver=Tsit5(), max_steps=512, n_out=4096
     ): 
         """ Calculate thermodynamics given an initial :math:`\\Delta N_\\mathrm{eff}`.
 
@@ -74,9 +74,12 @@ class BackgroundModel(eqx.Module):
         atol : float, optional
             Absolute tolerance of the abundance solver. Default is `1e-10`. 
         max_steps : int, optional
-            Maximum number of steps taken by the solver. Default is `4096`. 
-            Increasing this slows down the code, while decreasing this could 
-            mean that the solver cannot complete the solution. 
+            Maximum number of steps taken by the solver. Default is `4096`.
+            Increasing this slows down the code, while decreasing this could
+            mean that the solver cannot complete the solution.
+        n_out : int, optional
+            Number of log-spaced output times (first step to the end), read
+            from the solver's dense interpolant. Default is `4096`.
         solver : Diffrax ODE solver 
             The Diffrax ODE solver to use. A stiff solver is recommended. 
             Default is the Tsitouras' 5/4 solver. 
@@ -120,7 +123,7 @@ class BackgroundModel(eqx.Module):
         sol = diffeqsolve(
             ODETerm(self.dY), solver, args=(lna_init, rho_extra_init),
             t0=0., t1=jnp.inf, dt0=None, y0=Y0, 
-            saveat=SaveAt(steps=True), event=Event(T_EM_check),
+            saveat=SaveAt(steps=True, dense=True), event=Event(T_EM_check),
             stepsize_controller = PIDController(
                 rtol=rtol, atol=atol
             ),
@@ -128,14 +131,8 @@ class BackgroundModel(eqx.Module):
             adjoint = self.adjoint()
         )
 
-        a_vec = jnp.exp(sol.ys[0])
-        rho_g_vec = rho_massless_BE_v(sol.ys[1], 0., 2) 
-        rho_nu_vec = rho_massless_FD_v(sol.ys[2], 0., 2)
-        
-        # These vectors always have max_steps entries so that jit and grad 
-        # work but the solver stops before hitting max_steps. Find the last 
-        # legitimate step made by the solver, when T_g drops below T_end.
-
+        # The last legitimate step made by the solver, when T_g drops below
+        # T_end (sol.ys has max_steps entries; the unused ones are inf).
         last_step_ind = jnp.max(
             jnp.argwhere(
                 sol.ys[1] < T_end,
@@ -143,30 +140,29 @@ class BackgroundModel(eqx.Module):
             )[:,0]
         )
 
+        # Output on n_out log-spaced times from the first step to the event
+        # step, read from the solver's dense (4th-order) interpolant rather
+        # than on the adaptive steps themselves: the abundance network
+        # interpolates a(t) and T(t) on this grid, and on the raw steps that
+        # error (~1e-4 mid-step) moved with the step sequence, i.e. with the
+        # inputs (1.5e-5 roughness in Y_p against Delt_Neff_init).
+        t_vec = jnp.exp(jnp.linspace(
+            jnp.log(sol.ts[0]), jnp.log(sol.ts[last_step_ind]), n_out
+        ))
+        # exp(log(.)) can land one ulp past the last step, outside the interpolant
+        t_vec = t_vec.at[0].set(sol.ts[0]).at[-1].set(sol.ts[last_step_ind])
+        lna_vec, T_EM_vec, T_nu_vec = jax.vmap(sol.evaluate)(t_vec)
 
-        # Set every step after this in all vectors to be identical, 
-        # so that there is no effect on interpolation. 
-        t_vec = jnp.where(sol.ts == jnp.inf, sol.ts[last_step_ind], sol.ts)
-        a_vec = jnp.where(a_vec == jnp.inf, a_vec[last_step_ind], a_vec)
-        rho_g_vec = jnp.where(
-            rho_g_vec == jnp.inf, rho_g_vec[last_step_ind], rho_g_vec
-        )
-        rho_nu_vec = jnp.where(
-            rho_nu_vec == jnp.inf, rho_nu_vec[last_step_ind], rho_nu_vec
-        )
+        a_vec = jnp.exp(lna_vec)
+        rho_g_vec = rho_massless_BE_v(T_EM_vec, 0., 2)
+        rho_nu_vec = rho_massless_FD_v(T_nu_vec, 0., 2)
 
-        # Trivial relation between rho_extra and a, normalized at the initial state
-        # a = exp(lna_init) as in dY (SaveAt(steps=True) does not save the initial
-        # state: a_vec[0] is the end of the first step, and normalizing there
-        # overstated rho_extra by (a_vec[0] / a_init)^4, a few percent that only
-        # shrank slowly with the tolerance).
+        # Trivial relation between rho_extra and a, normalized at the initial
+        # state a = exp(lna_init) as in dY.
         rho_extra_vec = rho_extra_init * (jnp.exp(lna_init)**4 / a_vec**4)
 
         # Rescale a so that the present day CMB temperature is correct.
-        final_a = const.T0CMB / (
-            sol.ys[1][last_step_ind]
-        )
-
+        final_a = const.T0CMB / T_EM_vec[-1]
         a_vec  *= final_a / a_vec[-1]
 
         P_extra_vec = rho_extra_vec / 3
