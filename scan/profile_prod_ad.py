@@ -38,15 +38,14 @@ physical bound), and a per-point AD convergence certificate.
      eigen-directions of the warm Gauss-Newton matrix on the row's free dims; they run in
      the same lockstep and leave the batch as they converge. A grid point is flagged when
      a start stalled, when converged starts sit at distinct points (> PA_MS_DX scaled
-     sigma apart) or when they disagree in chi2 by > PA_MS_DCHI2. Flagged points are
-     re-run with every known minimum deflated at once (Farrell, Birkisson & Funke 2015:
-     the ordinary LM step d becomes d / (1 - grad(log M).d), M = prod_i (|x - x_i|^-p +
-     alpha)), which converges to stationary points other than the known ones. Each
-     distinct minimum found at a grid point, by a spread start or by a walk (a second
-     minimum, or a saddle, whose chi2 is the barrier), seeds a branch: an ordinary LM run
-     from it at every grid point of that POI. The profile is the lower
-     envelope over all starts and branches; the intervals are the union of the regions
-     below threshold (one region for a unimodal profile). The per-POI npz keeps every row.
+     sigma apart) or when they disagree in chi2 by > PA_MS_DCHI2. Each distinct minimum a
+     spread start found at a grid point (not the warm start's) seeds a branch: an ordinary
+     LM run from it at every grid point of that POI. The profile is the lower envelope
+     over all starts and branches; the intervals are the union of the regions below
+     threshold (one region for a unimodal profile). The per-POI npz keeps every row.
+     (Deflated Newton walks out of the known minima, Farrell, Birkisson & Funke 2015, were
+     part of this until 2026-10-22: they find stationary points, saddles included, add no
+     certainty beyond the spread starts, and only ever triggered on noise.)
 
 Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_CONFIG(scan/configs/lcdm.py) PA_POIS(csv; config default)
@@ -55,8 +54,7 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs:
   PA_LM_K(4) PA_STEP_MAX(1.0) PA_XBOX(5) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
   PA_WARM_LR(0) PA_MLE_PREPASS(0) PA_POI_SLICE(0) PA_TRACE_EVALS(0)
   PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
-  PA_MS_ROUNDS(1) PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10) PA_DF_MAXIT(10) PA_DF_P(2) PA_DF_ALPHA(0)
-  PA_MS_FORCE(0) PA_MS_BRANCH_FROM(new)   [the last two: shakeout knobs]
+  PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10)
 """
 # Host devices for the HyRex jvp (scan/batched_grad.hyrex_cpu_mesh): must be set before JAX
 # initialises. PA_CPU_DEVICES=0/1 keeps the single-device path.
@@ -87,7 +85,7 @@ from abcmb import species as _species
 from scan.plik_lite import PlikLite
 from scan.lowl_like import LowLEE, LowLTT
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
-from scan.lm_tools import (proj_grad, lm_step, deflate_step, spread_starts, flag_point, cluster_points,
+from scan.lm_tools import (proj_grad, lm_step, spread_starts, flag_point, cluster_points,
                            union_regions, is_multimodal)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -275,30 +273,17 @@ _shard_env = os.environ.get("PA_SHARD", "auto").lower()
 # Multimodality (lm_tools): MS_K extra starts per row at MS_NPTS grid points per POI (0 = none),
 # +-MS_SPREAD profile sigmas along the softest warm Gauss-Newton directions; converged starts more
 # than MS_DX (scaled sigma, max-norm) apart are distinct minima, closer ones must agree in chi2 to
-# MS_DCHI2; the interval stop waits for the extra starts (MS_WAIT). Flagged points go through
-# MS_ROUNDS rounds of deflation (DF_MAXIT deflated steps; M = prod (r^-DF_P + DF_ALPHA)) and
-# branches (at most MS_BRANCH_MAX new stationary points per POI per round, BR_MAXIT iterations).
-# DF_ALPHA=0 (unshifted) lets the deflation act at any distance: a full Newton step toward a known
-# minimum is reversed wherever the walk is, so it leaves that basin along the ray through its start.
-# Farrell's shift alpha > 0 limits the reach to ~alpha^(-1/DF_P) scaled sigma; beyond it the step is
-# amplified past the minimum instead of reversed and the walk hops around it (then: recaptured).
-# Branch seeds: every distinct minimum a spread start or a walk found (not the warm start's one at that
-# point). Shakeout knobs: MS_FORCE=1 flags every multistart point; MS_BRANCH_FROM=any also seeds from
-# every deflation end point, converged or not.
+# MS_DCHI2; the interval stop waits for the extra starts (MS_WAIT). Branch seeds: every distinct
+# minimum a spread start found (not the warm start's one at that point), at most MS_BRANCH_MAX per
+# POI, each an ordinary LM run of BR_MAXIT iterations at every grid point of its POI.
 MS_K = int(os.environ.get("PA_MS_K", "3"))
 MS_NPTS = int(os.environ.get("PA_MS_NPTS", "6"))
 MS_SPREAD = float(os.environ.get("PA_MS_SPREAD", "2.0"))
 MS_DX = float(os.environ.get("PA_MS_DX", "0.5"))
 MS_DCHI2 = float(os.environ.get("PA_MS_DCHI2", "0.1"))
 MS_WAIT = os.environ.get("PA_MS_WAIT", "1") != "0"
-MS_ROUNDS = int(os.environ.get("PA_MS_ROUNDS", "1"))
 MS_BRANCH_MAX = int(os.environ.get("PA_MS_BRANCH_MAX", "4"))
-MS_FORCE = os.environ.get("PA_MS_FORCE", "0") != "0"
-MS_BRANCH_FROM = os.environ.get("PA_MS_BRANCH_FROM", "new")
 BR_MAXIT = int(os.environ.get("PA_BR_MAXIT", "10"))
-DF_MAXIT = int(os.environ.get("PA_DF_MAXIT", "10"))
-DF_P = float(os.environ.get("PA_DF_P", "2"))
-DF_ALPHA = float(os.environ.get("PA_DF_ALPHA", "0"))
 USE_LOWTT = (os.environ["PA_USE_LOWTT"] != "0") if "PA_USE_LOWTT" in os.environ \
     else bool(CFG.get("use_lowtt", True))
 USE_LOWEE = (os.environ["PA_USE_LOWEE"] != "0") if "PA_USE_LOWEE" in os.environ \
@@ -861,74 +846,9 @@ def rss_gb():
 
 
 # ======================================================================
-# deflated Newton walk out of the known minima (multimodality; lm_tools.deflate_step)
+# lockstep driver across ALL POIs: base + multistart rows, flags, branches, envelope
 # ======================================================================
-def deflated_rows(BASE, FREE, XLO, XHI, X0, MINS, NMIN, maxit=DF_MAXIT, gtol=GTOL, log_prefix="[defl]"):
-    """Deflated Newton iteration (Farrell, Birkisson & Funke 2015) over a flat row set, every known
-    stationary point of a row deflated at once: M(x) = prod_i (|x - x_i|^-DF_P + DF_ALPHA), and the
-    step is the row's undamped Gauss-Newton step d rescaled to d / (1 - grad(log M).d), so it reuses
-    g and the GN matrix; it is capped at STEP_MAX and projected into the box. A full Newton step
-    toward a known point comes out reversed (the row walks away from it, up its valley, until the
-    GN step points into another basin), a step away from it is shortened; no step is damped or
-    rejected -- this is a bounded walk, not a descent. The walk ends when a row's projected gradient
-    drops under gtol (a stationary point: `new` when > MS_DX from every known one, else `recaptured`),
-    when it reaches the +-XBOX box (`escaped`), when ABCMB fails there (`stalled`, the row keeps its
-    last point), or after maxit steps (`maxit`; the caller finishes those with ordinary LM).
-    MINS (N, m, P') padded, NMIN (N,) the count per row. Returns per-row X, F (values path), G, H,
-    gnorm, status."""
-    N, Pp = X0.shape
-    X = np.array(X0, float)
-    _, G, H = grad_gn_rows(BASE, FREE, X)
-    fin = np.isfinite(G).all(1) & np.isfinite(H).all((1, 2))
-    G = np.where(fin[:, None], G, 0.0); H = np.where(fin[:, None, None], H, 0.0)
-    status = np.array(["active"] * N, dtype="U12")
-    status[~fin] = "stalled"
-    mins_of = lambda b: MINS[b, :NMIN[b]]
-
-    def _classify(b):
-        if ((X[b] <= -XBOX + 1e-9) | (X[b] >= XBOX - 1e-9)).any():
-            return "escaped"
-        gp = proj_grad(G[b:b + 1], X[b:b + 1], XLO[b:b + 1], XHI[b:b + 1])[0]
-        if np.abs(gp).max() < gtol:
-            near = NMIN[b] > 0 and bool((np.abs(mins_of(b) - X[b]).max(1) <= MS_DX).any())
-            return "recaptured" if near else "new"
-        return "active"
-
-    for b in np.where(status == "active")[0]:
-        status[b] = _classify(b)
-    for it in range(maxit):
-        A = np.where(status == "active")[0]
-        if not len(A):
-            break
-        Xc = X.copy()
-        for b in A:
-            d, _ = lm_step(G[b], H[b], X[b], XLO[b], XHI[b], LM_LAMBDA_MIN, np.inf)
-            d = deflate_step(d, X[b], mins_of(b), DF_P, DF_ALPHA)
-            dm = np.abs(d).max()
-            if dm > STEP_MAX:
-                d *= STEP_MAX / dm
-            Xc[b] = np.clip(X[b] + d, XLO[b], XHI[b])
-        _, Gc, Hc = grad_gn_rows(BASE[A], FREE[A], Xc[A])
-        fin = np.isfinite(Gc).all(1) & np.isfinite(Hc).all((1, 2))
-        for a, b in enumerate(A):
-            if fin[a]:
-                X[b], G[b], H[b] = Xc[b], Gc[a], Hc[a]
-                status[b] = _classify(b)
-            else:
-                status[b] = "stalled"
-        print(f"  {log_prefix} it{it}: walking={len(A)} " +
-              " ".join(f"{k}={int((status == k).sum())}" for k in ("new", "recaptured", "escaped", "stalled")) +
-              f" ({time.strftime('%H:%M:%S')})", flush=True)
-    status[status == "active"] = "maxit"
-    F = values_rows(BASE, FREE, X)
-    gproj = proj_grad(G, X, XLO, XHI)
-    return dict(X=X, F=F, G=G, H=H, gnorm=np.abs(gproj).max(1), status=status)
-
-
-# ======================================================================
-# lockstep driver across ALL POIs: base + multistart rows, flags, deflation, branches, envelope
-# ======================================================================
-KINDS = ("warm", "spread", "deflation", "branch")      # row kinds, T["KIND"] = index into this
+KINDS = ("warm", "spread", "branch")      # row kinds, T["KIND"] = index into this
 
 
 def _grid_for(poi):
@@ -948,12 +868,8 @@ def _ckpt_path(outdir, what):
 
 
 def _stage_rank(stage):
-    """lm -> 0, defl<r> -> 2r - 1, branch<r> -> 2r (the order of the phases)."""
-    if stage.startswith("defl"):
-        return 2 * int(stage[4:]) - 1
-    if stage.startswith("branch"):
-        return 2 * int(stage[6:])
-    return 0
+    """lm -> 0, branch -> 1 (the order of the phases)."""
+    return 1 if stage.startswith("branch") else 0
 
 
 def _save_table(path, T, stage):
@@ -988,8 +904,7 @@ def _append(T, **rows):
 
 
 def _row_conv(T):
-    """(converged, at_box) per row: ||g||_AD < GTOL off the +-XBOX box and not stalled. A deflation
-    row that ended on a stationary point (new or recaptured) qualifies like any other."""
+    """(converged, at_box) per row: ||g||_AD < GTOL off the +-XBOX box and not stalled."""
     at_box = ((T["X"] <= -XBOX + 1e-9) | (T["X"] >= XBOX - 1e-9)).any(1)
     return (T["gnorm"] < GTOL) & ~at_box & ~T["stalled"], at_box
 
@@ -1007,26 +922,10 @@ def _flags(T, pois_idx):
     return out
 
 
-def _classify_rows(X, gnorm, stalled, mins_list):
-    """status of finished rows: new / recaptured / stalled / maxit (lm_rows output + known minima)."""
-    at_box = ((X <= -XBOX + 1e-9) | (X >= XBOX - 1e-9)).any(1)
-    out = np.array(["maxit"] * len(X), dtype="U12")
-    for b in range(len(X)):
-        if stalled[b]:
-            out[b] = "stalled"
-        elif at_box[b]:
-            out[b] = "escaped"
-        elif gnorm[b] < GTOL:
-            m = mins_list[b]
-            out[b] = "recaptured" if len(m) and (np.abs(m - X[b]).max(1) <= MS_DX).any() else "new"
-    return out
-
-
 def profile_lockstep(pois, outdir):
     """Build the row set (every POI x grid point, plus MS_K spread starts at MS_NPTS points per POI),
-    warm-start, run LM in lockstep, then MS_ROUNDS rounds of flags -> deflation -> branches, and
-    write one npz/png per POI from the lower envelope over every row. Each phase checkpoints the row
-    table (resumable)."""
+    warm-start, run LM in lockstep, then flags -> branches, and write one npz/png per POI from the
+    lower envelope over every row. Each phase checkpoints the row table (resumable)."""
     global GRID_CEN, GRID_SIG
     theta_warm = CENTER.copy(); Hwarm = [None]
     if MLE_PREPASS:
@@ -1127,9 +1026,8 @@ def profile_lockstep(pois, outdir):
         S = lm_rows(BASE_f, FREE_f, XLO_f, XHI_f, X0_f, POI_IDX=POI_f, PV=PV_f, EXTRA=(KIND == 1),
                     log_prefix="[lock]", ckpt_path=ckpt, resume_state=resume_state)
         T = dict(BASE=BASE_f, FREE=FREE_f, XLO=XLO_f, XHI=XHI_f, POI=POI_f, J=J_f, PV=PV_f, KIND=KIND,
-                 START=START, ROUND=np.zeros(Nf, int), X0=X0_f, X=S["X"], F=S["F"], G=S["G"], H=S["H"],
-                 gnorm=S["gnorm"], stalled=S["stalled"], status=np.array(["lm"] * Nf, dtype="U12"),
-                 barrier=np.full(Nf, np.nan))
+                 START=START, X0=X0_f, X=S["X"], F=S["F"], G=S["G"], H=S["H"],
+                 gnorm=S["gnorm"], stalled=S["stalled"])
         stage = "lm"
         _save_table(tpath, T, stage)
         try:
@@ -1138,148 +1036,62 @@ def profile_lockstep(pois, outdir):
             pass
         _done_line("LM done")
 
-    # ================= rounds: flags -> deflation -> branches =================
-    for rnd in range(1, MS_ROUNDS + 1):
-        if _stage_rank(stage) < 2 * rnd - 1:
-            flags = _flags(T, pois_idx)
-            nflag = sum(v[0] for v in flags.values())
-            flagged = [(k, v) for k, v in flags.items()
-                       if v[0] or (MS_FORCE and (T["KIND"][v[3]] == 1).any())]
-            print(f"[round {rnd}] {nflag} flagged grid points of {len(flags)}"
-                  + (f" (+{len(flagged) - nflag} forced by PA_MS_FORCE)" if MS_FORCE else ""), flush=True)
-            for (p, j), (f, why, reps, r) in flagged:
-                print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] {why or 'forced'}; known minima: "
+    # ================= flags -> branches =================
+    if _stage_rank(stage) < 1:
+        flags = _flags(T, pois_idx)
+        nflag = sum(v[0] for v in flags.values())
+        print(f"[flags] {nflag} flagged grid points of {len(flags)}", flush=True)
+        for (p, j), (f, why, reps, r) in flags.items():
+            if f:
+                print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] {why}; known minima: "
                       + (", ".join(f"chi2={T['F'][i]:.3f}" for i in reps) or "none"), flush=True)
-            if not flagged:
-                stage = f"branch{rnd}"
-                _save_table(tpath, T, stage)
-                break
-            # ---- deflation rows: the point's warm + spread starts (those within MS_DX of a known
-            # minimum dropped), topped up to MS_K + 1 with spreads around its best minimum on that
-            # minimum's own GN matrix; every known minimum of the point deflated at once ----
-            dB, dFR, dLO, dHI, dX0, dP, dJ, dPV, dMIN, dSTART = ([] for _ in range(10))
-            mmax = max(1, max(len(v[2]) for _, v in flagged))
-            for (p, j), (f, why, reps, r) in flagged:
-                mins = T["X"][reps] if reps else np.zeros((0, P))
-                starts = T["X0"][r[T["KIND"][r] <= 1]]
-                starts = np.unique(np.round(starts, 12), axis=0)
-                if len(mins):
-                    far = np.array([(np.abs(mins - s).max(1) > MS_DX).all() for s in starts], bool)
-                    starts = starts[far]
-                if len(starts) < MS_K + 1:         # top up around the best end point on its own GN matrix
-                    b1 = reps[0] if reps else int(r[np.argmin(T["F"][r])])
-                    Hb = T["H"][b1] if np.isfinite(T["H"][b1]).all() and np.abs(T["H"][b1]).max() > 0 \
-                        else _hwarm()[np.ix_(T["FREE"][b1], T["FREE"][b1])]
-                    starts = np.concatenate([starts, spread_starts(
-                        T["X"][b1], Hb, T["XLO"][b1], T["XHI"][b1], MS_K + 1 - len(starts), MS_SPREAD)])
-                b0 = int(r[0])
-                for s_i, s in enumerate(starts):
-                    dB.append(T["BASE"][b0]); dFR.append(T["FREE"][b0]); dLO.append(T["XLO"][b0]); dHI.append(T["XHI"][b0])
-                    dX0.append(s); dP.append(p); dJ.append(j); dPV.append(T["PV"][b0]); dSTART.append(s_i)
-                    m = np.full((mmax, P), np.nan); m[:len(mins)] = mins; dMIN.append((m, len(mins)))
-            dB, dFR, dLO, dHI, dX0 = (np.array(a) for a in (dB, dFR, dLO, dHI, dX0))
-            MINS = np.array([m for m, _ in dMIN]); NMIN = np.array([n for _, n in dMIN], int)
-            print(f"[round {rnd}] deflation: {len(dX0)} walks from {len(flagged)} points, up to {mmax} minima "
-                  f"deflated each (p={DF_P:g}, alpha={DF_ALPHA:g}, <= {DF_MAXIT} steps)", flush=True)
-            R = deflated_rows(dB, dFR, dLO, dHI, dX0, MINS, NMIN, log_prefix=f"[defl{rnd}]")
-            # ---- walks that ran out of steps: finish them with ordinary LM ----
-            mx = np.where(R["status"] == "maxit")[0]
-            if len(mx):
-                print(f"[round {rnd}] {len(mx)} walks unfinished after {DF_MAXIT} steps -> ordinary LM", flush=True)
-                S2 = lm_rows(dB[mx], dFR[mx], dLO[mx], dHI[mx], R["X"][mx], maxit=BR_MAXIT, log_prefix=f"[defl{rnd}-lm]")
-                for k in ("X", "F", "G", "H", "gnorm"):
-                    R[k][mx] = S2[k]
-                R["status"][mx] = _classify_rows(S2["X"], S2["gnorm"], S2["stalled"],
-                                                 [MINS[b, :NMIN[b]] for b in mx])
-            n_new = int((R["status"] == "new").sum())
-            print(f"[round {rnd}] deflation done: " + " ".join(
-                f"{k}={int((R['status'] == k).sum())}" for k in ("new", "recaptured", "escaped", "stalled", "maxit")),
-                flush=True)
-            # ---- each new stationary point: chi2 against the point's best known minimum, and the
-            # barrier along the straight segment between them (values only; an upper bound) ----
-            bar = np.full(len(dX0), np.nan)
-            new_rows = np.where(R["status"] == "new")[0]
-            if len(new_rows):
-                segB, segF, segX, owner = [], [], [], []
-                ts = np.linspace(0.0, 1.0, 9)[1:-1]
-                for a in new_rows:
-                    if NMIN[a] == 0:
-                        continue
-                    xk = MINS[a, 0]
-                    for t in ts:
-                        segB.append(dB[a]); segF.append(dFR[a]); segX.append(xk + t * (R["X"][a] - xk)); owner.append(a)
-                if segB:
-                    fs = values_rows(np.array(segB), np.array(segF), np.array(segX)); owner = np.array(owner)
-                    for a in new_rows:
-                        if NMIN[a] == 0:
-                            continue
-                        p, j = dP[a], dJ[a]
-                        fk = T["F"][flags[(p, j)][2][0]]
-                        bar[a] = fs[owner == a].max() - max(fk, R["F"][a])
-                        print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] new stationary point chi2={R['F'][a]:.3f} "
-                              f"({R['F'][a] - fk:+.3f} vs the known minimum); barrier along the segment "
-                              f">= {bar[a]:.3f}; |dx|max={np.abs(R['X'][a] - MINS[a, 0]).max():.2f}", flush=True)
-            _append(T, BASE=dB, FREE=dFR, XLO=dLO, XHI=dHI, POI=np.array(dP, int), J=np.array(dJ, int),
-                    PV=np.array(dPV, float), KIND=np.full(len(dX0), 2, int), START=np.array(dSTART, int),
-                    ROUND=np.full(len(dX0), rnd, int), X0=dX0, X=R["X"], F=R["F"], G=R["G"], H=R["H"],
-                    gnorm=R["gnorm"], stalled=(R["status"] == "stalled"), status=R["status"], barrier=bar)
-            stage = f"defl{rnd}"
-            _save_table(tpath, T, stage)
-        if _stage_rank(stage) < 2 * rnd:
-            # ---- branches: every distinct minimum found at a grid point by a spread start (round 1) or
-            # by a deflation walk (this round) that is not the one the warm start reached there, clustered
-            # across the POI's grid points by MS_DX so each branch is seeded once, at most MS_BRANCH_MAX
-            # per POI (lowest chi2 first); each seed is an ordinary LM run from its point at every grid
-            # point of its POI ----
-            conv, _ = _row_conv(T)
-            seeds = []
-            for p in pois_idx:
-                cand = []
+        # ---- branches: every distinct minimum a spread start found at a grid point that is not the
+        # one the warm start reached there, clustered across the POI's grid points by MS_DX so each
+        # branch is seeded once, at most MS_BRANCH_MAX per POI (lowest chi2 first); each seed is an
+        # ordinary LM run from its point at every grid point of its POI ----
+        conv, _ = _row_conv(T)
+        seeds = []
+        for p in pois_idx:
+            cand = []
+            for j in range(NPTS):
+                r = np.where((T["POI"] == p) & (T["J"] == j))[0]
+                w = r[T["KIND"][r] == 0]
+                xw = T["X"][w[0]] if len(w) and conv[w[0]] else None
+                for i in r[T["KIND"][r] == 1]:
+                    if conv[i] and (xw is None or np.abs(T["X"][i] - xw).max() > MS_DX):
+                        cand.append(int(i))
+            if cand:
+                cand = np.array(cand, int)
+                _, reps = cluster_points(T["X"][cand], T["F"][cand], MS_DX)
+                seeds += [(p, int(cand[i])) for i in reps[:MS_BRANCH_MAX]]
+        if seeds:
+            bB, bFR, bLO, bHI, bX0, bP, bJ, bPV, bST = ([] for _ in range(9))
+            for s_i, (p, c) in enumerate(seeds):
                 for j in range(NPTS):
-                    r = np.where((T["POI"] == p) & (T["J"] == j))[0]
-                    w = r[T["KIND"][r] == 0]
-                    xw = T["X"][w[0]] if len(w) and conv[w[0]] else None
-                    for i in r:
-                        k = T["KIND"][i]
-                        if not ((k == 1 and rnd == 1) or (k == 2 and T["ROUND"][i] == rnd)):
-                            continue
-                        distinct = xw is None or np.abs(T["X"][i] - xw).max() > MS_DX
-                        if (conv[i] and distinct) or (MS_BRANCH_FROM == "any" and k == 2):
-                            cand.append(int(i))
-                if cand:
-                    cand = np.array(cand, int)
-                    _, reps = cluster_points(T["X"][cand], T["F"][cand], MS_DX)
-                    seeds += [(p, int(cand[i])) for i in reps[:MS_BRANCH_MAX]]
-            if seeds:
-                bB, bFR, bLO, bHI, bX0, bP, bJ, bPV, bST = ([] for _ in range(9))
-                for s_i, (p, c) in enumerate(seeds):
-                    for j in range(NPTS):
-                        b0 = int(np.where((T["POI"] == p) & (T["J"] == j) & (T["KIND"] == 0))[0][0])
-                        bB.append(T["BASE"][b0]); bFR.append(T["FREE"][b0]); bLO.append(T["XLO"][b0]); bHI.append(T["XHI"][b0])
-                        bX0.append(np.clip(T["X"][c], T["XLO"][b0], T["XHI"][b0])); bP.append(p); bJ.append(j)
-                        bPV.append(T["PV"][b0]); bST.append(s_i)
-                bB, bFR, bLO, bHI, bX0 = (np.array(a) for a in (bB, bFR, bLO, bHI, bX0))
-                print(f"[round {rnd}] branches: {len(seeds)} seeds -> {len(bX0)} rows: "
-                      + ", ".join(f"{ORDER[p]}@{grid_of[p][T['J'][c]]:.5g} chi2={T['F'][c]:.3f}" for p, c in seeds),
-                      flush=True)
-                S3 = lm_rows(bB, bFR, bLO, bHI, bX0, POI_IDX=np.array(bP, int), PV=np.array(bPV, float),
-                             maxit=BR_MAXIT, log_prefix=f"[branch{rnd}]")
-                _append(T, BASE=bB, FREE=bFR, XLO=bLO, XHI=bHI, POI=np.array(bP, int), J=np.array(bJ, int),
-                        PV=np.array(bPV, float), KIND=np.full(len(bX0), 3, int), START=np.array(bST, int),
-                        ROUND=np.full(len(bX0), rnd, int), X0=bX0, X=S3["X"], F=S3["F"], G=S3["G"], H=S3["H"],
-                        gnorm=S3["gnorm"], stalled=S3["stalled"],
-                        status=np.array(["branch"] * len(bX0), dtype="U12"), barrier=np.full(len(bX0), np.nan))
-                for s_i, (p, c) in enumerate(seeds):
-                    rb = np.where((T["KIND"] == 3) & (T["ROUND"] == rnd) & (T["START"] == s_i) & (T["POI"] == p))[0]
-                    base = np.array([T["F"][(T["POI"] == p) & (T["J"] == j) & (T["KIND"] < 3)].min() for j in T["J"][rb]])
-                    below = T["F"][rb] < base - MS_DCHI2
-                    print(f"  branch {s_i} ({ORDER[p]}): converged {int((T['gnorm'][rb] < GTOL).sum())}/{len(rb)}, "
-                          f"below the earlier envelope at {int(below.sum())} grid points"
-                          + (f" (by up to {float((base - T['F'][rb]).max()):.3f})" if below.any() else ""), flush=True)
-            else:
-                print(f"[round {rnd}] no new stationary point -> no branches", flush=True)
-            stage = f"branch{rnd}"
-            _save_table(tpath, T, stage)
+                    b0 = int(np.where((T["POI"] == p) & (T["J"] == j) & (T["KIND"] == 0))[0][0])
+                    bB.append(T["BASE"][b0]); bFR.append(T["FREE"][b0]); bLO.append(T["XLO"][b0]); bHI.append(T["XHI"][b0])
+                    bX0.append(np.clip(T["X"][c], T["XLO"][b0], T["XHI"][b0])); bP.append(p); bJ.append(j)
+                    bPV.append(T["PV"][b0]); bST.append(s_i)
+            bB, bFR, bLO, bHI, bX0 = (np.array(a) for a in (bB, bFR, bLO, bHI, bX0))
+            print(f"[branches] {len(seeds)} seeds -> {len(bX0)} rows: "
+                  + ", ".join(f"{ORDER[p]}@{grid_of[p][T['J'][c]]:.5g} chi2={T['F'][c]:.3f}" for p, c in seeds),
+                  flush=True)
+            S3 = lm_rows(bB, bFR, bLO, bHI, bX0, POI_IDX=np.array(bP, int), PV=np.array(bPV, float),
+                         maxit=BR_MAXIT, log_prefix="[branch]")
+            _append(T, BASE=bB, FREE=bFR, XLO=bLO, XHI=bHI, POI=np.array(bP, int), J=np.array(bJ, int),
+                    PV=np.array(bPV, float), KIND=np.full(len(bX0), 2, int), START=np.array(bST, int),
+                    X0=bX0, X=S3["X"], F=S3["F"], G=S3["G"], H=S3["H"], gnorm=S3["gnorm"], stalled=S3["stalled"])
+            for s_i, (p, c) in enumerate(seeds):
+                rb = np.where((T["KIND"] == 2) & (T["START"] == s_i) & (T["POI"] == p))[0]
+                base = np.array([T["F"][(T["POI"] == p) & (T["J"] == j) & (T["KIND"] < 2)].min() for j in T["J"][rb]])
+                below = T["F"][rb] < base - MS_DCHI2
+                print(f"  branch {s_i} ({ORDER[p]}): converged {int((T['gnorm'][rb] < GTOL).sum())}/{len(rb)}, "
+                      f"below the earlier envelope at {int(below.sum())} grid points"
+                      + (f" (by up to {float((base - T['F'][rb]).max()):.3f})" if below.any() else ""), flush=True)
+        else:
+            print("[branches] no distinct minimum beyond the warm starts' -> no branches", flush=True)
+        stage = "branch"
+        _save_table(tpath, T, stage)
     _done_line("all phases done")
 
     # ================= envelope + outputs =================
@@ -1329,11 +1141,10 @@ def profile_lockstep(pois, outdir):
                  n_minima=np.array([len(flags[(i, j)][2]) for j in range(NPTS)]), flag=flag, flag_reason=reason,
                  minima_x=minima_x, minima_chi2=minima_chi2, minima_kind=minima_kind,
                  rows_j=T["J"][rows], rows_kind=T["KIND"][rows], rows_start=T["START"][rows],
-                 rows_round=T["ROUND"][rows], rows_status=T["status"][rows], rows_x0=T["X0"][rows],
+                 rows_x0=T["X0"][rows],
                  rows_x=T["X"][rows], rows_chi2=T["F"][rows], rows_gnorm=T["gnorm"][rows],
                  rows_converged=conv[rows], rows_stalled=T["stalled"][rows], rows_at_box=at_box[rows],
-                 rows_barrier=T["barrier"][rows], kinds=np.array(KINDS),
-                 ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2, DF_P, DF_ALPHA]),
+                 kinds=np.array(KINDS), ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2]),
                  gtol=GTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
         edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
@@ -1368,7 +1179,7 @@ def profile_lockstep(pois, outdir):
 
 def _plot(poi, grid, chi2, npz, rows=None, regions=None):
     """Delta-chi2 of the envelope; with rows = (pv, chi2, kind) every other row's end point too
-    (starts, deflation walks, branches), and the 68% union regions shaded when there are several."""
+    (starts, branches), and the 68% union regions shaded when there are several."""
     try:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
         i = ORDER.index(poi); bnd = _bound_of(i)
@@ -1378,7 +1189,7 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None):
             pv, f, kind = rows
             env = np.interp(pv, grid, chi2)
             for ki, (mk, col, lab) in enumerate((("s", "0.65", "warm start"), ("^", "0.65", "spread start"),
-                                                 ("x", "tab:red", "deflation walk"), ("+", "tab:purple", "branch"))):
+                                                 ("+", "tab:purple", "branch"))):
                 m = (kind == ki) & (f > env + 1e-9)
                 if m.any():
                     ax.scatter(pv[m], f[m] - c0, s=16, marker=mk, c=col, label=lab, zorder=2)
@@ -1436,8 +1247,7 @@ def main():
     print(f"rank {RANK}/{NPROC} devices={jax.devices()} config={CONFIG_ABS} "
           f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} rtol={RTOL} shard={DO_SHARD} "
           f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} warm={WARM} multistart={MS_K}x{MS_NPTS}pts "
-          f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}; rounds {MS_ROUNDS}; deflation p={DF_P:g} "
-          f"alpha={DF_ALPHA:g}) poi_slice={POI_SLICE} nproc={NPROC} bounds="
+          f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}) poi_slice={POI_SLICE} nproc={NPROC} bounds="
           f"{ {k: (BLO[i], BHI[i]) for i, k in enumerate(ORDER) if np.isfinite(BLO[i]) or np.isfinite(BHI[i])} }",
           flush=True)
     if POI_SLICE and NPROC > 1:

@@ -1,5 +1,14 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-22 (afternoon): deflation REMOVED from the driver (CHANGELOG 2026-10-22 afternoon).** The
+multimodality machinery is now: spread starts -> flags -> branches from every distinct spread-start
+minimum -> lower envelope -> union-of-regions intervals (items 14, 15, 17, 18). Item 16 (deflated Newton
+walks, Farrell et al. 2015) is gone: it finds stationary points (saddles included), adds no certainty
+beyond the spread starts, and in practice only triggered on noise (the _v4linx stalls). Row kinds are
+now warm / spread / branch (KIND 0 / 1 / 2); the npz lost rows_round, rows_status, rows_barrier and the
+PA_MS_ROUNDS / PA_DF_* / PA_MS_FORCE / PA_MS_BRANCH_FROM knobs are gone. pytests/test_lm_tools.py and
+test_profile_toy.py updated and passing.
+
 **2026-10-22: the first _v4linx run (60057734, 6 h) TIMED OUT on stalled rows -- LINX's YHe is rough in
 Delta_Neff_init at 1.5e-5 (1e-2 in chi2) because the network interpolates linearly on the background's ~300
 adaptive steps, which move with Delta_Neff_init (CHANGELOG 2026-10-22).** Fixed in scan/bbn_stage.py (LINX

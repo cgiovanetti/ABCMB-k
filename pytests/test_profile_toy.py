@@ -1,7 +1,7 @@
 """The profile driver end to end on the toy bimodal objective of scan/configs/toy_bimodal.py (CPU, no
 ABCMB): the spread starts find the second well at the left grid points, those points are flagged, the
-deflation walks run, the branch carries the second minimum to every grid point, the lower envelope
-matches the exact profile and the 68% interval comes out as a union of two regions. Without the
+branch carries the second minimum to every grid point, the lower envelope matches the exact profile
+and the 68% interval comes out as a union of two regions. Without the
 multistart the driver follows the warm start's branch alone and is wrong left of the crossing."""
 import os, sys
 import numpy as np
@@ -46,19 +46,19 @@ def test_multistart_branches_recover_the_bimodal_profile(driver, tmp_path):
     warm = np.array([r["rows_chi2"][(kind == 0) & (j == jj)].min() for jj in range(len(grid))])
     assert np.abs(warm - branch_exact(grid, +1)).max() < 2e-3
     assert (warm - exact)[grid < -0.5].min() > 1.0
-    # spread starts found the second well at some left grid points -> flags -> deflation there -> a
-    # branch (one seed, one row per grid point; a further seed would add another full set)
-    assert (kind == 1).sum() == 3 * 6 and (kind == 2).sum() > 0
-    nb = int((kind == 3).sum())
+    # spread starts found the second well at some left grid points -> flags -> a branch (one seed, one
+    # row per grid point; a further seed would add another full set)
+    assert (kind == 1).sum() == 3 * 6
+    nb = int((kind == 2).sum())
     assert nb >= len(grid) and nb % len(grid) == 0, nb
     # every grid point now knows both wells: the lowest one is the second well on the left (found by a
-    # spread start, a walk or the branch, all below the warm branch by > 1) and the warm one on the right
+    # spread start or the branch, both below the warm branch by > 1) and the warm one on the right
     assert (r["n_minima"] >= 2).all() and r["flag"].all()
     assert all("distinct minima" in s for s in r["flag_reason"])
     left = grid < -0.11                                   # the branches cross at a = -0.114
     assert (r["minima_chi2"][left, 0] < warm[left] - 0.1).all()
     assert np.abs(r["minima_chi2"][~left, 0] - warm[~left]).max() < 2e-3
-    assert set(r["minima_kind"][left][:, 0]) <= {"spread", "branch", "deflation"}
+    assert set(r["minima_kind"][left][:, 0]) <= {"spread", "branch"}
     # intervals: a union of two regions at 68%, one region at 95% whose upper end runs off the grid
     # (NaN by design), pchip because the points are bimodal
     assert str(r["interval_mode"]) == "pchip"
@@ -69,9 +69,6 @@ def test_multistart_branches_recover_the_bimodal_profile(driver, tmp_path):
     # best = the lowest node (pchip never undershoots its nodes): 1.2 on this grid, next to delta = 1.1
     assert np.allclose(r["sigma1"], [reg1[0, 0], DELTA, reg1[1, 1]], atol=0.16), r["sigma1"]
     assert abs(reg95[0, 0] - (-DELTA - np.sqrt(3.841 - 0.5))) < 0.1 and np.isnan(reg95[0, 1]), reg95
-    # the deflation walks ended on known minima or outside; nothing new was needed
-    st = r["rows_status"][kind == 2]
-    assert set(st.tolist()) <= {"recaptured", "escaped", "stalled", "maxit", "new"}, st
 
 
 def test_without_multistart_the_wrong_branch_is_followed(driver, tmp_path):

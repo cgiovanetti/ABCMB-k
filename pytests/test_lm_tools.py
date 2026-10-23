@@ -1,12 +1,11 @@
-"""scan/lm_tools.py on a toy double well: the LM step, deflation (a known minimum repels the
-walk, which then finds the other one), the eigen-spread starts, minima clustering / flags, and the
+"""scan/lm_tools.py on a toy double well: the LM step, the eigen-spread starts, minima clustering / flags, and the
 union of below-threshold regions. CPU, no ABCMB."""
 import os, sys
 import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from scan.lm_tools import (proj_grad, lm_step, deflation, deflate_step, deflated_resid, fit_in_box,
+from scan.lm_tools import (proj_grad, lm_step, fit_in_box,
                            spread_starts, cluster_points, flag_point, union_regions, is_multimodal)
 
 LO, HI = -np.full(2, 5.0), np.full(2, 5.0)
@@ -44,21 +43,6 @@ def descend(x, maxit=60, lam=1e-3, step_max=0.5, gtol=1e-8):
     return x
 
 
-def walk(x, mins, p=2.0, alpha=0.0, step_max=0.5, maxit=80, gtol=1e-8):
-    """the driver's deflated walk (deflated_rows): undamped GN step, deflated, capped, projected"""
-    for _ in range(maxit):
-        gg, H = g(x), gn(x)
-        if np.abs(proj_grad(gg[None], x[None], LO[None], HI[None])).max() < gtol:
-            break
-        d, _ = lm_step(gg, H, x, LO, HI, 1e-7, np.inf)
-        d = deflate_step(d, x, mins, p, alpha)
-        dm = np.abs(d).max()
-        if dm > step_max:
-            d *= step_max / dm
-        x = np.clip(x + d, LO, HI)
-    return x
-
-
 X_RIGHT = descend(np.array([0.8, 0.3]))
 X_LEFT = descend(np.array([-0.8, -0.3]))
 
@@ -75,45 +59,6 @@ def test_lm_step_respects_bounds():
     assert np.isclose((x + d)[1], 5.0) and pred > 0
     # a component pushing into an active bound is zeroed in the projected gradient
     assert proj_grad(np.array([[0.0, -1.0]]), np.array([[0.0, 5.0]]), LO[None], HI[None])[0, 1] == 0
-
-
-def test_deflation_gradient_and_reversal():
-    mins = np.array([[1.0, 0.0], [-1.0, 0.5]])
-    x = np.array([0.3, -0.2])
-    logM, dl = deflation(x, mins, 2.0, 1.0)
-    eps = 1e-6
-    for i in range(2):
-        e = np.zeros(2); e[i] = eps
-        num = (deflation(x + e, mins, 2.0, 1.0)[0] - deflation(x - e, mins, 2.0, 1.0)[0]) / (2 * eps)
-        assert abs(num - dl[i]) < 1e-6
-    assert deflation(x, np.zeros((0, 2)), 2.0, 1.0) == (0.0, pytest.approx(np.zeros(2)))
-    # with the unshifted p=2 deflation, the full Newton step toward the known point comes out reversed
-    xk = np.array([1.0, 0.0]); x = np.array([0.4, 0.3]); d = xk - x
-    assert np.allclose(deflate_step(d, x, xk[None], 2.0, 0.0), -d)
-    # and a step away from it is shortened, not flipped
-    assert np.allclose(deflate_step(-d, x, xk[None], 2.0, 0.0), -d / 3.0)
-    # the deflated residual diverges at a known point
-    assert deflated_resid(xk + 1e-9, np.array([1e-9, 0.0]), xk[None], 2.0, 0.0) > 15
-
-
-def test_deflated_walk_escapes_the_known_minimum_and_finds_the_other():
-    # from the right basin, with the right minimum deflated, the walk ends at the left minimum
-    x = walk(np.array([0.8, 0.3]), X_RIGHT[None])
-    assert np.abs(x - X_LEFT).max() < 1e-4, x
-    # from very close to the known minimum too, on the side facing the other basin
-    x = walk(X_RIGHT - np.array([0.02, 0.01]), X_RIGHT[None])
-    assert np.abs(x - X_LEFT).max() < 1e-4, x
-    # the walk is pushed along the ray from the known minimum through its start: a start on the far
-    # side leaves through the box (the driver's "escaped"), which is why the spread starts come in
-    # +- pairs along each direction
-    x = walk(X_RIGHT + np.array([0.02, 0.01]), X_RIGHT[None])
-    assert np.abs(x).max() == 5.0, x
-    # with both minima deflated, nothing is left to settle on: the walk never ends near either
-    x = walk(np.array([0.8, 0.3]), np.stack([X_RIGHT, X_LEFT]))
-    assert np.abs(x - X_RIGHT).max() > 0.3 and np.abs(x - X_LEFT).max() > 0.3
-    # nothing deflated = ordinary (capped) Newton: back to the right minimum
-    x = walk(np.array([0.8, 0.3]), np.zeros((0, 2)))
-    assert np.abs(x - X_RIGHT).max() < 1e-4
 
 
 def test_spread_starts_follow_the_softest_directions():

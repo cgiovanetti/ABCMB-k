@@ -9,6 +9,22 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-22 (afternoon) — deflation removed from the profile driver
+------------------------------------------------------------------
+The deflated Newton walks (Farrell, Birkisson & Funke 2015; HANDOFF item 16) are gone from
+scan/profile_prod_ad.py and scan/lm_tools.py. Reason: for a profile likelihood the question is only whether a
+lower minimum exists at a grid point and whether the branch is followed across grid points; the spread starts,
+the flags, the branches from every distinct spread-start minimum and the lower envelope answer that. Deflation
+finds stationary points (saddles included, which the PSD GN curvature cannot tell from minima), gives no more
+certainty than the starts (both are local exploration), and in practice only ever triggered on noise: _v3
+flagged nothing, the _v4linx run burned hours on walks from LINX-noise stalls and produced 7 artefact "new"
+points. Removed: deflated_rows, _classify_rows, the MS_ROUNDS round loop (now one pass: flags -> branches),
+PA_MS_ROUNDS / PA_DF_MAXIT / PA_DF_P / PA_DF_ALPHA / PA_MS_FORCE / PA_MS_BRANCH_FROM, the ROUND / status /
+barrier row columns (npz: rows_round, rows_status, rows_barrier), lm_tools.deflation / deflate_step /
+deflated_resid and their tests. Row kinds are warm / spread / branch (KIND 0 / 1 / 2; old row tables with
+KIND 2 = deflation are not compatible, none are live). pytests/test_lm_tools.py (5) and test_profile_toy.py
+(2) pass on the toy double well / toy bimodal profile.
+
 2026-10-22 — _v4linx 6 h run timed out on stalled rows: LINX's YHe is rough in Delta_Neff_init; re-grid fix
 ----------------------------------------------------------------------------------------------------------
 Job 60057734 (the 6 h pre-maintenance copy) ran 20:44 -> 02:45 and died in the deflation phase with no POI

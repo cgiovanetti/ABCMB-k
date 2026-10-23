@@ -1,7 +1,6 @@
 """lm_tools.py — pure-numpy pieces of the profile driver (scan/profile_prod_ad.py).
 
-The projected Levenberg-Marquardt step, deflation of known stationary points (Farrell, Birkisson &
-Funke 2015, SIAM J. Sci. Comput. 37, A2026), the deliberate multistart spread along the softest
+The projected Levenberg-Marquardt step, the deliberate multistart spread along the softest
 Gauss-Newton directions, clustering of converged starts into distinct minima with the user's flags,
 and the union of below-threshold regions of a profile. No JAX, no ABCMB, no likelihood: everything
 here is exercised on a toy double well in pytests/test_lm_tools.py.
@@ -44,46 +43,6 @@ def lm_step(g, H, x, xlo, xhi, lam, step_max):
         d *= step_max / dm
     d = np.clip(x + d, xlo, xhi) - x
     return d, -(g @ d + 0.5 * d @ H @ d)
-
-
-# ======================================================================
-# deflation (Farrell, Birkisson & Funke 2015)
-# ======================================================================
-def deflation(x, mins, p=2.0, alpha=1.0):
-    """log M(x) and grad(log M)(x) for M(x) = prod_i (|x - x_i|^-p + alpha) over the known
-    stationary points mins (m, P). No known points: (0, 0) -- M = 1, nothing deflated. The shift
-    alpha makes M -> alpha^m far from every x_i, so the deflated step reverts to the ordinary one
-    there; |x - x_i| ~ alpha^(-1/p) is the reach of the deflation."""
-    mins = np.asarray(mins, float).reshape(-1, len(x))
-    if len(mins) == 0:
-        return 0.0, np.zeros_like(x, dtype=float)
-    dx = x[None, :] - mins
-    r = np.maximum(np.sqrt((dx ** 2).sum(1)), 1e-12)
-    rp = r ** (-p)
-    logM = float(np.log(rp + alpha).sum())
-    dlogM = ((-p * rp / (r ** 2) / (rp + alpha))[:, None] * dx).sum(0)
-    return logM, dlogM
-
-
-def deflate_step(d, x, mins, p=2.0, alpha=1.0, tau_min=1e-3):
-    """The deflated Newton step from the ordinary one. For the root problem g(x) = 0 deflated to
-    M(x) g(x) = 0, the Jacobian is M J + g grad(M)^T and the Sherman-Morrison identity turns its
-    Newton step into d / (1 - grad(log M).d), d = -J^-1 g the ordinary step (Farrell et al. 2015,
-    sec. 3.1), so the deflated step costs no extra gradient or curvature. Near a known point the
-    denominator shrinks or flips sign (the step is pushed away from it); far away it is 1. |tau| is
-    floored at tau_min; the caller caps the step's length."""
-    _, dl = deflation(x, mins, p, alpha)
-    tau = 1.0 - float(dl @ d)
-    if abs(tau) < tau_min:
-        tau = tau_min if tau >= 0 else -tau_min
-    return d / tau
-
-
-def deflated_resid(x, g, mins, p=2.0, alpha=1.0):
-    """log ||M(x) g||_inf: the residual of the deflated root problem, the quantity a deflated step
-    must decrease. Infinite at a known point (M -> inf there), so the iteration cannot settle on one."""
-    logM, _ = deflation(x, mins, p, alpha)
-    return logM + np.log(max(float(np.abs(g).max()), 1e-300))
 
 
 # ======================================================================
