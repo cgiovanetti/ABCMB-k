@@ -9,6 +9,15 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-23 — LINX-main diff regenerated: SaveAt(t0=True, t1=True, dense=True), no saved steps
+----------------------------------------------------------------------------------------------
+/pscratch/sd/c/carag/LINX/dense_grid_loglog.diff now anchors the output grid on sol.ts = (t0, event time) instead
+of scanning saved steps for the event (last_step_ind and the inf-padded tails are gone); the grid starts at
+T_start exactly. Tested on linx312 (scan/.mm/linxdev/main_t01_check.log): Y_p / N_eff equal to the saved-steps
+version to 5e-7 at three Delt_Neff_init, roughness 3e-8, dry-run clean on main + rho_extra_norm.diff. The
+vendored copy keeps steps=True because it integrates from t0 = 0 (a log grid cannot start there); adopting
+main's parametric t0 would let it drop the scan too.
+
 2026-10-22 (night) — pure-LINX route APPLIED (dense grid + log-log inside the vendored LINX, batched Jacobian)
 -----------------------------------------------------------------------------------------------------------
 Applied vendored_dense_loglog.diff and stage_new.diff (evening entry) to abcmb/linx and scan/bbn_stage.py with
