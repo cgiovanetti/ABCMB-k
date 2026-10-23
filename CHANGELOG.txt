@@ -9,6 +9,16 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-23 — LINX-main diff: n_out default 1024 (the dense grid's only cost is the per-point thermodynamics)
+-----------------------------------------------------------------------------------------------------------
+The user measured the dense-grid background at 0.4 s vs 0.3 s on an M1 (jax 0.4.28). Profiled on one Perlmutter
+core (scan/.mm/linxdev/main_prof.log): the dense output is free (solve alone 807 ms saved steps vs 803 ms dense,
+the 4096-point dense evaluate 0.3 ms); the cost is rho_g / rho_nu / rho_EM (e+e- Bessel series, for N_eff_vec)
+evaluated on every output point, ~12 us each: background call 733 ms as published, 735 / 745 / 755 / 783 ms at
+n_out 512 / 1024 / 2048 / 4096. Accuracy (main_nout_check.log): Y_p, N_eff at three Delt_Neff_init agree across
+1024 / 2048 / 4096 to 4e-7 (512: 1e-6), roughness 2.8e-8 at 1024. /pscratch/sd/c/carag/LINX/dense_grid_loglog.diff
+regenerated with n_out = 1024 and these numbers. The vendored copy keeps BG_N_OUT = 4096 (negligible next to ABCMB).
+
 2026-10-23 — LINX-main diff regenerated: SaveAt(t0=True, t1=True, dense=True), no saved steps
 ----------------------------------------------------------------------------------------------
 /pscratch/sd/c/carag/LINX/dense_grid_loglog.diff now anchors the output grid on sol.ts = (t0, event time) instead
