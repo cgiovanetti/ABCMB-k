@@ -1,5 +1,11 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-26: BBN likelihood built (CHANGELOG 2026-10-26, second entry): config "bbn_like" adds the Y_p + D/H
+Gaussian terms and profiles LINX's tau_n_fac and 12 rate shifts (q0..q11, key_recommended) with everything
+else; stage inputs/outputs extended (5 x 15 Jacobians, 1.4 s per row batched). Run = scan/configs/
+lcdm_dneff_linx_bbnlike_plikfull.py via scan/profile_prod_linx_bbnlike.slurm (tag _v5bbn, joint-fit prepass
+on). Analysis #1 (Planck LCDM+Neff, BBN-consistent YHe, no abundance data) = _v4linx, done.**
+
 **2026-10-26: _v4linx DONE (CHANGELOG 2026-10-26): the 7-POI LCDM+Delta_Neff_init profile with YHe/Neff/T_nu
 from LINX per row, 5h24m on 4 nodes, no multimodality; results scan/results/profile_prod_ad_*_v4linx.{npz,png},
 comparison with _v3 in profile_neff_runs_compared_v3_v4linx.png (Neff 2.850 [2.659, 3.050] vs 2.818 [2.596,

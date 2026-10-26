@@ -285,6 +285,7 @@ class NuclearRates(eqx.Module):
             by PRyMordial. 
             'key_YOF': YOF key network rates, also used by 
             PRyMordial.
+            'key_recommended': Recommended small reaction network (PRIMAT2023 + new npdg)
             'key_PRIMAT_2023': PRIMAT 2023 key network rates.
             'key_PArthENoPE': PArthENoPE key network rates. 
             'full_PRIMAT_2023': PRIMAT 2023 full network rates.
@@ -302,6 +303,7 @@ class NuclearRates(eqx.Module):
                 network == 'key_PRIMAT_2018' 
                 or network == 'key_YOF' 
                 or network == 'key_PRIMAT_2023'
+                or network == 'key_recommended'
             ): 
                 key_network_str = network 
             elif network == 'full_PRIMAT_2018': 

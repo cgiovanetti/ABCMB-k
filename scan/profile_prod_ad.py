@@ -215,6 +215,26 @@ def _load_config(path):
 CONFIG_PATH = os.environ.get("PA_CONFIG", "scan/configs/lcdm.py")
 CFG, CONFIG_ABS = _load_config(CONFIG_PATH)
 
+# BBN likelihood (config "bbn_like", needs "bbn": "linx"): Gaussian terms on LINX's Y_p(BBN) = 4 Y_He4 and
+# 1e5 D/H, with LINX's nuisances profiled like every other parameter: tau_n_fac (prior N(1, tau_n_sig)) and
+# one N(0, 1) log-normal rate shift per reaction of the network (q0, q1, ...; the reaction each one scales is
+# printed at start-up). They are appended to ORDER here, so every row carries them as free dims and the
+# priors are part of chi2. Config: {"Yp": (mean, sigma), "DH": (mean, sigma), "tau_n_sig": sigma}.
+BBN_LIKE = CFG.get("bbn_like", None)
+BBN_NUIS = []                                         # the appended BBN nuisance names
+if BBN_LIKE is not None:
+    if str(CFG.get("bbn", "")).lower() != "linx":
+        raise ValueError(f"{CONFIG_ABS}: bbn_like needs bbn = linx")
+    from scan.bbn_stage import LinxStage as _LinxStage
+    _nq = _LinxStage.n_reactions(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
+    BBN_NUIS = ["tau_n_fac"] + [f"q{i}" for i in range(_nq)]
+    CFG["order"] = list(CFG["order"]) + BBN_NUIS
+    for _k in BBN_NUIS:
+        CFG["cen"][_k] = 1.0 if _k == "tau_n_fac" else 0.0
+        CFG["sig"][_k] = float(BBN_LIKE["tau_n_sig"]) if _k == "tau_n_fac" else 1.0
+        if "grid_sig" in CFG:
+            CFG["grid_sig"][_k] = CFG["sig"][_k]
+
 ORDER = list(CFG["order"])
 D = len(ORDER)
 P = D - 1                                            # free dims of a profile row
@@ -370,8 +390,15 @@ if TOY is None and str(CFG.get("bbn", "")).lower() == "linx":
             raise ValueError(f"{CONFIG_ABS}: bbn=linx sets {_k}; remove it from fixed")
     BBN = LinxStage(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
     I_OB, I_DN = ORDER.index("omega_b"), ORDER.index("Delta_Neff_init")
+    # the stage inputs that are parameters of this run (global index -> stage column); the others stay at
+    # their reference values (tau_n_fac 1, q 0)
+    BBN_IDX = [ORDER.index(n) for n in BBN.in_names if n in ORDER]
+    BBN_COLS = [BBN.in_names.index(ORDER[i]) for i in BBN_IDX]
     print(f"[bbn] LINX stage ({CFG.get('linx_reaction_net', 'key_PRIMAT_2023')}) on one host device, vmapped in "
-          f"chunks of {_BBN_CHUNK}", flush=True)
+          f"chunks of {_BBN_CHUNK}; {BBN.nq} reactions" + (": BBN likelihood on, nuisances " + ", ".join(
+              f"{n} = {r}" for n, r in zip(BBN_NUIS[1:], BBN.reaction_names)) + f" and tau_n_fac (sigma "
+              f"{BBN_LIKE['tau_n_sig']}); data Yp {BBN_LIKE['Yp']}, DH {BBN_LIKE['DH']}" if BBN_LIKE else ""),
+          flush=True)
 CEN = jnp.asarray(CENTER); SIG = jnp.asarray(SIGMA)
 try:
     NDEV = len(jax.devices('gpu'))
@@ -411,21 +438,45 @@ def build_dict(theta, bbn_y=None):
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = float(np.exp(theta[i]) / 1e10)
-        elif name == "Delta_Neff_init":
+        elif name == "Delta_Neff_init" or name in BBN_NUIS:
             continue
         else:
             p[name] = float(theta[i])
     if bbn_y is not None:
-        p["YHe"], p["Neff"], p["T_nu_massless"] = (float(v) for v in bbn_y)
+        p["YHe"], p["Neff"], p["T_nu_massless"] = (float(v) for v in bbn_y[:3])
     return p
 
 
+def _bbn_X(thetas):
+    """(N, n_in) LINX-stage inputs of physical D-vectors: omega_b, Delta_Neff_init and whichever BBN
+    nuisances are parameters of this run; the rest at their reference values."""
+    th = np.asarray(thetas, float).reshape(-1, D)
+    X = BBN.x_default(th[:, I_OB], th[:, I_DN])
+    for i, c in zip(BBN_IDX, BBN_COLS):
+        X[:, c] = th[:, i]
+    return X
+
+
 def _bbn_values(thetas):
-    """(N, 3) [YHe, Neff, T_nu_massless] of physical D-vectors through the LINX stage; None without it."""
+    """(N, 5) [YHe, Neff, T_nu_massless, YHe_BBN, DH] of physical D-vectors through the LINX stage; None
+    without it."""
     if BBN is None:
         return None
-    th = np.asarray(thetas, float)
-    return BBN.values(th[:, I_OB], th[:, I_DN])
+    return BBN.values(_bbn_X(thetas))
+
+
+def _bbn_chi2(thetas, ys):
+    """(N,) the BBN likelihood of the rows: the Gaussian terms on Y_p(BBN) and D/H plus the Gaussian priors on
+    the BBN nuisances (x^2 in their scaled coordinates); 0 without bbn_like."""
+    if BBN_LIKE is None:
+        return 0.0
+    th = np.asarray(thetas, float).reshape(-1, D)
+    c = (((ys[:, 3] - BBN_LIKE["Yp"][0]) / BBN_LIKE["Yp"][1]) ** 2
+         + ((ys[:, 4] - BBN_LIKE["DH"][0]) / BBN_LIKE["DH"][1]) ** 2)
+    for k in BBN_NUIS:
+        i = ORDER.index(k)
+        c = c + ((th[:, i] - CENTER[i]) / SIGMA[i]) ** 2
+    return c
 
 
 if TOY is not None:
@@ -521,7 +572,10 @@ def values_rows(BASE, FREE, X):
         th = [theta_of(b[k], f[k], x[k]) for k in range(len(x))]
         ys = _bbn_values(th)
         batch = [build_dict(th[k], None if ys is None else ys[k]) for k in range(len(x))]
-        out[s:e] = _chi2_from_out(model.call_batched(batch, shard=DO_SHARD))[:e - s]
+        c = _chi2_from_out(model.call_batched(batch, shard=DO_SHARD))
+        if ys is not None:
+            c = c + _bbn_chi2(th, ys)
+        out[s:e] = c[:e - s]
     if TRACE_EVALS:
         print(f"[eval] value END {time.strftime('%H:%M:%S')} chi2 " + " ".join(f"{v:.3f}" for v in out), flush=True)
     return out
@@ -539,13 +593,14 @@ def _phys_to_derived(thD, bbn=None):
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = jnp.exp(thD[i]) / 1e10
-        elif name == "Delta_Neff_init":
+        elif name == "Delta_Neff_init" or name in BBN_NUIS:
             continue
         else:
             p[name] = thD[i]
     if bbn is not None:
         y, J, th0 = bbn
-        lin = jnp.asarray(y) + jnp.asarray(J) @ jnp.stack([thD[I_OB] - th0[I_OB], thD[I_DN] - th0[I_DN]])
+        dx = jnp.stack([thD[i] - th0[i] for i in BBN_IDX])
+        lin = jnp.asarray(y)[:3] + jnp.asarray(J)[:3][:, BBN_COLS] @ dx
         p["YHe"], p["Neff"], p["T_nu_massless"] = lin[0], lin[1], lin[2]
     return _bg_to_float(model.add_derived_parameters(p))
 
@@ -623,9 +678,9 @@ def _gn_block(BASE, FREE, X):
     th_np = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(B)])
     thetas = [jnp.asarray(t) for t in th_np]
     bbn = [None] * B
-    if BBN is not None:                            # one batched LINX call (values + 3x2 Jacobians) per block
+    if BBN is not None:                            # one batched LINX call (values + Jacobians) per block
         n0 = BBN.n_fallback; t0 = time.perf_counter()
-        ys, Js = BBN.values_and_jac(th_np[:, I_OB], th_np[:, I_DN])
+        ys, Js = BBN.values_and_jac(_bbn_X(th_np))
         if TRACE_EVALS:
             print(f"[eval] bbn jac {B} rows {time.perf_counter() - t0:.0f}s, {BBN.n_fallback - n0} lanes "
                   f"recomputed without vmap", flush=True)
@@ -651,7 +706,25 @@ def _gn_block(BASE, FREE, X):
     else:
         nu = jnp.zeros((B, 1))
     c, g, H = _gn_B(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu)
-    return np.asarray(c, float), np.asarray(g, float), np.asarray(H, float)
+    c, g, H = np.array(c, float), np.array(g, float), np.array(H, float)   # copies: written below
+    if BBN_LIKE is not None:                       # the BBN likelihood: its residuals' Gauss-Newton terms
+        # and the nuisance priors, in the rows' scaled coordinates (direction j = SIGMA[i] e_i)
+        c = c + _bbn_chi2(th_np, ys)
+        col_of = dict(zip(BBN_IDX, BBN_COLS))
+        sY, sDH = BBN_LIKE["Yp"][1], BBN_LIKE["DH"][1]
+        for b in range(B):
+            r = np.array([(ys[b, 3] - BBN_LIKE["Yp"][0]) / sY, (ys[b, 4] - BBN_LIKE["DH"][0]) / sDH])
+            Jr = np.zeros((2, Pp))
+            for j in range(Pp):
+                i = int(FREE[b, j])
+                if i in col_of:
+                    Jr[0, j] = Js[b, 3, col_of[i]] * SIGMA[i] / sY
+                    Jr[1, j] = Js[b, 4, col_of[i]] * SIGMA[i] / sDH
+                if ORDER[i] in BBN_NUIS:
+                    xj = (th_np[b, i] - CENTER[i]) / SIGMA[i]
+                    g[b, j] += 2.0 * xj; H[b, j, j] += 2.0
+            g[b] += 2.0 * Jr.T @ r; H[b] += 2.0 * Jr.T @ Jr
+    return c, g, H
 
 
 def grad_gn_rows(BASE, FREE, X):
@@ -1117,7 +1190,8 @@ def profile_lockstep(pois, outdir):
                 extra.update(derived_neff=neff, sigma1_neff=np.array([fn(lo1), fn(mid), fn(hi1)]),
                              cl95_neff=np.array([fn(lo95), fn(hi95)]))
                 print(f"[{poi}] as Neff: best {fn(mid):.4f}; 68% [{fn(lo1):.4f},{fn(hi1):.4f}]; "
-                      f"95% [{fn(lo95):.4f},{fn(hi95):.4f}]; YHe at the best fit {np.interp(mid, grid, yb[:, 0]):.5f}",
+                      f"95% [{fn(lo95):.4f},{fn(hi95):.4f}]; at the best fit YHe {np.interp(mid, grid, yb[:, 0]):.5f}, "
+                      f"Yp(BBN) {np.interp(mid, grid, yb[:, 3]):.5f}, D/H {np.interp(mid, grid, yb[:, 4]):.3f}e-5",
                       flush=True)
         mmax = max(1, max(len(flags[(i, j)][2]) for j in range(NPTS)))
         minima_x = np.full((NPTS, mmax, P), np.nan); minima_chi2 = np.full((NPTS, mmax), np.nan)

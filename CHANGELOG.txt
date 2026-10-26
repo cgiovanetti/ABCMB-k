@@ -9,6 +9,41 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-26 — BBN likelihood in the profile driver (Y_p + D/H data, LINX nuisances profiled); key_recommended ported
+------------------------------------------------------------------------------------------------------------------
+The _v4linx profile is CMB-only (LINX sets YHe, no abundance data), so its Neff 2.85 is not the number the
+literature's CMB + BBN (PRIMAT) fits give; the user wants the joint fit with both abundances. Built:
+(1) scan/bbn_stage.py: inputs (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq), outputs (YHe, Neff, T_nu, Y_p(BBN) =
+4 Y_He4, 1e5 D/H), values(x) / values_and_jac(x) on (N, n_in) arrays; the Jacobian's Delta_Neff_init column goes
+through the background jvp, the other n_in - 1 columns through jax.jacfwd over the network alone with the
+background held (fine now: the zero-tangent background solve that made jacfwd NaN never runs). 64-row batched
+Jacobian 1.40 s per row with 15 inputs (1.25 with 2), batched = per-lane to 5e-6, finite (scan/.mm/
+bbnlike_stage_check.log). (2) scan/profile_prod_ad.py: config "bbn_like" = {"Yp": (mean, sig), "DH": (mean, sig),
+"tau_n_sig": sig} appends tau_n_fac (cen 1, sig tau_n_sig) and q0..q{nq-1} (cen 0, sig 1) to ORDER at load, so
+every row profiles them; chi2 += the two Gaussian data terms + x^2 priors on the nuisances (values_rows and the
+gradient block agree: _bbn_chi2, residual Jacobians J[3:5] SIGMA / sigma_obs into g and the GN matrix, prior
+curvature 2 on the diagonal); build_dict / _phys_to_derived skip the BBN names; the npz derived_bbn is (NPTS, 5).
+(3) abcmb/linx: network key_recommended ported from the user's LINX-pypi tree (PRIMAT 2023 with the Chen et al.
+2025 n(p,g)d rate, arXiv:2509.11743, and updated dpHe3g / ddHe3n / ddtp tables; the main export's copy of that
+folder is identical to key_PRIMAT_2023 and stale). (4) scan/configs/lcdm_dneff_linx_bbnlike_plikfull.py: the
+LINX config with key_recommended, data as bbn-on-cmb-bao-tension/CMB_BBN_Neff.py (Y_p 0.2458 +/- 0.0013 Aver
+2026, D/H 2.527 +/- 0.030 Cooke 2018, tau_n_fac N(1, 0.000682)), cen = the _v4linx best fit; launcher
+scan/profile_prod_linx_bbnlike.slurm (48 h, 4 nodes, PA_MLE_PREPASS=1: the D/H term moves the best fit, the
+joint fit recentres the grids first). At the _v4linx best fit key_recommended gives Y_p(BBN) 0.24451, D/H
+2.408e-5 (4 sigma below Cooke), dY_p/dq ~ 0 for every rate, dY_p/dtau_n_fac 0.18, dD/H/dq -0.014..-0.019 per
+sigma for dpHe3g / ddHe3n / ddtp, dD/H/domega_b -181. compare_profile_runs.py skips the BBN nuisances in a run's
+nuis list.
+Shakeout (scan/.mm/bbn_shake.sh / bbn_shake2.log, 4 GPUs, 53 min): the 2-iteration joint-fit prepass over all 20
+parameters moved Delta_Neff_init -0.742 -> -0.278 (Neff 2.97), q1 / q2 / q3 (dpHe3g / ddHe3n / ddtp) to -0.69 /
+-0.74 / -0.53, tau_n_fac to 0.99999, Fisher grid-sig for Delta_Neff_init 0.31; one profile iteration over 14
+rows ran with 0 LINX fallbacks (16-row Jacobian 30 s), ABCMB gradient block 7.5 min warm for 14 rows x 19
+directions (a 64-row block at 6 directions was ~13 min in _v4linx: the cost scales with directions, so ~45 min
+per LM iteration per rank in production, 12-15 h per rank with the prepass); indicative 5-point profile: Neff
+2.97, 68% [2.90, 3.06], Y_p(BBN) 0.2461, D/H 2.493e-5 at the best fit, min chi2 2763.24 (+4.1 over CMB-only for
+the two data terms and the priors). The first attempt died on a read-only numpy view (np.asarray of a JAX
+array) in the new BBN terms; np.array now. Launcher walltime 24 h (the user: size it to the estimate, the 48 h
+of the LINX launcher was the QOS maximum, not an estimate). Submitted as _v5bbn.
+
 2026-10-26 — _v4linx LCDM+Delta_Neff_init (LINX) full-plik profile DONE: 7 POIs in 5h24m on 4 nodes
 ----------------------------------------------------------------------------------------------------
 Job 60057736 (2026-10-24 05:29-10:53) on the pure-LINX stack (dense grid + log-log inside the vendored LINX, the

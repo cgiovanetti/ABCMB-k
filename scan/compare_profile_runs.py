@@ -63,11 +63,13 @@ def load_rows(tags):
             if not os.path.exists(p):
                 continue
             d = np.load(p)
-            nuis = [ORDER.index("Neff" if str(n) == "Delta_Neff_init" else str(n)) for n in d["nuis"]]
+            names = ["Neff" if str(n) == "Delta_Neff_init" else str(n) for n in d["nuis"]]
+            sel = [k for k, n in enumerate(names) if n in ORDER]      # the BBN nuisances (q*, tau_n_fac) are not plotted
+            nuis = [ORDER.index(names[k]) for k in sel]
             for i, c in enumerate(d["chi2"]):
                 th = cen.copy()
                 th[ORDER.index(poi)] = d["poi_grid"][i]
-                th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i]
+                th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i][sel]
                 if tag in LINX_RUNS:
                     th[6] = d["derived_bbn"][i, 1]
                 box = XBOX.get(tag, 5.0)

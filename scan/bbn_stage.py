@@ -3,10 +3,13 @@
 The engine's own bbn_type="linx" path runs LINX (background thermodynamics + the nuclear network) inside
 add_derived_parameters, one cosmology at a time on the CPU, and the driver's gradient block would then push
 every (row x direction) tangent through it. Here the driver does the BBN step itself for all rows of a call at
-once: (omega_b, Delta_Neff_init) -> (YHe, Neff, T_nu_massless), the three quantities the engine's LINX branch
-sets, vmapped + jitted on one host CPU device in chunks of B_CHUNK cosmologies, plus their 3x2 Jacobian by
-forward-mode AD. The engine then runs with bbn_type="" (user-supplied YHe / Neff / T_nu_massless) and the
-driver's _phys_to_derived injects y + J (theta - theta_row), whose jvp is the exact tangent by the chain rule.
+once: (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq) -> (YHe, Neff, T_nu_massless, Y_p(BBN), 1e5 D/H), the
+three quantities the engine's LINX branch sets plus the two BBN observables, vmapped + jitted on one host CPU
+device in chunks of B_CHUNK cosmologies, plus their 5 x n_in Jacobian by forward-mode AD. The engine then runs
+with bbn_type="" (user-supplied YHe / Neff / T_nu_massless) and the driver's _phys_to_derived injects
+y + J (theta - theta_row), whose jvp is the exact tangent by the chain rule; with the BBN likelihood on
+(config bbn_like) the driver adds the Y_p and D/H terms and profiles tau_n_fac and the rate shifts q (one per
+reaction, in sigmas of LINX's log-normal rate uncertainties) as parameters of every row.
 
 One device: a vmap over 64 cosmologies runs in ~23 s warm on a Perlmutter CPU node (XLA threads the batched
 linear algebra); splitting the batch over 16 host devices is slower (every device's program competes for the
@@ -87,63 +90,78 @@ AB_MAX_STEPS = 16384             # roughness along omega_b 7.8e-7 -> 3.4e-8; ~50
                                  # budget the step counts were measured with; scan/.mm/linxdev/steps_dev.log)
 
 
+OUT_NAMES = ("YHe", "Neff", "T_nu_massless", "YHe_BBN", "DH")   # the stage's outputs: the engine's three
+                                                                 # (YHe = the CMB mass fraction) + the BBN
+                                                                 # observables (4 Y_He4, 1e5 D/H)
+
+
 class LinxStage:
-    """(omega_b, Delta_Neff_init) -> (YHe (CMB mass fraction), Neff, T_nu_massless / T_CMB), batched on one
-    host CPU device; values() and values_and_jac() take and return numpy."""
+    """x = (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq) -> (YHe (CMB mass fraction), Neff,
+    T_nu_massless / T_CMB, YHe_BBN, D/H x 1e5), batched on one host CPU device; values() and values_and_jac()
+    take and return numpy. The inputs after the first two are LINX's BBN nuisances: the neutron-lifetime
+    factor and one log-normal rate shift (in sigmas) per reaction of the network; a caller without them
+    passes 1 and 0."""
 
     def __init__(self, reaction_net="key_PRIMAT_2023"):
+        self.reaction_net = reaction_net
         self.bg = BackgroundModel()
         self.ab = AbundanceModel(NuclearRates(nuclear_net=reaction_net))
         self.nq = len(self.ab.nuclear_net.reactions)
+        self.reaction_names = tuple(self.ab.nuclear_net.reactions_names)
+        self.in_names = ("omega_b", "Delta_Neff_init", "tau_n_fac") + tuple(f"q{i}" for i in range(self.nq))
+        self.n_in = len(self.in_names)
         self.cpus = jax.devices("cpu")
         self.dev = self.cpus[0]
         self._v = eqx.filter_jit(jax.vmap(self._one_x))   # values()
         self._v1 = eqx.filter_jit(self._one_x)             # per cosmology, unbatched: the check scripts
-        self._vj = eqx.filter_jit(jax.vmap(self._one_vj))  # values_and_jac(): the batched two-jvp Jacobian
+        self._vj = eqx.filter_jit(jax.vmap(self._one_vj))  # values_and_jac(): the batched Jacobian
         self._vj1 = eqx.filter_jit(self._one_vj)           # per cosmology: the fallback for lanes that fail batched
         self.n_fallback = 0                                # lanes recomputed one at a time so far (trace line)
+
+    def x_default(self, omega_b, dneff):
+        """(N, n_in) inputs with the nuisances at their reference values (tau_n_fac 1, q 0)."""
+        ob = np.asarray(omega_b, float).reshape(-1); dn = np.asarray(dneff, float).reshape(-1)
+        x = np.zeros((len(ob), self.n_in)); x[:, 0] = ob; x[:, 1] = dn; x[:, 2] = 1.0
+        return x
 
     # ---- one cosmology: exactly the engine's bbn_type="linx" branch (abcmb/main.py) ----
     def _background(self, dneff):
         return self.bg(dneff, rtol=BG_RTOL, atol=BG_ATOL, max_steps=BG_MAX_STEPS, n_out=BG_N_OUT)
 
-    def _rest(self, bg_out, eta_fac):
-        """(YHe, Neff, T_nu) from the background outputs and eta_fac = omega_b * Omegabh2_to_eta0 / eta0."""
+    def _rest(self, bg_out, eta_fac, tau_n_fac, q):
+        """(YHe, Neff, T_nu, YHe_BBN, DH) from the background outputs, eta_fac = omega_b * Omegabh2_to_eta0
+        / eta0, the neutron-lifetime factor and the rate shifts q (nq,)."""
         t_vec, a_vec, rho_g, rho_nu, rho_NP, P_NP, Neff_vec = bg_out
         Y = self.ab(rho_g, rho_nu, rho_NP, P_NP, t_vec=t_vec, a_vec=a_vec, eta_fac=eta_fac,
-                    tau_n_fac=jnp.asarray(1.0), nuclear_rates_q=jnp.zeros(self.nq),
+                    tau_n_fac=tau_n_fac, nuclear_rates_q=q,
                     rtol=AB_RTOL, atol=AB_ATOL, max_steps=AB_MAX_STEPS)
         YHe_BBN = 4 * Y[5]
         Yp_CMB = 1.0 / (4 * cnst.mH / cnst.mHe * (1 / YHe_BBN - 1) + 1)
         T_nu = linxThermo.T_nu(rho_nu[-1]) / linxThermo.T_g(rho_g[-1])
-        return jnp.stack([Yp_CMB, Neff_vec[-1], T_nu])
+        DH = 1e5 * Y[2] / Y[1]
+        return jnp.stack([Yp_CMB, Neff_vec[-1], T_nu, YHe_BBN, DH])
 
     _ETA = linxconst.Omegabh2_to_eta0 / linxconst.eta0
 
-    def _one(self, omega_b, dneff):
-        return self._rest(self._background(dneff), omega_b * self._ETA)
-
     def _one_x(self, x):
-        return self._one(x[0], x[1])
+        return self._rest(self._background(x[1]), x[0] * self._ETA, x[2], x[3:])
 
     def _one_vj(self, x):
-        """value and the 3x2 Jacobian from two single-direction jvps. Not jax.jacfwd: its vmap over the two
-        tangent directions pushes an identically zero tangent through the background solve on the omega_b
-        lane, and on some Delta_Neff_init values that ends in a NaN reaching the stiff solver's linear solve
-        (scan/.mm/linx_nan_scan.log, linx_jac_localize.log); each single jvp is finite there. The background
-        depends on Delta_Neff_init only, the network on (background, eta_fac), so the omega_b direction never
-        enters the background at all."""
-        omega_b, dneff = x[0], x[1]
-        eta = omega_b * self._ETA
-        bg_out, bg_dot = jax.jvp(self._background, (dneff,), (jnp.ones_like(dneff),))
-        y, y_dn = jax.jvp(lambda b: self._rest(b, eta), (bg_out,), (bg_dot,))
-        bg_const = jax.lax.stop_gradient(bg_out)
-        _, y_ob = jax.jvp(lambda e: self._rest(bg_const, e), (eta,), (jnp.asarray(self._ETA, dtype=eta.dtype),))
-        return y, jnp.stack([y_ob, y_dn], axis=1)
+        """value (5,) and Jacobian (5, n_in). The Delta_Neff_init column goes through the background's jvp
+        and the network; every other input enters the network only, so those columns come from forward-mode
+        over the network alone with the background held (jax.jacfwd there is fine: the zero-tangent background
+        solve that made jacfwd over ALL inputs go NaN, scan/.mm/linx_nan_scan.log, never happens)."""
+        eta = x[0] * self._ETA
+        bg_out, bg_dot = jax.jvp(self._background, (x[1],), (jnp.ones_like(x[1]),))
+        y, y_dn = jax.jvp(lambda b: self._rest(b, eta, x[2], x[3:]), (bg_out,), (bg_dot,))
+        bg_c = jax.lax.stop_gradient(bg_out)
+        u0 = jnp.concatenate([x[:1], x[2:]])                      # (omega_b, tau_n_fac, q)
+        Ju = jax.jacfwd(lambda u: self._rest(bg_c, u[0] * self._ETA, u[1], u[2:]))(u0)   # (5, n_in - 1)
+        return y, jnp.concatenate([Ju[:, :1], y_dn[:, None], Ju[:, 1:]], axis=1)
 
     # ---- batching: chunks of <= B_CHUNK, each padded to a multiple of B_PAD (shape reuse) ----
-    def _chunks(self, omega_b, dneff):
-        x = np.stack([np.asarray(omega_b, float), np.asarray(dneff, float)], 1)
+    def _chunks(self, x):
+        x = np.asarray(x, float).reshape(-1, self.n_in)
         for s in range(0, len(x), B_CHUNK):
             xc = x[s:s + B_CHUNK]; n = len(xc); m = -(-n // B_PAD) * B_PAD
             if m > n:
@@ -151,35 +169,40 @@ class LinxStage:
             yield n, jax.device_put(jnp.asarray(xc), self.dev)
 
     def _per_lane(self, fn, x, n_dev):
-        """fn on each row of x (B, 2), one jitted program per row dispatched asynchronously round-robin over
-        n_dev host devices; identical rows (the driver pads its batches by repeating a row) run once."""
+        """fn on each row of x (B, n_in), one jitted program per row dispatched asynchronously round-robin
+        over n_dev host devices; identical rows (the driver pads its batches by repeating a row) run once."""
         n = min(n_dev, len(self.cpus))
         uniq, inv = np.unique(np.round(x, 15), axis=0, return_inverse=True)
         outs = [fn(jax.device_put(jnp.asarray(uniq[k]), self.cpus[k % n])) for k in range(len(uniq))]
         return outs, np.asarray(inv).reshape(-1)
 
-    def values(self, omega_b, dneff):
-        """(B, 3) = [YHe, Neff, T_nu_massless] per cosmology, the vmapped program on one host device in chunks
-        (~0.5 s per cosmology warm)."""
-        return np.concatenate([np.array(self._v(xc), dtype=float)[:n] for n, xc in self._chunks(omega_b, dneff)])
+    @staticmethod
+    def n_reactions(reaction_net="key_PRIMAT_2023"):
+        """number of reactions (= rate-shift nuisances q) of a network, without building the models."""
+        return len(NuclearRates(nuclear_net=reaction_net).reactions)
 
-    def values_and_jac(self, omega_b, dneff):
-        """((B, 3) values, (B, 3, 2) d[YHe, Neff, T_nu] / d[omega_b, Delta_Neff_init]) from the batched two-jvp
-        program in chunks (the primal of the same program; it agrees with values() to ~5e-8 in YHe). A lane
-        that comes back non-finite (in EQX_ON_ERROR=nan mode a solver failure in ANY lane of a chunk nan-s the
-        whole chunk: equinox reduces the error predicate over the batch) is recomputed one cosmology at a time
-        with the un-vmapped program over JAC_DEVICES host devices; a lane still non-finite alone stays NaN
-        (the driver treats the row as failed)."""
+    def values(self, x):
+        """(B, 5) = [YHe, Neff, T_nu_massless, YHe_BBN, DH] for the rows of x (B, n_in), the vmapped program on
+        one host device in chunks (~0.5 s per cosmology warm)."""
+        return np.concatenate([np.array(self._v(xc), dtype=float)[:n] for n, xc in self._chunks(x)])
+
+    def values_and_jac(self, x):
+        """((B, 5) values, (B, 5, n_in) Jacobian d[outputs] / d[inputs]) for the rows of x (B, n_in) from the
+        batched Jacobian program in chunks (the primal of the same program; it agrees with values() to ~5e-8
+        in YHe). A lane that comes back non-finite (in EQX_ON_ERROR=nan mode a solver failure in ANY lane of a
+        chunk nan-s the whole chunk: equinox reduces the error predicate over the batch) is recomputed one
+        cosmology at a time with the un-vmapped program over JAC_DEVICES host devices; a lane still non-finite
+        alone stays NaN (the driver treats the row as failed)."""
         ys, Js = [], []
-        for n, xc in self._chunks(omega_b, dneff):
+        for n, xc in self._chunks(x):
             y, J = self._vj(xc)
             y = np.array(y, dtype=float)[:n]; J = np.array(J, dtype=float)[:n]
             bad = ~(np.isfinite(y).all(1) & np.isfinite(J).all((1, 2)))
             if bad.any():
                 xb = np.asarray(xc)[:n][bad]
                 outs, inv = self._per_lane(self._vj1, xb, JAC_DEVICES)
-                y[bad] = np.array([np.asarray(o[0], dtype=float) for o in outs]).reshape(-1, 3)[inv]
-                J[bad] = np.array([np.asarray(o[1], dtype=float) for o in outs]).reshape(-1, 3, 2)[inv]
+                y[bad] = np.array([np.asarray(o[0], dtype=float) for o in outs]).reshape(-1, len(OUT_NAMES))[inv]
+                J[bad] = np.array([np.asarray(o[1], dtype=float) for o in outs]).reshape(-1, len(OUT_NAMES), self.n_in)[inv]
                 self.n_fallback += int(bad.sum())
                 print(f"[bbn] {int(bad.sum())} of {n} Jacobian lanes recomputed alone "
                       f"({int((~np.isfinite(J[bad]).all((1, 2))).sum())} still non-finite)", flush=True)
