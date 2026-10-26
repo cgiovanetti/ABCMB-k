@@ -1,5 +1,11 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-26: _v4linx DONE (CHANGELOG 2026-10-26): the 7-POI LCDM+Delta_Neff_init profile with YHe/Neff/T_nu
+from LINX per row, 5h24m on 4 nodes, no multimodality; results scan/results/profile_prod_ad_*_v4linx.{npz,png},
+comparison with _v3 in profile_neff_runs_compared_v3_v4linx.png (Neff 2.850 [2.659, 3.050] vs 2.818 [2.596,
+3.052] with YHe fixed). Open: item 19 (Wilks/coverage) deferred; 2D joint profiles; vendored-LINX parity with
+LINX main (finite t0, SaveAt(t0, t1, dense), n_out 1024); upstream report of the optimistix/lineax throw issue.**
+
 **2026-10-22 (night): the pure-LINX route is APPLIED and shaken out on GPU (CHANGELOG 2026-10-22 night); job
 60057736 runs on it. How it was built (CHANGELOG 2026-10-22 evening):** three
 diffs for review: scan/.mm/linxdev/vendored_dense_loglog.diff (abcmb/linx: dense-interpolant output grid +

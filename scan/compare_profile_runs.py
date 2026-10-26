@@ -26,20 +26,25 @@ ORDER = ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Neff"]
 CEN_PF = [0.6736, 0.02237, 0.1200, 0.9649, 3.044, 0.0544, 3.044]      # lcdm_neff_plikfull.py
 CEN_RC = [0.6662, 0.02229, 0.11654, 0.95986, 3.0446, 0.05933, 2.8268]  # lcdm_neff_plikfull_rc.py to 2026-10-19
 CEN_V3 = [0.65895, 0.022221, 0.116773, 0.958684, 3.041751, 0.057532, 2.821114]  # rc recentred (massive nu)
+CEN_V4 = CEN_V3[:6] + [-0.823]      # lcdm_dneff_linx_plikfull.py: the 7th parameter is Delta_Neff_init
 SIG_OLD = [0.0054, 0.00015, 0.0012, 0.0042, 0.014, 0.0073, 0.2]
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]         # 2026-07-07 edit
+SIG_V4 = SIG_NEW[:6] + [0.37]
 RUNS = {"_pf": (CEN_PF, SIG_OLD), "_pfrc": (CEN_RC, SIG_OLD), "_widecdm": (CEN_RC, SIG_NEW),
         "_fixprec": (CEN_RC, SIG_NEW), "_fixprec2": (CEN_RC, SIG_NEW), "_v2": (CEN_RC, SIG_NEW),
-        "_v2fix": (CEN_RC, SIG_NEW), "_v3": (CEN_V3, SIG_NEW)}
+        "_v2fix": (CEN_RC, SIG_NEW), "_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4)}
 STYLE = {"_pf": ("#1baf7a", "s"), "_pfrc": ("#2a78d6", "o"), "_widecdm": ("#eb6834", "^"),
          "_fixprec": ("#eda100", "D"), "_fixprec2": ("#e87ba4", "v"), "_v2": ("#222222", "*"),
-         "_v2fix": ("#7b3fbf", "P"), "_v3": ("#d62728", "h")}
-XBOX = {"_v2": 10.0, "_v2fix": 10.0, "_v3": 10.0}                       # PA_XBOX; 5.0 otherwise
+         "_v2fix": ("#7b3fbf", "P"), "_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X")}
+XBOX = {"_v2": 10.0, "_v2fix": 10.0, "_v3": 10.0, "_v4linx": 10.0}                       # PA_XBOX; 5.0 otherwise
 # chi2 surface of each run (runs on different surfaces are offset by their own best chi2 and never share
 # an envelope): "pre-fix" = the original Cls; "xe-c1" = Cl-step + AD fixes; "massive-nu" = the upstream
 # merge (#34-#50, #53) with the massive neutrino evolved (2026-10-19). The envelope uses the newest present.
-SURFACE = {"_v2fix": "xe-c1", "_v3": "massive-nu"}
-SURF_ORDER = ["pre-fix", "xe-c1", "massive-nu"]
+SURFACE = {"_v2fix": "xe-c1", "_v3": "massive-nu", "_v4linx": "linx"}
+SURF_ORDER = ["pre-fix", "xe-c1", "massive-nu", "linx"]
+# runs whose 7th parameter is LINX's Delta_Neff_init: their Neff file is the Delta_Neff_init one and every row is
+# placed at its derived Neff (npz derived_bbn[:, 1]) so it plots on the Neff axis with the others
+LINX_RUNS = {"_v4linx"}
 
 
 def _surf(tag):
@@ -53,15 +58,18 @@ def load_rows(tags):
         cen, sig = RUNS[tag]
         cen, sig = np.array(cen), np.array(sig)
         for poi in ORDER:
-            p = os.path.join(RES, f"profile_prod_ad_{poi}{tag}.npz")
+            fpoi = "Delta_Neff_init" if (tag in LINX_RUNS and poi == "Neff") else poi
+            p = os.path.join(RES, f"profile_prod_ad_{fpoi}{tag}.npz")
             if not os.path.exists(p):
                 continue
             d = np.load(p)
-            nuis = [ORDER.index(str(n)) for n in d["nuis"]]
+            nuis = [ORDER.index("Neff" if str(n) == "Delta_Neff_init" else str(n)) for n in d["nuis"]]
             for i, c in enumerate(d["chi2"]):
                 th = cen.copy()
                 th[ORDER.index(poi)] = d["poi_grid"][i]
                 th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i]
+                if tag in LINX_RUNS:
+                    th[6] = d["derived_bbn"][i, 1]
                 box = XBOX.get(tag, 5.0)
                 rows.append((tag, poi, float(c), bool((np.abs(d["xstar"][i]) >= box - 1e-3).any()), th))
     return rows

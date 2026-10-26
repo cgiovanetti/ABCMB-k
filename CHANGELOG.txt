@@ -9,6 +9,25 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-26 — _v4linx LCDM+Delta_Neff_init (LINX) full-plik profile DONE: 7 POIs in 5h24m on 4 nodes
+----------------------------------------------------------------------------------------------------
+Job 60057736 (2026-10-24 05:29-10:53) on the pure-LINX stack (dense grid + log-log inside the vendored LINX, the
+normalization fix, batched Jacobians). Ranks 4.6-5.4 h (_v3 without LINX: 2.7-3.8 h); every Jacobian block ran
+batched (64 rows in 80-82 s, 0 lanes recomputed); 287 of 294 rows under GTOL, 6 stalled at ||g|| 0.03-0.06 (the
+first run: 7-16 per rank at 0.15-0.4), 2 flagged grid points (omega_cdm@0.1248, tau@0.0544: one stalled spread
+start each, envelopes unaffected), one branch for n_s from a spread start at n_s = 0.9623 (chi2 +0.19): 17/21
+converged, below the envelope at 0 points, i.e. no multimodality. min chi2 2759.10 at the centre for every POI
+(the joint MLE of the recentred config; 2759.06 on the fixed-YHe _v3 surface). Best / 68% / 95%: h 0.6603
+[0.6459, 0.6752] [0.6326, 0.6901]; omega_b 0.02221 [0.02199, 0.02244] [0.02178, 0.02265]; omega_cdm 0.11720
+[0.11418, 0.12035] [0.11139, 0.12349]; n_s 0.9584 [0.9499, 0.9671] [0.9417, 0.9754]; ln10As 3.0423 [3.0269,
+3.0585] [3.0125, 3.0751]; tau_reion 0.0577 [0.0520, 0.0641] [0.0468, 0.0711]; Delta_Neff_init -0.742 [-1.474,
+0.023] [-2.145, 0.785] = Neff 2.850 [2.659, 3.050] [2.484, 3.250] (YHe 0.2432 at the best fit). Against _v3
+(YHe fixed, Neff free: 2.818 [2.596, 3.052]): tying YHe to Neff through BBN steepens the low sides of h,
+omega_cdm and Neff (the YHe-Neff damping-tail degeneracy is gone), the other four POIs are unchanged; envelope
+parabolas Neff 2.870 +/- 0.194 vs 2.842 +/- 0.226, h 0.6614 +/- 0.0145 vs 0.6599 +/- 0.0160.
+compare_profile_runs.py knows "_v4linx" (rows placed at their derived Neff, its own "linx" chi2 surface):
+scan/results/profile_neff_runs_compared_v3_v4linx.png.
+
 2026-10-23 — LINX-main diff: n_out default 1024 (the dense grid's only cost is the per-point thermodynamics)
 -----------------------------------------------------------------------------------------------------------
 The user measured the dense-grid background at 0.4 s vs 0.3 s on an M1 (jax 0.4.28). Profiled on one Perlmutter
