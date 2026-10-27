@@ -229,8 +229,8 @@ if BBN_LIKE is not None:
     _nq = _LinxStage.n_reactions(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
     BBN_NUIS = ["tau_n_fac"] + [f"q{i}" for i in range(_nq)]
     CFG["order"] = list(CFG["order"]) + BBN_NUIS
-    for _k in BBN_NUIS:
-        CFG["cen"][_k] = 1.0 if _k == "tau_n_fac" else 0.0
+    for _k in BBN_NUIS:                               # a config may give warm-start values (cen) for them
+        CFG["cen"].setdefault(_k, 1.0 if _k == "tau_n_fac" else 0.0)
         CFG["sig"][_k] = float(BBN_LIKE["tau_n_sig"]) if _k == "tau_n_fac" else 1.0
         if "grid_sig" in CFG:
             CFG["grid_sig"][_k] = CFG["sig"][_k]

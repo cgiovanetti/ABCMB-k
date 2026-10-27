@@ -9,9 +9,11 @@ n(p,g)d rate (arXiv:2509.11743) and updated d(p,g)3He / d+d rates. Data as in
 bbn-on-cmb-bao-tension/CMB_BBN_Neff.py: Y_p 0.2458 +/- 0.0013 (Aver 2026), D/H 2.527 +/- 0.030 (Cooke 2018);
 the LBT value (Hsyu+ 2020, 0.2436 +/- 0.0040) is the alternative for "Yp".
 
-cen: the _v4linx best fit (CMB only, BBN-consistent YHe; 2026-10-24). The D/H term pulls Neff up (the
-network's D/H at this point is ~2.4e-5), so the joint best fit moves: run with PA_MLE_PREPASS=1, which
-recentres every grid on the joint fit before profiling.
+cen / grid_sig: the joint fit of THIS likelihood (the PA_MLE_PREPASS=1 prepass of job 60327767, 2026-10-26: chi2
+2763.226, 10 LM iterations from the _v4linx best fit) and its Fisher profile sigmas, so the production run
+starts warm on the joint best fit with the prepass off. The D/H term moved Delta_Neff_init -0.742 -> -0.236
+(Neff 2.85 -> 2.98) and the d(p,g)3He / d(d,n) / d(d,p) rate shifts to -0.5..-0.7 sigma; the BBN nuisances'
+warm values are given too (the driver appends them to "order" and takes cen from here when present).
 """
 from abcmb import species
 
@@ -19,16 +21,19 @@ from abcmb import species
 CONFIG = {
     "order": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Delta_Neff_init"],
     "cen": {
-        "h": 0.66027, "omega_b": 0.022210, "omega_cdm": 0.117200,
-        "n_s": 0.958440, "ln10As": 3.042300, "tau_reion": 0.057740, "Delta_Neff_init": -0.742,
+        "h": 0.6649, "omega_b": 0.022166, "omega_cdm": 0.1199,
+        "n_s": 0.96097, "ln10As": 3.0469, "tau_reion": 0.056934, "Delta_Neff_init": -0.23625,
+        "tau_n_fac": 0.99999, "q0": -0.018861, "q1": -0.67931, "q2": -0.72647, "q3": -0.52094, "q4": -0.0095582,
+        "q5": -0.00017559, "q6": -1.5935e-05, "q7": 0.032914, "q8": -0.01188, "q9": 5.0377e-06,
+        "q10": -6.2813e-06, "q11": -9.457e-10,
     },
     "sig": {
         "h": 0.0054, "omega_b": 0.00015, "omega_cdm": 0.0013,
         "n_s": 0.0042, "ln10As": 0.014, "tau_reion": 0.0073, "Delta_Neff_init": 0.37,
     },
     "grid_sig": {
-        "h": 0.0145, "omega_b": 0.00021, "omega_cdm": 0.0032,
-        "n_s": 0.0072, "ln10As": 0.0154, "tau_reion": 0.0062, "Delta_Neff_init": 0.83,
+        "h": 0.00822, "omega_b": 0.000153, "omega_cdm": 0.00167,
+        "n_s": 0.00551, "ln10As": 0.0134, "tau_reion": 0.00606, "Delta_Neff_init": 0.309,
     },
     "pois": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Delta_Neff_init"],
     "fixed": {

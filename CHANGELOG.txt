@@ -9,6 +9,19 @@ PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
 
+2026-10-27 — _v5bbn 60327767 FAILED (GPU OOM in the first production gradient block); fixed and resubmitted
+----------------------------------------------------------------------------------------------------------
+After 1h05m (the joint-fit prepass had converged: chi2 2763.226, 10 iterations) the first 64-row gradient block
+OOMed a 40 GB A100: with 19 AD directions the perturbation tangent buffer f64[19,100,16,300,100] is 6.8 GiB at
+B_local 16 (6 directions x B_local 16 was 9 GB in all). The shakeout had run 4 rows per GPU and could not see it:
+my mistake, memory scales with rows-per-GPU x directions and the shakeout must run a production-shape block
+(memory: feedback_shakeout_production_shape). Fix: PA_AD_BCHUNK=32 in the launcher (8 rows per GPU, ~14 GB);
+shakeout at exactly that shape (scan/.mm/bbn_shake_blk.sh / .log: 32 rows x 19 directions, one block): clean,
+gradient block 15 min warm / 22 min with compiles, 32-row x 4-candidate value call 12 min, 0 LINX fallbacks ->
+~70 min per LM iteration per rank at full row count, 14-17 h expected, 24 h requested. The prepass result of
+the failed run is now the config's cen / grid_sig (incl. the BBN nuisances' warm values; the driver takes
+cen for them from the config when given) and the launcher runs with PA_MLE_PREPASS=0. Resubmitted.
+
 2026-10-26 — BBN likelihood in the profile driver (Y_p + D/H data, LINX nuisances profiled); key_recommended ported
 ------------------------------------------------------------------------------------------------------------------
 The _v4linx profile is CMB-only (LINX sets YHe, no abundance data), so its Neff 2.85 is not the number the

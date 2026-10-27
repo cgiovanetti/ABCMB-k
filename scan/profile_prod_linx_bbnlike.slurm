@@ -37,7 +37,7 @@ export PA_TRACE_EVALS=1
 mkdir -p logs scan/results
 
 export PA_CONFIG=scan/configs/lcdm_dneff_linx_bbnlike_plikfull.py
-export PA_MLE_PREPASS=${PA_MLE_PREPASS:-1}   # joint fit first (the BBN data move the best fit), grids recentred on it
+export PA_MLE_PREPASS=${PA_MLE_PREPASS:-0}   # the config cen/grid_sig ARE the joint fit of 60327767's prepass (2026-10-26)
 export PA_TAG=${PA_TAG:-_v5bbn}
 export PA_POIS=${PA_POIS:-h,omega_cdm,Delta_Neff_init,n_s,omega_b,ln10As,tau_reion}
 export PA_POI_SLICE=1
@@ -48,6 +48,9 @@ export PA_XBOX=10                  # wide grids push h/Neff valley shifts past 5
 export PA_WARM_LR=1
 export PA_LM_K=4                   # damping values per iteration (one batched value call)
 export PA_VAL_CHUNK=256            # one value call per iteration (4 x <=42 rows)
+export PA_AD_BCHUNK=32             # 8 rows per GPU in the gradient block: with 19 directions the perturbation
+                                   # tangent buffer f64[19,100,B_local,300,100] is 6.8 GiB at B_local 16 and
+                                   # the block OOMed a 40 GB A100 (60327767); ~14 GB at B_local 8
 export PA_MAXIT=${PA_MAXIT:-30}
 export PA_GTOL=0.03
 export PA_RTOL=1e-5
