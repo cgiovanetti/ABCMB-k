@@ -8,6 +8,21 @@ This checkout (ABCMB-k) is a per-k batching playground for the parent
 PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
+2026-10-28 — Why _v5bbn rows stall: D/H jitter against one stiff direction; the stalls cost <= 1.3e-4 in chi2
+------------------------------------------------------------------------------------------------------------
+Diagnosis at 6 of the 17 stalled rows (the 5 largest ||g|| + Delta_Neff_init@-0.700) and 2 converged rows
+(scan/.mm/jitter/, untracked: jitter_scan.py on one GPU node, linx_jitter.py on CPU, logs there):
+- Remaining gain 0.5 g'H^-1 g = 1.6e-5 .. 1.3e-4 at every stalled row checked. The entry below bounds it by
+  g^2/2 ~ 0.03, far too loosely. The gradient (||g|| 0.05-0.23) lies along one stiff direction,
+  Delta_Neff_init/h/omega_cdm (GN eigenvalue 340-406 in scaled coords); GTOL 0.03 there needs chi2 to ~1e-6.
+- chi2 jitter along the Newton step 3e-5 .. 1e-4 rms: D/H term 4-7e-5 (LINX network at AB_RTOL 1e-8, D/H
+  rough at ~1e-6 in 1e5 D/H), Y_p up to 5e-5, plik ~5e-6 (C_ell smooth to ~1e-8), low-l TT ~4e-6, low-l EE
+  < 1e-6. The inner nuisance profile and batch composition add nothing (a point reproduces to 1e-10). The AD
+  gradient matches the value slopes component by component: no bias.
+- LINX knobs (81 points over +-0.3 sigma per input): n_out 4096 -> 16384 changes nothing; network rtol 1e-9
+  smooths D/H and Y_p 2.5-8x except along Delta_Neff_init, where the background sets it (Neff 7.6e-6 -> 5e-7
+  at background rtol 1e-10, 5x the background's time). None reaches 1e-6 in chi2; nothing changed in production.
+
 
 2026-10-28 — _v5bbn DONE: Planck + BBN (Y_p, D/H) LCDM+Delta_Neff_init profile, 7 POIs in 6h46m on 4 nodes
 -----------------------------------------------------------------------------------------------------------

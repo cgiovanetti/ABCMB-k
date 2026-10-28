@@ -1,5 +1,11 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-28 (afternoon): the _v5bbn stalls are harmless (CHANGELOG 2026-10-28, "Why _v5bbn rows stall"): the stalled rows can
+gain only 1.6e-5..1.3e-4 in chi2; their gradient sits along the stiff Delta_Neff_init/h/omega_cdm direction (GN
+eigenvalue ~400), where GTOL 0.03 needs chi2 to ~1e-6, below the D/H term's jitter (~5e-5, LINX network tolerance).
+LINX n_out does nothing; tighter LINX tolerances smooth D/H a few times, never to 1e-6. Diagnostics in scan/.mm/jitter/.
+Open idea, not applied: a Newton-decrement convergence test (0.5 g'H^-1 g) instead of the max-norm gradient.**
+
 **2026-10-28: _v5bbn DONE (CHANGELOG 2026-10-28): Planck + BBN (Y_p Aver 2026, D/H Cooke 2018) with LINX
 key_recommended and its nuisances profiled: Neff 2.966 [2.886, 3.047] (68%), [2.809, 3.126] (95%); h 0.6652
 [0.6570, 0.6734]; results scan/results/*_v5bbn*, comparison profile_neff_runs_compared_v3_v4linx_v5bbn.png.
