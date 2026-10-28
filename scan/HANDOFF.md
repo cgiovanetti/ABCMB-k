@@ -1,5 +1,11 @@
 # HANDOFF — method-v2 for the LCDM+Neff full-plik profile (2026-10-01, evening)
 
+**2026-10-28: _v5bbn DONE (CHANGELOG 2026-10-28): Planck + BBN (Y_p Aver 2026, D/H Cooke 2018) with LINX
+key_recommended and its nuisances profiled: Neff 2.966 [2.886, 3.047] (68%), [2.809, 3.126] (95%); h 0.6652
+[0.6570, 0.6734]; results scan/results/*_v5bbn*, comparison profile_neff_runs_compared_v3_v4linx_v5bbn.png.
+The two deliverables are _v4linx (CMB only, BBN-consistent YHe) and _v5bbn (joint). Open: 17 stalled rows at
+||g|| <= 0.23 (envelope-level harmless); Wilks (19); 2D profiles; vendored-LINX parity with main.**
+
 **2026-10-26: BBN likelihood built (CHANGELOG 2026-10-26, second entry): config "bbn_like" adds the Y_p + D/H
 Gaussian terms and profiles LINX's tau_n_fac and 12 rate shifts (q0..q11, key_recommended) with everything
 else; stage inputs/outputs extended (5 x 15 Jacobians, 1.4 s per row batched). Run = scan/configs/

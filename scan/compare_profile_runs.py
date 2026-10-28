@@ -27,24 +27,27 @@ CEN_PF = [0.6736, 0.02237, 0.1200, 0.9649, 3.044, 0.0544, 3.044]      # lcdm_nef
 CEN_RC = [0.6662, 0.02229, 0.11654, 0.95986, 3.0446, 0.05933, 2.8268]  # lcdm_neff_plikfull_rc.py to 2026-10-19
 CEN_V3 = [0.65895, 0.022221, 0.116773, 0.958684, 3.041751, 0.057532, 2.821114]  # rc recentred (massive nu)
 CEN_V4 = CEN_V3[:6] + [-0.823]      # lcdm_dneff_linx_plikfull.py: the 7th parameter is Delta_Neff_init
+CEN_V5 = [0.6649, 0.022166, 0.1199, 0.96097, 3.0469, 0.056934, -0.23625]   # lcdm_dneff_linx_bbnlike_plikfull.py
 SIG_OLD = [0.0054, 0.00015, 0.0012, 0.0042, 0.014, 0.0073, 0.2]
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]         # 2026-07-07 edit
 SIG_V4 = SIG_NEW[:6] + [0.37]
 RUNS = {"_pf": (CEN_PF, SIG_OLD), "_pfrc": (CEN_RC, SIG_OLD), "_widecdm": (CEN_RC, SIG_NEW),
         "_fixprec": (CEN_RC, SIG_NEW), "_fixprec2": (CEN_RC, SIG_NEW), "_v2": (CEN_RC, SIG_NEW),
-        "_v2fix": (CEN_RC, SIG_NEW), "_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4)}
+        "_v2fix": (CEN_RC, SIG_NEW), "_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4),
+        "_v5bbn": (CEN_V5, SIG_V4)}
 STYLE = {"_pf": ("#1baf7a", "s"), "_pfrc": ("#2a78d6", "o"), "_widecdm": ("#eb6834", "^"),
          "_fixprec": ("#eda100", "D"), "_fixprec2": ("#e87ba4", "v"), "_v2": ("#222222", "*"),
-         "_v2fix": ("#7b3fbf", "P"), "_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X")}
-XBOX = {"_v2": 10.0, "_v2fix": 10.0, "_v3": 10.0, "_v4linx": 10.0}                       # PA_XBOX; 5.0 otherwise
+         "_v2fix": ("#7b3fbf", "P"), "_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X"),
+         "_v5bbn": ("#2ca02c", "D")}
+XBOX = {"_v2": 10.0, "_v2fix": 10.0, "_v3": 10.0, "_v4linx": 10.0, "_v5bbn": 10.0}                       # PA_XBOX; 5.0 otherwise
 # chi2 surface of each run (runs on different surfaces are offset by their own best chi2 and never share
 # an envelope): "pre-fix" = the original Cls; "xe-c1" = Cl-step + AD fixes; "massive-nu" = the upstream
 # merge (#34-#50, #53) with the massive neutrino evolved (2026-10-19). The envelope uses the newest present.
-SURFACE = {"_v2fix": "xe-c1", "_v3": "massive-nu", "_v4linx": "linx"}
-SURF_ORDER = ["pre-fix", "xe-c1", "massive-nu", "linx"]
+SURFACE = {"_v2fix": "xe-c1", "_v3": "massive-nu", "_v4linx": "linx", "_v5bbn": "linx-bbn"}
+SURF_ORDER = ["pre-fix", "xe-c1", "massive-nu", "linx", "linx-bbn"]
 # runs whose 7th parameter is LINX's Delta_Neff_init: their Neff file is the Delta_Neff_init one and every row is
 # placed at its derived Neff (npz derived_bbn[:, 1]) so it plots on the Neff axis with the others
-LINX_RUNS = {"_v4linx"}
+LINX_RUNS = {"_v4linx", "_v5bbn"}
 
 
 def _surf(tag):
@@ -80,8 +83,11 @@ def load_rows(tags):
 def main():
     tags = sys.argv[1:] or list(RUNS)
     rows = load_rows(tags)
-    smc = np.load(os.path.join(RES, "smc_plikfull_neff.npz"), allow_pickle=True)
-    SMC = {str(k): (m, s) for k, m, s in zip(smc["cosmo_order"], smc["marg_mean"], smc["marg_std"])}
+    SHOW_SMC = os.environ.get("PA_CMP_SMC", "0") != "0"      # the old SMC posterior band: off since 2026-10-26
+    SMC = {}
+    if SHOW_SMC:
+        smc = np.load(os.path.join(RES, "smc_plikfull_neff.npz"), allow_pickle=True)
+        SMC = {str(k): (m, s) for k, m, s in zip(smc["cosmo_order"], smc["marg_mean"], smc["marg_std"])}
     gmins = {}
     for surf in SURF_ORDER:
         cs = [r[2] for r in rows if not r[3] and _surf(r[0]) == surf]
@@ -120,8 +126,9 @@ def main():
         xx = np.linspace(ex[sel].min(), ex[sel].max(), 300)
         ax.plot(xx, np.polyval([a2, a1, a0], xx), color="#222222", lw=1.2, ls="--",
                 label="parabola fit to lower envelope")
-        m, s = SMC[poi]
-        ax.axvspan(m - s, m + s, color="#999999", alpha=0.18, lw=0, label="SMC mean ± 1σ")
+        m, s = SMC.get(poi, (np.nan, np.nan))
+        if SHOW_SMC:
+            ax.axvspan(m - s, m + s, color="#999999", alpha=0.18, lw=0, label="SMC mean ± 1σ")
         ax.axhline(1, color="#999999", lw=0.8, ls=":")
         ax.set_ylim(-0.2, 10); ax.set_title(poi); ax.set_xlabel(poi)
         ax.set_ylabel("χ² − best of the same Cl" if len(gmins) > 1 else f"χ² − global best ({gmin:.2f})")
