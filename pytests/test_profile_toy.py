@@ -40,7 +40,7 @@ def test_multistart_branches_recover_the_bimodal_profile(driver, tmp_path):
     grid, chi2 = r["poi_grid"], r["chi2"]
     exact = profile_exact(grid)
     assert np.abs(chi2 - exact).max() < 2e-3, np.c_[grid, chi2, exact]
-    assert r["converged"].all() and not r["stalled"].any()
+    assert r["converged"].all() and not r["stalled"].any() and not r["rows_floor"].any()
     # the warm-start rows alone are the b > 0 branch: wrong by > 1 left of the crossing
     kind, j = r["rows_kind"], r["rows_j"]
     warm = np.array([r["rows_chi2"][(kind == 0) & (j == jj)].min() for jj in range(len(grid))])
@@ -80,3 +80,27 @@ def test_without_multistart_the_wrong_branch_is_followed(driver, tmp_path):
     assert (chi2 - profile_exact(grid))[grid < -0.5].min() > 1.0
     assert r["n_starts"].tolist() == [1] * len(grid) and not r["flag"].any()
     assert r["regions1"].shape == (1, 2)
+
+
+def _on_a_lattice(d, q):
+    """the toy values path read at x rounded to a q-lattice: steps inside one cell change nothing (a noise floor,
+    as the D/H term's jitter is for the BBN profile) while the gradient stays exact."""
+    base = d._toy_values
+    return lambda BASE, FREE, X: base(BASE, FREE, np.round(np.asarray(X) / q) * q)
+
+
+def test_stalls_on_the_noise_floor_count_as_converged(driver, tmp_path):
+    """With a gradient test no row can pass (PA_GTOL 1e-9) every row stalls on the lattice; its Newton decrement
+    is far below PA_DTOL, so it ends as a converged "floor" row with no flag. PA_DTOL=0 turns that off: the same
+    rows are stalled, unconverged and flag their points."""
+    from scan.configs.toy_bimodal import branch_exact
+    d = driver
+    kw = dict(MS_K=0, GTOL=1e-9, SIGTOL=0.0, _toy_values=_on_a_lattice(d, 1e-3))
+    (tmp_path / "on").mkdir(); (tmp_path / "off").mkdir()
+    r = _run(d, str(tmp_path / "on"), **kw)
+    assert r["rows_floor"].all() and not r["rows_stalled"].any() and r["converged"].all(), r["rows_dec"]
+    assert (r["rows_dec"] < float(r["dtol"])).all() and not r["flag"].any()
+    assert np.abs(r["chi2"] - branch_exact(r["poi_grid"], +1)).max() < 1e-3
+    r0 = _run(d, str(tmp_path / "off"), DTOL=0.0, **kw)
+    assert r0["rows_stalled"].all() and not r0["rows_floor"].any() and not r0["converged"].any()
+    assert r0["flag"].all() and all("stalled" in s for s in r0["flag_reason"])

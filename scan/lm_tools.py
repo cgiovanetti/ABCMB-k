@@ -1,9 +1,9 @@
 """lm_tools.py — pure-numpy pieces of the profile driver (scan/profile_prod_ad.py).
 
-The projected Levenberg-Marquardt step, the deliberate multistart spread along the softest
-Gauss-Newton directions, clustering of converged starts into distinct minima with the user's flags,
-and the union of below-threshold regions of a profile. No JAX, no ABCMB, no likelihood: everything
-here is exercised on a toy double well in pytests/test_lm_tools.py.
+The projected Levenberg-Marquardt step and its convergence measure (the Newton decrement), the
+deliberate multistart spread along the softest Gauss-Newton directions, clustering of converged starts
+into distinct minima with the user's flags, and the union of below-threshold regions of a profile. No
+JAX, no ABCMB, no likelihood: everything here is exercised on a toy double well in pytests/test_lm_tools.py.
 
 Coordinates are the driver's scaled ones, x = (theta - CENTER) / SIGMA, and H is d2chi2/dx2 there
 (the Gauss-Newton matrix), so one profile sigma along an eigenvector v_k of H is sqrt(2 / lambda_k).
@@ -43,6 +43,23 @@ def lm_step(g, H, x, xlo, xhi, lam, step_max):
         d *= step_max / dm
     d = np.clip(x + d, xlo, xhi) - x
     return d, -(g @ d + 0.5 * d @ H @ d)
+
+
+def newton_decrement(g, H, x, xlo, xhi):
+    """0.5 g_F^T H_FF^-1 g_F on the dims not held at a bound (lm_step's active set): the chi2 drop the
+    Gauss-Newton model predicts from x to its minimum, i.e. how far above its optimum the row still sits.
+    Unlike max|g| it weighs each gradient component by the curvature along it, so a gradient along a stiff
+    direction, worth almost no chi2, does not keep a row running. Eigenvalues are floored at 1e-12 x the
+    largest (H is PSD)."""
+    act = ((x <= xlo + 1e-9) & (g > 0)) | ((x >= xhi - 1e-9) & (g < 0))
+    F = np.where(~act)[0]
+    if not len(F):
+        return 0.0
+    Hf = H[np.ix_(F, F)]
+    ev, V = np.linalg.eigh(0.5 * (Hf + Hf.T))
+    ev = np.maximum(ev, 1e-12 * max(float(ev.max()), 1e-300))
+    gi = V.T @ g[F]
+    return float(0.5 * np.sum(gi ** 2 / ev))
 
 
 # ======================================================================

@@ -8,6 +8,20 @@ This checkout (ABCMB-k) is a per-k batching playground for the parent
 PyPI-published ABCMB (TonyZhou729/ABCMB). The standalone identity is
 documented in CLAUDE.md.
 
+2026-10-28 — Stalls on the noise floor count as converged (PA_DTOL 1e-3)
+------------------------------------------------------------------------
+Rows still stop on max|g| < PA_GTOL or on a stall. New: a row that stalls while its Newton decrement 0.5 g'H^-1 g
+(scan/lm_tools.py newton_decrement, the chi2 its GN model still expects to gain) is below PA_DTOL is recorded as
+"floor" and counts as converged, with no flag; PA_DTOL=0 gives the old labels. 1e-3 is ~4x the largest harmless
+stall seen (2.3e-4 over all 17 _v5bbn stalls; the 1.3e-4 above covered 6), 10x under the old LINX grid defect
+(~1e-2), and < ~5e-4 sigma on an interval end. The npz gains floor, dec, rows_floor, rows_dec, dtol. Tests, 9
+pass: newton_decrement = the exact gain on a quadratic (bound held, singular H); a toy profile read on a lattice
+(exact gradient, values with a floor) ends all floor / converged / unflagged, and all stalled / flagged at
+PA_DTOL=0. GPU (scan/.mm/conv_dec/): a 5-point ln10As run on the _v5bbn setup matches production to <= 6.4e-5
+(its centre row passed the gradient test this time; it stalled in production); three of its rows restarted
+with gtol 1e-4 all ended "floor" (decrements 5-7e-6). Dropped first try: stopping rows on the decrement itself
+left them 6e-5 .. 8e-4 above production. Diff: scan/.mm/conv_decrement.diff.
+
 2026-10-28 — Why _v5bbn rows stall: D/H jitter against one stiff direction; the stalls cost <= 1.3e-4 in chi2
 ------------------------------------------------------------------------------------------------------------
 Diagnosis at 6 of the 17 stalled rows (the 5 largest ||g|| + Delta_Neff_init@-0.700) and 2 converged rows

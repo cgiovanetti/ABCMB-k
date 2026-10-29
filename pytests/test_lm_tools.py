@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from scan.lm_tools import (proj_grad, lm_step, fit_in_box,
+from scan.lm_tools import (proj_grad, lm_step, newton_decrement, fit_in_box,
                            spread_starts, cluster_points, flag_point, union_regions, is_multimodal)
 
 LO, HI = -np.full(2, 5.0), np.full(2, 5.0)
@@ -59,6 +59,33 @@ def test_lm_step_respects_bounds():
     assert np.isclose((x + d)[1], 5.0) and pred > 0
     # a component pushing into an active bound is zeroed in the projected gradient
     assert proj_grad(np.array([[0.0, -1.0]]), np.array([[0.0, 5.0]]), LO[None], HI[None])[0, 1] == 0
+
+
+def test_newton_decrement_is_the_remaining_gain():
+    """On a quadratic chi2 the decrement is exactly chi2(x) - min chi2, a large gradient along a stiff direction
+    is worth little, a dim held at a bound drops out, and a singular H with no gradient in its null space
+    stays finite."""
+    rng = np.random.default_rng(1)
+    Q = np.linalg.qr(rng.normal(size=(4, 4)))[0]
+    A = Q @ np.diag([400.0, 2.0, 1.0, 0.5]) @ Q.T                # one stiff direction, as in the BBN profile
+    xs = np.array([0.3, -0.2, 0.1, 0.0]); lo, hi = -np.full(4, 5.0), np.full(4, 5.0)
+    chi2 = lambda x: 0.5 * (x - xs) @ A @ (x - xs)
+    x = xs + 0.01 * Q[:, 0] + 0.2 * Q[:, 2]
+    gg = A @ (x - xs)
+    assert np.isclose(newton_decrement(gg, A, x, lo, hi), chi2(x))
+    assert np.isclose(np.abs(Q[:, 0] @ gg), 4.0) and np.isclose(0.5 * 4.0 ** 2 / 400.0, 0.02)
+    assert np.isclose(np.abs(Q[:, 2] @ gg), 0.2) and np.isclose(newton_decrement(gg, A, x, lo, hi), 0.04)
+    # dim 0 held at the bound its gradient pushes into: the gain of the 3-dim problem with x0 fixed
+    lo2, hi2 = lo.copy(), hi.copy()
+    if gg[0] > 0:
+        lo2[0] = x[0]
+    else:
+        hi2[0] = x[0]
+    F = [1, 2, 3]
+    xF = x.copy(); xF[F] = x[F] - np.linalg.solve(A[np.ix_(F, F)], gg[F])
+    assert np.isclose(newton_decrement(gg, A, x, lo2, hi2), chi2(x) - chi2(xF))
+    assert np.isclose(newton_decrement(np.array([0.2, 0.0]), np.diag([1.0, 0.0]), np.zeros(2), LO, HI), 0.02)
+
 
 
 def test_spread_starts_follow_the_softest_directions():
