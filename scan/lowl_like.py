@@ -15,15 +15,14 @@ D_ell[0..lmax] (muK^2) arrays (cl_to_Dl turns ABCMB output into these):
     "cl2x" change-of-variable: per multipole a cubic spline x(C_ell) maps the cl to
     a Gaussian variable; logL = sum log(dx/dC) [Jacobian] - 0.5 (x-mu)^T Cinv (x-mu).
 
-The spline derivatives (interpax method='cubic': a local C1 spline from averaged secants,
-not the C2 spline cobaya uses for TT; on LowLEE's uniform grid it is the central difference)
-are precomputed at __init__ and passed to interp1d(..., fx=...) at call time, so
+The spline derivatives (LowLTT: interpax 'cubic2', the C2 not-a-knot spline cobaya uses; LowLEE:
+'cubic', central differences on its uniform table) are precomputed at __init__ and passed to interp1d(..., fx=...) at call time, so
 the traced graph only evaluates -- the 56 coefficient solves never enter the
 jacfwd/vmap graph (otherwise the AD compile blows up to >10 min).
 
 Both return a chi^2 contribution = -2 ln L (up to an additive constant that cancels
-in any Delta-chi^2 profile), and both match the cobaya native formula with the
-calibration A_planck = 1 (negligible against the low-ell uncertainty).
+in any Delta-chi^2 profile), and both match the cobaya native formula, calibration included
+(calib = A_planck: D_ell -> D_ell / calib^2). The profile driver passes plik's profiled A_planck.
 """
 import os
 import numpy as np
@@ -47,9 +46,10 @@ def cl_to_Dl(Cl, l_arr, lmax=2508, T_CMB_uK=2.7255e6):
     return zeros.at[..., idx].add(contrib)
 
 
-def _cubic_fx(x, f):
-    """precompute interpax local-cubic (C1, averaged-secant) derivative coefficients."""
-    return Interpolator1D(jnp.asarray(x), jnp.asarray(f), method="cubic").derivs["fx"]
+def _cubic_fx(x, f, method="cubic"):
+    """precompute interpax spline derivative coefficients: method 'cubic' = local C1 (averaged
+    secants), 'cubic2' = the C2 not-a-knot spline (a tridiagonal solve)."""
+    return Interpolator1D(jnp.asarray(x), jnp.asarray(f), method=method).derivs["fx"]
 
 
 # ======================================================================
@@ -68,10 +68,10 @@ class LowLEE:
         self._fx = _cubic_fx(self._Dgrid, self._prob)             # (nsteps, nell) precomputed
         self._Dmax = float((self.nsteps - 2) * step)
 
-    def chi2(self, Dl_padded):
-        """Dl_padded: (..., lmax_pad+1) padded D_ell^EE in muK^2.  Returns (...,)
-        chi^2 = -2 sum_ell lnP_ell(D_ell). Batched over leading axes."""
-        D = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1], 0.0, self._Dmax)
+    def chi2(self, Dl_padded, calib=1.0):
+        """Dl_padded: (..., lmax_pad+1) padded D_ell^EE in muK^2; calib = A_planck (D -> D / calib^2,
+        as cobaya).  Returns (...,) chi^2 = -2 sum_ell lnP_ell(D_ell). Batched over leading axes."""
+        D = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1] / calib ** 2, 0.0, self._Dmax)
         def _col(xq_c, f_c, fx_c):
             return interp1d(xq_c, self._Dgrid, f_c, method="cubic", fx=fx_c, extrap=True)
         lnP = jax.vmap(_col, in_axes=(-1, -1, -1), out_axes=-1)(D, self._prob, self._fx)
@@ -97,7 +97,9 @@ class LowLTT:
         self._cl = jnp.asarray(spline_cl)
         self._xk = jnp.asarray(spline_x)
         # per-column precomputed cubic derivative coeffs (x differs per column)
-        fxs = [np.asarray(_cubic_fx(spline_cl[:, c], spline_x[:, c])) for c in range(nl)]
+        # C2 not-a-knot spline as cobaya's InterpolatedUnivariateSpline (the local C1 one leaves the
+        # Jacobian term -2 sum log x'(D) only C0 on these log-spaced knots)
+        fxs = [np.asarray(_cubic_fx(spline_cl[:, c], spline_x[:, c], "cubic2")) for c in range(nl)]
         self._fx = jnp.asarray(np.array(fxs).T)                            # (1000,nl)
         # prior bounds (|x|<5 region), as in cobaya
         nbins = spline_cl.shape[0]
@@ -118,8 +120,8 @@ class LowLTT:
     def _x_and_dxdcl(self, theory):
         """theory: (..., nl) D_ell^TT.  Returns x(...,nl), dx/dCl(...,nl)."""
         def _col(cl_c, knots_c, xk_c, fx_c):
-            x = interp1d(cl_c, knots_c, xk_c, method="cubic", fx=fx_c, extrap=True)
-            dxc = interp1d(cl_c, knots_c, xk_c, method="cubic", derivative=1,
+            x = interp1d(cl_c, knots_c, xk_c, method="cubic2", fx=fx_c, extrap=True)
+            dxc = interp1d(cl_c, knots_c, xk_c, method="cubic2", derivative=1,
                            fx=fx_c, extrap=True)
             return x, dxc
         x, dx = jax.vmap(_col, in_axes=(-1, -1, -1, -1), out_axes=(-1, -1))(
@@ -133,7 +135,8 @@ class LowLTT:
         gauss = jnp.einsum("...i,ij,...j->...", delta, self._covinv, delta)
         return gauss - jac
 
-    def chi2(self, Dl_padded):
-        """Dl_padded: (..., lmax_pad+1) padded D_ell^TT muK^2.  Returns (...,) chi^2."""
-        theory = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1], self._lo_j, self._hi_j)
+    def chi2(self, Dl_padded, calib=1.0):
+        """Dl_padded: (..., lmax_pad+1) padded D_ell^TT muK^2; calib = A_planck (D -> D / calib^2, as
+        cobaya).  Returns (...,) chi^2."""
+        theory = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1] / calib ** 2, self._lo_j, self._hi_j)
         return self._neglogl_raw(theory) - self._offset

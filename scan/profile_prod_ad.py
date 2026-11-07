@@ -280,9 +280,22 @@ if TOY is None:
     lowtt = LowLTT() if USE_LOWTT else None
     # full Planck plik (clipy): its 21 floated foreground/calibration nuisances (of 47; 26 fixed) are profiled per cosmology
     # at fixed ABCMB theory (scan/plik_full.py)
-    from scan.plik_full import PlikFull
+    from scan.plik_full import PlikFull, FLOAT_NAMES as _PLF_NAMES
     plf = PlikFull()
-    _plf_prof_B = jax.jit(lambda c: plf.profile_batched(c))   # batched inner nuisance profile
+    I_APL = _PLF_NAMES.index("A_planck")
+
+    def _lowl_chi2(nu, Dtt, Dee):
+        """the low-ell likelihoods at plik's calibration nu[A_planck]: Planck shares A_planck across its
+        likelihoods (cobaya divides the low-ell D_ell by A_planck^2), so it is profiled over all of them."""
+        c = 0.0
+        if lowtt is not None:
+            c = c + lowtt.chi2(Dtt, calib=nu[I_APL])
+        if lowee is not None:
+            c = c + lowee.chi2(Dee, calib=nu[I_APL])
+        return c
+
+    # batched inner nuisance profile of plik + low-ell: (chi2 (B,), nu* (B,21))
+    _plf_prof_B = jax.jit(lambda c, dtt, dee: plf.profile_batched(c, _lowl_chi2, (dtt, dee)))
     model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
                   output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
                   rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
@@ -424,11 +437,8 @@ def _chi2_from_out(out):
     Dtt = cl_to_Dl(out.ClTT, out.l)                  # for the low-ell likelihoods (muK^2 D_l)
     Dee = cl_to_Dl(out.ClEE, out.l)
     cls2d = plf.abcmb_cls_to_clik(out.ClTT, out.ClTE, out.ClEE, out.l)   # (B,6,Lcol)
-    chi2 = np.asarray(_plf_prof_B(cls2d)[0], dtype=float)                # plik, its 21 floated nuisances profiled
-    if lowee is not None:
-        chi2 = chi2 + np.asarray(lowee.chi2(Dee), dtype=float)
-    if lowtt is not None:
-        chi2 = chi2 + np.asarray(lowtt.chi2(Dtt), dtype=float)
+    # plik + low-ell, plik's 21 floated nuisances (A_planck shared with low-ell) profiled
+    chi2 = np.asarray(_plf_prof_B(cls2d, Dtt, Dee)[0], dtype=float)
     return np.where(np.isfinite(chi2), chi2, 1e6)
 
 
@@ -476,7 +486,7 @@ def values_rows(BASE, FREE, X):
         c = _chi2_from_out(model.call_batched(batch, shard=DO_SHARD))
         if ys is not None:
             c = c + _bbn_chi2(th, ys)
-        out[s:e] = c[:e - s]
+        out[s:e] = np.where(np.isfinite(c), c, 1e6)[:e - s]     # a failed solve (CMB or BBN) is rejected
     if TRACE_EVALS:
         print(f"[eval] value END {time.strftime('%H:%M:%S')} chi2 " + " ".join(f"{v:.3f}" for v in out), flush=True)
     return out
@@ -506,34 +516,32 @@ def _phys_to_derived(thD, bbn=None):
     return _bg_to_float(model.add_derived_parameters(p))
 
 
-def _schur_gn(r, Jt, Jn, W, Hprior, free):
-    """Gradient and Gauss-Newton Hessian of chi2 = r^T W r + prior(nu), profiled over the
-    nuisances nu at their optimum. r (nd,); Jt (P',nd) = dr/dtheta; Jn (Q,nd) = dr/dnu; Hprior
-    (Q,Q) the prior's Hessian; free (Q,) False for a nuisance sitting on a bound (held fixed).
-    Profiled curvature = H_tt - H_tn H_nn^-1 H_nt over the free nuisances; the gradient is the
-    partial one (envelope theorem: d chi2/d nu = 0 at the optimum)."""
-    WJt = Jt @ W
-    g = 2.0 * WJt @ r
-    Htt = 2.0 * WJt @ Jt.T
-    m = free.astype(r.dtype)
-    Htn = 2.0 * (WJt @ Jn.T) * m[None, :]
-    Hnn = (2.0 * (Jn @ W) @ Jn.T + Hprior) * m[:, None] * m[None, :] + jnp.diag(1.0 - m)
+def _schur(Htt, Htn, Hnn, free):
+    """Curvature of chi2 profiled over the nuisances nu at their optimum: H_tt - H_tn H_nn^-1 H_nt over
+    the free nuisances (free (Q,) False for one sitting on a bound, held fixed). The gradient needs no
+    correction (envelope theorem: d chi2/d nu = 0 at the optimum)."""
+    m = free.astype(Htt.dtype)
+    Htn = Htn * m[None, :]
+    Hnn = Hnn * m[:, None] * m[None, :] + jnp.diag(1.0 - m)
     H = Htt - Htn @ jnp.linalg.solve(Hnn, Htn.T)
-    return g, 0.5 * (H + H.T)
+    return 0.5 * (H + H.T)
 
 
-def _lowl_gn(like, D_, dD):
+def _lowl_gn(like, D_, dD, A):
     """chi2, gradient and generalized Gauss-Newton curvature dD^T H dD of a low-ell likelihood in
-    the D_ell it reads (ell = lmin..lmax): H is its exact AD Hessian there, with negative
-    eigenvalues set to zero so the term stays positive semidefinite."""
+    the D_ell it reads (ell = lmin..lmax) at calibration A: H is its exact AD Hessian there, with
+    negative eigenvalues set to zero so the term stays positive semidefinite. Also its coupling to A
+    (dD^T d2chi2/dD dA, (P',)) and d2chi2/dA2, for the Schur complement over the plik nuisances."""
     sl = slice(like.lmin, like.lmax + 1)
-    f = lambda d: like.chi2(D_.at[sl].set(d))
+    f = lambda d, a: like.chi2(D_.at[sl].set(d), calib=a)
     d0 = D_[sl]
-    c, gD = jax.value_and_grad(f)(d0)
-    ev, V = jnp.linalg.eigh(jax.hessian(f)(d0))
+    c, gD = jax.value_and_grad(f)(d0, A)
+    ev, V = jnp.linalg.eigh(jax.hessian(f)(d0, A))
     HD = (V * jnp.maximum(ev, 0.0)) @ V.T
+    hDA = jax.jacfwd(jax.grad(f), argnums=1)(d0, A)
+    hAA = jax.hessian(f, argnums=1)(d0, A)
     Jd = dD[:, sl]
-    return c, Jd @ gD, Jd @ HD @ Jd.T
+    return c, Jd @ gD, Jd @ HD @ Jd.T, Jd @ hDA, hAA
 
 
 def _gn_one(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu):
@@ -547,13 +555,20 @@ def _gn_one(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu):
     Jt = jax.vmap(lambda dc: jax.jvp(lambda c2: res(c2, nu), (cls2d,), (dc,))[1])(dcls)
     Jn = jax.jacfwd(lambda n: res(cls2d, n))(nu).T
     free = (nu - plf.lo > 1e-6 * plf.scale) & (plf.hi - nu > 1e-6 * plf.scale)
-    c = r @ plf.siginv @ r + plf.prior_penalty(nu)
-    g, H = _schur_gn(r, Jt, Jn, plf.siginv, plf.prior_hessian(), free)
-    for like, C, dC in ((lowtt, ClTT, dTT), (lowee, ClEE, dEE)):
+    W = plf.siginv
+    c = r @ W @ r + plf.prior_penalty(nu)
+    WJt = Jt @ W
+    g = 2.0 * WJt @ r
+    Htt = 2.0 * WJt @ Jt.T
+    Htn = 2.0 * WJt @ Jn.T
+    Hnn = 2.0 * (Jn @ W) @ Jn.T + plf.prior_hessian()
+    for like, C, dC in ((lowtt, ClTT, dTT), (lowee, ClEE, dEE)):     # low-ell at the shared A_planck
         if like is not None:
-            cl_, gl, Hl = _lowl_gn(like, cl_to_Dl(C, lvec), cl_to_Dl(dC, lvec))
-            c, g, H = c + cl_, g + gl, H + Hl
-    return c, g, H
+            cl_, gl, Hl, hA, hAA = _lowl_gn(like, cl_to_Dl(C, lvec), cl_to_Dl(dC, lvec), nu[I_APL])
+            c, g, Htt = c + cl_, g + gl, Htt + Hl
+            Htn = Htn.at[:, I_APL].add(hA)
+            Hnn = Hnn.at[I_APL, I_APL].add(hAA)
+    return c, g, _schur(Htt, Htn, Hnn, free)
 
 
 _gn_B = jax.jit(jax.vmap(_gn_one))
@@ -588,7 +603,8 @@ def _gn_block(BASE, FREE, X):
     (ClTT, ClTE, ClEE), cl_dots = staged_cl_and_grad(
         model, full_ps, params_dots, k_chunk_size=100, shard=DO_SHARD, spec_b_local=GRAD_SPECB)
     dTT, dTE, dEE = (jnp.stack([cd[s] for cd in cl_dots], axis=1) for s in range(3))  # (B,P',n_l)
-    nu = _plf_prof_B(plf.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells))[1]
+    nu = _plf_prof_B(plf.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells),
+                     cl_to_Dl(ClTT, model.SS.ells), cl_to_Dl(ClEE, model.SS.ells))[1]
     c, g, H = _gn_B(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu)
     c, g, H = np.array(c, float), np.array(g, float), np.array(H, float)   # copies: written below
     if BBN_LIKE is not None:                       # the BBN likelihood: its residuals' Gauss-Newton terms
@@ -729,7 +745,7 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=N
         if ckpt_path:
             tmp = ckpt_path + ".tmp.npz"
             np.savez(tmp, BASE=BASE, FREE=FREE, X0=X0, X=X, F=F, G=G, H=H, lam=lam, nfail=nfail,
-                     stalled=stalled, floor=floor, it=it + 1, gtol=gtol)
+                     stalled=stalled, floor=floor, it=it + 1, gtol=gtol, run_sig=_run_signature())
             os.replace(tmp, ckpt_path)
         # ---- interval-stability early stop: every POI's 68% interval ends moved by < SIGTOL*grid_sig
         # over the window. A POI with active rows that took no step stalled rather than converged:
@@ -825,10 +841,28 @@ def _stage_rank(stage):
     return 1 if stage.startswith("branch") else 0
 
 
+def _run_signature():
+    """What makes two runs the same run: the config file's bytes and the knobs that set the chi2 surface,
+    the grids and the convergence test (not the code version). Stored in every npz and checkpoint;
+    resuming or skipping a finished POI requires a match, so a changed setup under an old PA_TAG stops
+    instead of silently skipping or mixing."""
+    import hashlib
+    h = hashlib.sha1(open(CONFIG_ABS, "rb").read())
+    knobs = dict(LMAX=LMAX, RTOL=RTOL, NPTS=NPTS, NSIG=NSIG, XBOX=XBOX, GTOL=GTOL, DTOL=DTOL, MS_K=MS_K,
+                 MS_NPTS=MS_NPTS, MS_SPREAD=MS_SPREAD, PLF_MAXIT=os.environ.get("PLF_MAXIT", "3000"))
+    h.update(repr(sorted(knobs.items())).encode())
+    return h.hexdigest()[:16]
+
+
+def _same_run(st):
+    """does a loaded npz / checkpoint carry this run's signature?"""
+    return "run_sig" in st.files and str(st["run_sig"]) == _run_signature()
+
+
 def _save_table(path, T, stage):
     """checkpoint the row table after a phase."""
     tmp = path + ".tmp.npz"
-    np.savez(tmp, stage=stage, gtol=GTOL, **T)
+    np.savez(tmp, stage=stage, gtol=GTOL, run_sig=_run_signature(), **T)
     os.replace(tmp, path)
 
 
@@ -841,11 +875,11 @@ def _load_table(path, BASE, FREE):
         st = np.load(path)
         n = len(BASE)
         if (st["BASE"].shape[0] >= n and np.allclose(st["BASE"][:n], BASE)
-                and np.array_equal(st["FREE"][:n], FREE) and float(st["gtol"]) == GTOL):
-            T = {k: st[k] for k in st.files if k not in ("stage", "gtol")}
+                and np.array_equal(st["FREE"][:n], FREE) and _same_run(st)):
+            T = {k: st[k] for k in st.files if k not in ("stage", "gtol", "run_sig")}
             print(f"[resume] row table after stage {st['stage']} matches; continuing ({path})", flush=True)
             return T, str(st["stage"])
-        print("[resume] row table grid/gtol mismatch -> fresh start", flush=True)
+        print("[resume] row table from a different grid or setup (run_sig) -> fresh start", flush=True)
     except Exception as ex:
         print(f"[resume] could not load the row table ({ex}) -> fresh start", flush=True)
     return None, None
@@ -939,11 +973,11 @@ def profile_lockstep(pois, outdir):
             try:
                 st = np.load(ckpt)
                 if (st["BASE"].shape == BASE_f.shape and np.allclose(st["BASE"], BASE_f)
-                        and np.array_equal(st["FREE"], FREE_f) and float(st["gtol"]) == GTOL):
+                        and np.array_equal(st["FREE"], FREE_f) and _same_run(st)):
                     resume_state = {k: st[k] for k in st.files}
                     print(f"[resume] LM checkpoint @ it{int(st['it'])} matches; continuing ({ckpt})", flush=True)
                 else:
-                    print("[resume] LM checkpoint grid/gtol mismatch -> fresh start", flush=True)
+                    print("[resume] LM checkpoint from a different grid or setup (run_sig) -> fresh start", flush=True)
             except Exception as ex:
                 print(f"[resume] could not load the LM checkpoint ({ex}) -> fresh start", flush=True)
         if resume_state is not None:
@@ -1086,7 +1120,7 @@ def profile_lockstep(pois, outdir):
         flag = np.array([flags[(i, j)][0] for j in range(NPTS)], bool)
         reason = np.array([flags[(i, j)][1] for j in range(NPTS)], dtype="U96")
         npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
-        np.savez(npz, poi=poi, poi_grid=grid, chi2=chi2, xstar=T["X"][e], gnorm=T["gnorm"][e],
+        np.savez(npz, poi=poi, run_sig=_run_signature(), poi_grid=grid, chi2=chi2, xstar=T["X"][e], gnorm=T["gnorm"][e],
                  converged=conv[e], stalled=T["stalled"][e], floor=T["floor"][e], dec=decT[e], at_box=at_box[e],
                  gn_eig=ev[e], hess_pd=ev[e].min(1) > 0,
                  nuis=np.array([ORDER[k] for k in nuis_idx_of(i)]), done=True,
@@ -1176,16 +1210,22 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None):
 
 
 def _resume_skip(pois, outdir):
-    """drop POIs whose npz is already done (RESUME)."""
+    """drop POIs whose npz is already done by this same run (RESUME). A finished npz under this PA_TAG from a
+    different setup (run signature, _run_signature) stops the run: choose a new PA_TAG or move the file."""
     out = []
     for poi in pois:
         npz = os.path.join(outdir, f"profile_prod_ad_{poi}{TAG}.npz")
         if RESUME and os.path.exists(npz):
             try:
-                if bool(np.load(npz, allow_pickle=True)["done"]):
-                    print(f"[{poi}] resume: done, skip", flush=True); continue
+                st = np.load(npz, allow_pickle=True)
+                done, same = bool(st["done"]), _same_run(st)
             except Exception:
-                pass
+                done = same = False
+            if done and same:
+                print(f"[{poi}] resume: done, skip", flush=True); continue
+            if done:
+                raise SystemExit(f"[{poi}] {npz} is a finished run with a different setup (config or knobs; "
+                                 f"run_sig here {_run_signature()}): use a new PA_TAG or move the old file")
         out.append(poi)
     return out
 

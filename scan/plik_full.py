@@ -224,11 +224,12 @@ class PlikFull:
         curvature ~ O(1) since scale = the per-param prior/ref sigma)."""
         return self.penalized_chi2(cls2d, self.start + self.scale * z)
 
-    def profile(self, cls2d, maxls=None):
+    def profile(self, cls2d, maxls=None, extra=None):
         """Inner-profile the 21 floated nuisances at fixed theory cls2d (6,lmax+1).
         Gradient-only Spectral Projected Gradient (SPG: projected gradient with
         Barzilai-Borwein steps + GLL nonmonotone Armijo) in the bounded scaled-z box,
-        from z = 0. Returns (chi2_prof, nu_star_phys).
+        from z = 0. extra(nu_phys) -> chi2 is added to the objective (the driver passes the low-ell
+        likelihoods, which share A_planck). Returns (chi2_prof incl. extra, nu_star_phys).
 
         Gradient-only because clipy's 2nd derivative is unreliable (1st-order AD is exact;
         every Hessian-Newton variant failed). Bound-constrained by projection because two
@@ -240,7 +241,10 @@ class PlikFull:
         maxit = int(os.environ.get("PLF_MAXIT", "3000"))
         maxls = self.maxls if maxls is None else maxls
         zlo, zhi, c1 = self.zlo, self.zhi, self.c1
-        f = lambda zz: self._obj_z(cls2d, zz)
+        if extra is None:
+            f = lambda zz: self._obj_z(cls2d, zz)
+        else:
+            f = lambda zz: self._obj_z(cls2d, zz) + extra(self.start + self.scale * zz)
         gradf = jax.grad(f)
         z = jnp.zeros(len(FLOAT_NAMES))
         g = gradf(z)
@@ -282,9 +286,13 @@ class PlikFull:
         carry0 = (z, g, jnp.asarray(1.0), fbuf0, z, f0)
         (_, _, _, _, z_star, _), _ = jax.lax.scan(outer, carry0, None, length=maxit)
         nu_star = self.start + self.scale * z_star
-        return self.penalized_chi2(cls2d, nu_star), nu_star
+        c = self.penalized_chi2(cls2d, nu_star)
+        return (c if extra is None else c + extra(nu_star)), nu_star
 
-    def profile_batched(self, cls2d_B):
-        """vmap of profile over a leading batch axis. cls2d_B: (B,6,lmax+1).
+    def profile_batched(self, cls2d_B, extra_fn=None, extra_args=()):
+        """vmap of profile over a leading batch axis. cls2d_B: (B,6,lmax+1); optional extra term
+        extra_fn(nu_phys, *args) with per-cosmology args (each with a leading B axis).
         Returns (chi2_B (B,), nu_star_B (B,21))."""
-        return jax.vmap(lambda c: self.profile(c))(cls2d_B)
+        if extra_fn is None:
+            return jax.vmap(lambda c: self.profile(c))(cls2d_B)
+        return jax.vmap(lambda c, *a: self.profile(c, extra=lambda nu: extra_fn(nu, *a)))(cls2d_B, *extra_args)

@@ -77,7 +77,9 @@ chi2 gradient and the Gauss-Newton matrix J^T W J at the row's own point:
 - plik: the residual and its data covariance; the floated nuisances, profiled per cosmology at fixed
   theory, enter through the Schur complement H_tt - H_tn H_nn^-1 H_nt (gradient by the envelope theorem;
   nuisances on a bound held fixed);
-- low-ell TT/EE: their exact AD Hessian in D_ell with negative eigenvalues set to zero;
+- low-ell TT/EE: their exact AD Hessian in D_ell with negative eigenvalues set to zero. They take plik's
+  calibration A_planck (as in cobaya), so A_planck is profiled over plik + low-ell together and their
+  A_planck curvature and cross terms enter the Schur complement;
 - BBN data (config `bbn_like`): the Y_p and D/H residual Jacobians from the LINX stage, plus the priors.
 
 `PA_LM_K` damping values a decade apart are tried in one batched value call (steps projected onto the
@@ -179,7 +181,7 @@ BBN nuisances' cen is currently also their prior mean, see Open items).
 
 - BBN nuisance priors: `_bbn_chi2` and `_gn_block` take (theta - cen) / sig, and the `_v5bbn` config's cen
   holds the prepass values of tau_n_fac and q0..q11, so the priors are centred there instead of on 1 and 0.
-  Fix (fixed means) pending approval, then rerun `_v5bbn`.
+  Fix (fixed means) pending approval, then rerun `_v5bbn` under a NEW `PA_TAG` (resume refuses a finished npz from a different setup).
 - The 17 `_v5bbn` stalls are harmless: Newton decrements 2e-6 .. 2.3e-4, below `PA_DTOL`.
 - Wilks / coverage calibration deferred (only needed if a second mode appears within a few Delta chi2).
 - 2D joint profiles for a few parameter pairs.

@@ -6,6 +6,22 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-07 — Audit fixes: resume signature, NaN guard, A_planck shared with low-ell, cobaya's TT spline
+------------------------------------------------------------------------------------------------------
+- Every npz and checkpoint carries a run signature (config file bytes + LMAX, RTOL, NPTS, NSIG, XBOX, GTOL,
+  DTOL, MS_K/NPTS/SPREAD, PLF_MAXIT). Resume skips a finished POI only on a match; a finished npz from a
+  different setup under the same PA_TAG stops the run. Older npz have none, so reruns need a new PA_TAG.
+- values_rows maps a non-finite chi2 (CMB or BBN) to 1e6: a failed LINX lane no longer gives a NaN row that
+  wins the envelope.
+- A_planck is profiled over plik + low-ell together (cobaya divides the low-ell D_ell by A_planck^2); the
+  low-ell A_planck curvature and cross terms enter the Schur complement. At the _v5bbn centre the AD gradient
+  matches value slopes to 1e-4 (2% along the stiff omega_cdm / Delta_Neff_init directions, FD truncation)
+  and the GN diagonal matches FD curvature to 2%; A_planck 0.999956 -> 1.000012, chi2 +0.002 at the best
+  fit, -0.02..+0.03 at the h grid ends.
+- LowLTT uses the C2 not-a-knot spline like cobaya's InterpolatedUnivariateSpline: equal to cobaya's native
+  TT to 1e-13 (the C1 spline was 2-4e-5 off).
+The _v4linx / _v5bbn results predate these changes. CPU tests 6 + 4 (new: resume requires the same setup).
+
 2026-11-06 — Review trim (branch review-trim, from main e2609d2, tagged pre-trim-2026-11-06)
 ---------------------------------------------------------------------------------------------
 The repository is cut down for a human review; abcmb/ is unchanged.

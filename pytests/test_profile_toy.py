@@ -104,3 +104,23 @@ def test_stalls_on_the_noise_floor_count_as_converged(driver, tmp_path):
     r0 = _run(d, str(tmp_path / "off"), DTOL=0.0, **kw)
     assert r0["rows_stalled"].all() and not r0["rows_floor"].any() and not r0["converged"].any()
     assert r0["flag"].all() and all("stalled" in s for s in r0["flag_reason"])
+
+
+def test_resume_requires_the_same_setup(driver, tmp_path):
+    """A finished npz is skipped on resume only when it carries this run's signature (config + knobs); a
+    finished npz under the same PA_TAG from a changed setup stops the run instead of being silently kept."""
+    d = driver
+    _run(d, str(tmp_path))
+    saved = d.RESUME
+    d.RESUME = True
+    try:
+        assert d._resume_skip(["a"], str(tmp_path)) == []
+        old = d.NSIG
+        d.NSIG = old + 1.0
+        try:
+            with pytest.raises(SystemExit):
+                d._resume_skip(["a"], str(tmp_path))
+        finally:
+            d.NSIG = old
+    finally:
+        d.RESUME = saved
