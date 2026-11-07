@@ -1,24 +1,59 @@
-"""
-Phase C done test: every scenario in snapshots.npz is reproduced by current
-code to ~1e-12.
-
-After Phase D+, this same test is what tells us when the refactor breaks
-single-eval correctness. The B-axis isn't exercised here — that's parity.py.
-
-Slow because each scenario runs full ABCMB. Skipped automatically if
-pytests/fixtures/snapshots.npz is absent (e.g., on first checkout before
-generate_snapshots.py has been run).
-"""
+"""GPU-generated regression oracle: every scenario in fixtures/snapshots.npz is reproduced at rtol 5e-5.
+Run on GPU, where the snapshots were generated. Skipped when snapshots.npz is absent."""
 
 import os
+import numpy as np
 import pytest
 
-from pytests.snapshots import (
-    SNAPSHOTS_NPZ,
-    load_snapshots,
-    assert_matches_snapshot,
-)
 from pytests.fixtures.scenarios import SCENARIOS, SCENARIO_NAMES
+
+SNAPSHOTS_NPZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'fixtures', 'snapshots.npz')
+
+
+def load_snapshots():
+    """Returns the npz handle (mmap'd). Keys are '<scenario>__<field>'."""
+    if not os.path.exists(SNAPSHOTS_NPZ):
+        raise FileNotFoundError(
+            f"Snapshot file not found: {SNAPSHOTS_NPZ}. "
+            f"Run pytests/fixtures/generate_snapshots.py to create it."
+        )
+    return np.load(SNAPSHOTS_NPZ, allow_pickle=True)
+
+
+def assert_matches_snapshot(scenario, fields, rtol, atol):
+    """Compare a dict of {field_name: array} to the snapshot keys '<scenario>__<field>'
+    with np.testing.assert_allclose; report every failing field at once."""
+    snap = load_snapshots()
+    failures = []
+    for fname, value in fields.items():
+        key = f"{scenario}__{fname}"
+        if key not in snap.files:
+            failures.append(f"  missing key {key!r} in snapshot")
+            continue
+        ref = snap[key]
+        cur = np.asarray(value)
+        if cur.shape != ref.shape:
+            failures.append(
+                f"  {fname}: shape mismatch {cur.shape} vs ref {ref.shape}")
+            continue
+        diff = np.abs(cur - ref)
+        ref_abs = np.abs(ref)
+        # relative error where ref != 0, absolute elsewhere
+        rel = np.where(ref_abs > 0, diff / np.maximum(ref_abs, 1e-300), 0.)
+        max_rel = float(rel.max())
+        max_abs = float(diff.max())
+        try:
+            np.testing.assert_allclose(cur, ref, rtol=rtol, atol=atol)
+        except AssertionError as e:
+            failures.append(
+                f"  {fname}: max_rel={max_rel:.2e} max_abs={max_abs:.2e}\n"
+                f"    rtol={rtol:.0e} atol={atol:.0e}\n"
+                f"    {str(e).splitlines()[0]}")
+    if failures:
+        msg = f"Snapshot mismatch for scenario {scenario!r}:\n" + "\n".join(failures)
+        raise AssertionError(msg)
+
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(SNAPSHOTS_NPZ),
@@ -44,8 +79,7 @@ SCENARIOS_TO_TEST = _present_scenarios()
 
 @pytest.mark.parametrize("scenario", SCENARIOS_TO_TEST)
 def test_snapshot_reproduces(scenario):
-    """Re-run the scenario with the current code and assert bit-precision
-    match against the stored snapshot."""
+    """Re-run the scenario with the current code and compare to the stored snapshot."""
     import jax
     jax.config.update("jax_enable_x64", True)
     from abcmb.main import Model
@@ -62,13 +96,7 @@ def test_snapshot_reproduces(scenario):
         'ClTT': out.ClTT, 'ClTE': out.ClTE, 'ClEE': out.ClEE,
         'Pk':   out.Pk,   'l':    out.l,    'k':    out.k,
     }
-    # rtol=5e-5 (with atol=1e-18 to swallow near-zero Cl values at low
-    # ell / TE crossings) covers XLA scheduler/codegen nondeterminism ACROSS
-    # PROCESSES/GPU MODELS. model() is BIT-deterministic run-to-run in one process
-    # (bench/bbn_repro_check), but a fresh process recompiles and the recomb-
-    # concentrated visibility grid (round 4) is steeper, so it amplifies the
-    # cross-process reduction-order drift: ~1.2e-5 on Pk for the BBN scenarios
-    # (was ~4.4e-7 on ClTT pre-round-4). 5e-5 clears that with margin yet stays
-    # under the rtol_large_k_PE=1e-4 solver tolerance, so it still catches a real
-    # refactor regression (which is >>1e-3) while surviving XLA/GPU drift.
+    # rtol=5e-5 (atol=1e-18 swallows near-zero Cls at low ell / TE crossings) covers
+    # cross-process XLA reduction-order drift (~1.2e-5 on Pk for the BBN scenarios) and
+    # stays under rtol_large_k_PE=1e-4, so a real regression (>>1e-3) still fails.
     assert_matches_snapshot(scenario, fields, rtol=5e-5, atol=1e-18)

@@ -7,28 +7,8 @@
 **/Module_Tests/
 **/comparison_scripts/
 
-# refactor bench runtime artifacts
-bench/.jobid
-bench/*_run.log
-bench/snapshots_*.log
-bench/smoke*.log
-bench/.jobid*
-bench/perf_multigpu_results.json
-bench/*_results.json
-.claude/scheduled_tasks.lock
+# local session state, SLURM logs and allocation ids (logs/), profile outputs
 .claude/
-bench/*.log
 logs/
-scan/out_profile/
-scan/out/
-scan/*.log
-scan/.mm/
-scan/.jobid_mm
-scan/.mm_salloc.log
-
-# validation harness scratch: an exported copy of the tree, npz outputs, allocation ids
-scan/.sync/tree_main/
-scan/.sync/out/
-scan/.sync/results/
-scan/.sync/.jobid*
 scan/results/
+.pr_review/

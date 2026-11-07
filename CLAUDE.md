@@ -4,193 +4,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this checkout is
 
-This is the **standalone ABCMB repository** (`TonyZhou729/ABCMB`, arXiv:2602.15104) — a Python+JAX, fully differentiable Boltzmann solver for the CMB. It is the source-of-truth, PyPI-published version of ABCMB.
+`cgiovanetti/ABCMB-k` (remote `origin`) is a fork of ABCMB (`TonyZhou729/ABCMB`, remote `upstream`, pushes disabled; arXiv:2602.15104), the Python+JAX differentiable CMB Boltzmann solver. The fork adds a params-axis batched (per-k) engine in `abcmb/` and a frequentist profile-likelihood analysis in `scan/`: start at `scan/README.md`; results, decisions and known issues are in `CHANGELOG.txt`.
 
-It is distinct from sibling checkouts in the parent workspace (`/pscratch/sd/c/carag/`):
-- `../ABCMB/` — local install used by other projects in the workspace
-- `../BBN_Hubble/` — research project that wraps ABCMB inside cobaya theory classes and runs MCMC with the OLE emulator
-
-When the user asks about ABCMB internals (the Model class, perturbation hierarchy, recombination, spectrum integration), work here. When they ask about cobaya integration, MCMC, or emulator training, that lives in `../BBN_Hubble/` — see the parent `/pscratch/sd/c/carag/CLAUDE.md`.
+Siblings in `/pscratch/sd/c/carag/`: `../ABCMB/` (the install other projects use) and `../BBN_Hubble/` (cobaya + OLE MCMC; see the parent `/pscratch/sd/c/carag/CLAUDE.md`, which also covers HPC setup).
 
 ## Install & test
 
 ```bash
-pip install -e .                                  # editable install
-pip install -r pytest_requirements.txt            # test deps (adds classy)
-cd pytests && pytest -s -vv                       # accuracy test vs. CLASS
+pip install -e .                          # editable install
+pip install -r pytest_requirements.txt    # test deps (adds classy)
 ```
 
-Test hierarchy on this checkout:
-- **`pytests/accuracy_test.py`** — the 1%-vs-CLASS gate. Requires a working `classy` install (locally: a built CLASS variant on `PYTHONPATH`). This is the contract for theory-affecting changes.
-- **`pytests/test_snapshots.py`** — the lighter parity oracle at `rtol=1e-8`, `atol=1e-18` against frozen ABCMB output (`pytests/fixtures/snapshots.npz`). No `classy` dependency. Appropriate for refactor work where you don't want to rebuild CLASS. Regenerate snapshots with `python pytests/fixtures/generate_snapshots.py` if a deliberate code change shifts XLA scheduling.
+- `pytests/accuracy_test.py`: the 1%-vs-CLASS gate and the contract for theory changes (needs `classy`). classy 3.3.4's default `delta_l_max=500` vs ABCMB's `l_max/2` fails TT by ~1.2% at l~2500; compare with CLASS given ABCMB's `delta_l_max`.
+- `pytests/test_snapshots.py`: parity against frozen output (`pytests/fixtures/snapshots.npz`) at `rtol=5e-5`, `atol=1e-18`, no classy. Run it on GPU (`JAX_PLATFORM_NAME=gpu` inside srun), the backend the snapshots were made on; regenerate with `python pytests/fixtures/generate_snapshots.py` after a deliberate change (the current file is stale, see `CHANGELOG.txt`).
+- `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_lm_tools.py` and `test_profile_toy.py` (the profile machinery on toys, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
 
-CI forces CPU (`JAX_PLATFORM_NAME=cpu`); `pytests/conftest.py` enables x64 and `jax_debug_nans`. The snapshot tests need to run on the same backend the snapshots were generated against (currently GPU — set `JAX_PLATFORM_NAME=gpu` explicitly inside srun).
+CI forces CPU; `pytests/conftest.py` enables x64 and `jax_debug_nans`. Run long suites one file at a time. `time_tests.py` is a hand-run timing script. Pins that matter: `jax==0.8.1`, `equinox==0.13.2`, `optimistix==0.0.11` (`setup.cfg`).
 
-`time_tests.py` (top-level) is a hand-run JIT warm-up / wall-clock benchmark, not part of pytest.
+## Architecture
 
-Pinned dependencies that matter: `jax==0.8.1`, `equinox==0.13.2`, `optimistix==0.0.11` (see `setup.cfg`). Don't loosen these without testing.
+`abcmb.main.Model(**specs)(params)` returns an `Output` (Cls, Pk, grids, Background, PerturbationTable, params). Stages: `add_derived_parameters` (CPU, Python; BBN branch from `specs["bbn_type"]`: `""` user YHe, `"table"`, or `"linx"`) -> `get_BG_pre_recomb` (GPU) -> HyRex (CPU, `backend='cpu'`) -> `_run_post_recomb` (GPU: Background with reionization, perturbations, line-of-sight integral). HyRex and LINX run on CPU by design; the `try/except` around the device transfers keeps CPU-only runs working.
 
-## Big-picture architecture
+- **`Delta_Neff_init` (the `"linx"` input) is Delta Neff *at the start of BBN*, not the cosmology's Delta Neff.** It sets the inert radiation at `T_start`; that species is not reheated by e+e- annihilation, so `Neff ~ 3.044 + 0.262*Delta_Neff_init` here (-7 -> 1.21, 0 -> 3.044, 7 -> 4.88; since the 2026-10-22 normalization fix in the vendored LINX; LINX main and `../ABCMB` still give 0.272). The true `Neff` is `Neff_vec[-1]`, which is why `Neff`/`N_nu_massless` may not also be supplied. Never treat the input as `Neff - 3.044`.
 
-The pipeline is orchestrated by `abcmb.main.Model` (an `eqx.Module`). `Model(**specs)(params)` runs end-to-end and returns an `Output` bundle (ClTT/ClTE/ClEE/Pk + grids + Background + PerturbationTable + full params).
+Module map (`abcmb/`): `main.py` (`Model`, `Output`, `call_batched`/`BatchedOutput`, `lna_grid`/`freeze_lna_grid`, parameter derivation); `model_specs.py` (`load_specs` defaults, `populate_species`, k axes); `species.py` (the `Fluid` interface and built-in species: the extension point, see `ABCMB_Fluids.ipynb`); `background.py`; `perturbations.py` (`PerturbationEvolver`, `PerturbationTable`); `spectrum.py` (`SpectrumSolver`, tabulated j_l in `bessel_tab/`, Debye form at large x); `halofit.py`; `hyrex/` (recombination); `linx/` (vendored BBN, diverged from LINX main: edit it only for ABCMB's BBN coupling); `ABCMBTools.py`; `constants.py`.
 
-Stages, in execution order — note the **deliberate device split**:
+JAX / eqx conventions:
+- Major objects are `eqx.Module`s and most public methods are `eqx.filter_jit`; a non-array, non-static field silently breaks tracing.
+- `specs` must hold only JAX-friendly leaves: `Model.__init__` pops `adjoint` before storing it. Mirror that for similar config.
+- `_to_float` casts int/bool params to float64 before any `filter_jit` (integer leaves break `checkpointed_while_loop` / `filter_custom_vjp` under outer AD). Don't strip it.
+- Set `jax_enable_x64` at import in any new numerical module.
 
-1. **`add_derived_parameters` (CPU, Python)** — fills defaults, resolves the Neff / N_nu_massless / YHe triangle, and selects the BBN branch from `specs["bbn_type"]`: `""` (user-supplied YHe), `"table"` (interp PArthENoPE `sBBN_2025_CLASS.txt`), or `"linx"` (run bundled LINX). Non-trivial: read this function before adding new cosmological parameters. New unknown keys are passed through as `jnp.array(...)` to avoid retracing.
-   - **`Delta_Neff_init` (the `"linx"` input, `main.py:773`) is Delta Neff *at the start of BBN*, not the cosmology's Delta Neff.** It sets the initial amount of inert radiation at `T_start` — the knob that makes Neff change. That species is not reheated by e+e- annihilation, so `Neff ~ 3.044 + 0.262*Delta_Neff_init` (-7 -> 1.21, 0 -> 3.044, 7 -> 4.88; in this checkout since 2026-10-22, when the vendored background's inert-radiation normalization was fixed; LINX main and ../ABCMB still give the old 0.272). The true `Neff` comes from `Neff_vec[-1]`, which is why `Neff`/`N_nu_massless` may not also be supplied. Never treat the input as `Neff - 3.044`. See the parent `/pscratch/sd/c/carag/CLAUDE.md`.
-2. **`get_BG_pre_recomb` (GPU, `eqx.filter_jit`)** — tabulates conformal time and packs `RecombInputs` (TCMB, nH, H on HyRex's lna axis).
-3. **HyRex (`abcmb/hyrex/`) on CPU** — `RecModel((recomb_inputs, params))` is `filter_jit(..., backend='cpu')`. Outputs are moved back to GPU.
-4. **`_run_post_recomb` (GPU, `eqx.filter_jit`)** — builds the full `Background` (incl. reionization, optical depth, decoupling), runs the perturbation hierarchy, integrates the line-of-sight transfer, returns Cls and Pk.
-
-HyRex and LINX run on CPU even when JAX has GPU devices. This is intentional: their solvers are sequential and serve as JAX-traceable but cheap CPU stages. Everything else (background ODEs, perturbations, spectrum) is GPU. The `try/except` around `jax.devices('gpu')` in `main.py` is how the code stays CPU-only friendly.
-
-### Module map (under `abcmb/`)
-
-- **`main.py`** — `Model`, `Output`. Pipeline glue + parameter derivation. Adds `Model.call_batched(params_list, shard=)` + `BatchedOutput` for params-axis batched (and optionally multi-GPU sharded) evaluation, and the batched setup helpers `_build_bgs_batched` / `_pre_recomb_batched` / `_get_BG_batched`.
-- **`model_specs.py`** — `load_specs` (run options with defaults), `populate_species` (assembles the species tuple from ΛCDM defaults + `user_species`), `get_k_axis_perturbations` / `get_k_axis_transfer`.
-- **`species.py`** — base `Fluid` (`eqx.Module`) interface (`rho`, `P`, `w`, `y_ini`, `y_prime`, `rho_delta`, `rho_plus_P_theta`, `rho_plus_P_sigma`) plus all built-in species: `Photon`, `Baryon`, `ColdDarkMatter`, `MasslessNeutrino`, `MassiveNeutrino`, `DarkEnergy`. **This is the extension point** — new physics = new `Fluid` subclass. The `ABCMB_Fluids.ipynb` notebook walks through this.
-- **`background.py`** — `BackgroundPreRecomb` (pre-recomb stage) and `Background` (full, with reionization), plus `ReionizationModelFromZ` / `ReionizationModelFromTau` (branched via `lax.cond` on `specs["input_tau_reion"]`).
-- **`perturbations.py`** — `PerturbationEvolver` and `PerturbationTable`. Drives diffrax through the Einstein–Boltzmann hierarchy in synchronous gauge with the tight-coupling approximation. Branch `perk-refactor` adds `_evolve_chunk`, `_compute_modes_batched`, `full_evolution_batched`, `make_output_table_batched` (the `strip_bg_kappa` helper was removed on `perk-perf` once `Background` became stackable).
-- **`spectrum.py`** — `SpectrumSolver`. Line-of-sight integral with tabulated spherical Bessel functions (`bessel_tab/`); produces Cls and the linear matter Pk. `get_Cl_batched` / `Pk_lin_batched` are a single `@eqx.filter_jit` `jax.vmap` over the batch axis (on `perk-perf`; were Python loops on `perk-refactor` — see "Batched pipeline" below).
-- **`hyrex/`** — bundled HyRex recombination (`xe`, `Tm` evolution) using `array_with_padding` for variable-length arrays through JIT.
-- **`linx/`** — **bundled** LINX (BBN). This is a vendored copy frozen with this ABCMB version; it is *not* the same code path as the standalone `../LINX/` checkout or the `../BBN_Hubble/OLE`-aware copies. Edit this only when ABCMB's BBN coupling specifically needs it.
-- **`ABCMBTools.py`** — interpolation helpers (`bilinear_interp`, etc.) used across modules.
-- **`constants.py`** — physical constants in ABCMB's units (eV, cm, Mpc).
-
-### JAX / eqx conventions to respect
-
-- All major objects are `eqx.Module`s; nearly every public method is wrapped in `eqx.filter_jit`. Adding non-array, non-static fields will silently break tracing.
-- `specs` is a plain dict held on `Model`. It must not contain non-JAX leaves like `diffrax.adjoint` classes — `Model.__init__` explicitly pops `adjoint` out before storing `specs`. Mirror this pattern if you add similar config.
-- `_to_float` in `run_cosmology_abbr` casts int/bool params to float64 before any `filter_jit`. This is a known workaround for `checkpointed_while_loop` / `filter_custom_vjp` not accepting integer leaves under outer AD. Don't strip it.
-- `jax_enable_x64` is set at module import in several files. New modules that do any numerics should do the same.
-- The HyRex/LINX → GPU re-transfer is wrapped in `try/except Exception: pass` for CPU-only runs. Preserve that pattern when adding cross-device stages.
-
-### Batched (per-k) pipeline (branch `perk-refactor`; perf done on `perk-perf`)
-
-`Model.call_batched(params_list, shard=None)` is the user-facing entrypoint for
-params-axis-batched evaluation. It:
-
-1. Derives params eagerly (`add_derived_parameters`, a Python loop — it has
-   `sys.exit`/species-loops/bbn branching, so it is NOT vmapped; it is ~ms/cosmo).
-2. Builds the batched `Background` via `_build_bgs_batched`: vmapped
-   `BackgroundPreRecomb` construction (GPU), vmapped `RecModel`/HyRex (CPU), and
-   vmapped `get_BG` (GPU) — one `eqx.filter_jit` + one device transfer each way
-   instead of O(B). The full `Background` stacks because `kappa_func` is gone
-   (see below); there is no more `strip_bg_kappa` / python BG list.
-3. Calls `PE.full_evolution_batched((BG_batch, params_batch))` → batched
-   `PerturbationTable`. Internally chunks the k-axis (`k_chunk_size=100` default;
-   a sweep — `bench/sweep_kchunk.py` — confirms 100 is optimal) and runs
-   `vmap(k_chunk) × vmap(B)` around `evolution_one_k` inside `_evolve_chunk`.
-4. `SpectrumSolver.get_Cl_batched` / `Pk_lin_batched` are now a single
-   `@eqx.filter_jit` `jax.vmap` over `B` on the stacked `BG_batch` (no python
-   loop).
-
-When `shard` is True (or `None` with >1 visible GPU), the stacked inputs are
-B-axis sharded via `jax.sharding` `Mesh` + `NamedSharding(P('batch'))` BEFORE the
-setup, so every GPU stage auto-partitions (GSPMD, no collectives — the pipeline
-is embarrassingly parallel over B) and each device builds/solves only `B/n_dev`
-cosmologies. `B` is padded to a multiple of the device count and the padding is
-sliced off the output. **Shard before the setup, not after** — sharding after
-`_build_bgs_batched` builds all B on device 0 and OOMs at B=64.
-
-Returns a `BatchedOutput` (Cls/Pk/l/k/params; BG and PT are *not* stored).
-
-PERF (ELLMAX=800, A100, post-compile, per param; see `CHANGELOG.txt` 2026-05-29):
-single-GPU `call_batched` B=16 went 12.4 → 4.0 s/param; 4-GPU sharded reaches
-1.13 s/param at B=64 (still falling with B). The win was killing two FLAT
-eager-dispatch costs (the spectrum python loop, and `get_BG` run eagerly), NOT
-solver tuning — the perturbation solve already amortizes 12→2 s/param.
-
-`Background.kappa_func` (a `diffrax.Solution`) is **gone** — replaced by
-`expmkappa_tab`, a plain array tabulated on the shared `lna_tau_tab` axis and read
-via `interpax.interp1d(method="cubic")` in `expmkappa` (cubic, not linear, so
-`grad(visibility)` stays C¹ for ClTE). That is what lets `Background` stack across
-cosmologies. The keystone change is in `background.py`; `strip_bg_kappa` was
-deleted from `perturbations.py`.
-
-The chunked path inside `_compute_modes_batched` produces per-mode trajectories
-that don't bit-match the single-call vmap reference. This is *not* a bug; it's
-diffrax PID step-controller noise within the configured `rtol_large_k_PE` (1e-4
-default). The contract that matters is downstream Cl/Pk agreement, which
-`bench/validate_keystone.py` shows is ~1e-6 peak-normalized vs single-call. (Use
-peak-normalized error, not pointwise relative — ClTE crosses zero ~6×, so
-pointwise relative error blows up at the crossings even when agreement is
-excellent.) See `bench/chunking_debug_report.md` for the original diagnosis.
+Batched pipeline: `Model.call_batched(params_list, shard=None, k_chunk_size=100)` returns a `BatchedOutput` (Cls, Pk, l, k, params):
+1. `add_derived_parameters` per cosmology in a Python loop (not vmappable).
+2. `_build_bgs_batched`: vmapped `BackgroundPreRecomb` (GPU), HyRex (CPU) and `get_BG` (GPU). `Background` stacks because `exp(-kappa)` is tabulated (`expmkappa_tab`, cubic interpolation so `grad(visibility)` stays C^1).
+3. `PE.full_evolution_batched`: k chunks of 100, `vmap(k_chunk) x vmap(B)` in `_evolve_chunk`, output table built per chunk.
+4. `SpectrumSolver.get_Cl_batched` / `Pk_lin_batched`: one `filter_jit` vmap over B.
+With more than one GPU (or `shard=True`) the inputs are B-sharded (`Mesh` + `NamedSharding`) **before** the setup stages, B padded to a multiple of the device count; sharding after the setup builds everything on device 0 and OOMs. Batched modes do not bit-match the single-call path (step-controller noise within rtol); compare Cls peak-normalized (~1e-6). Defaults: `n_lna_PE=300` visibility grid, `dtmax_PE=0.03` for k < 0.06, `rtol_large_k_PE=1e-4` (production profiles use 1e-5); GPU peak scales with B/n_dev.
 
 ## When making changes
 
-- The accuracy test against CLASS is the contract. If you change anything in the background, perturbations, recombination, or spectrum modules, run `pytest -s -vv` and report the max relative error on TT/EE/Pk — the threshold is 1%.
-- New `Fluid` species should follow `species.MasslessNeutrino` or `species.DarkEnergy` as templates and be passed in via the `user_species` tuple, not added to the ΛCDM default list.
-- For HPC / NERSC / GPU job setup, see the parent workspace CLAUDE.md (`/pscratch/sd/c/carag/CLAUDE.md`). Don't duplicate that here.
-- Log substantive sessions in `CHANGELOG.txt` (reverse-chronological, BBN_Hubble format).
-- The branch-specific plan is in `plan.md` (canonical /ultraplan output, kept for history). The Phase A/B baseline numbers, design memo, and chunking-bug closeout report all live in `bench/` and are referenced from `CHANGELOG.txt`.
-
-## GPU access (do not wait for the user)
-
-Request your own NERSC GPU allocations when ABCMB code needs to run.
-
-**NEVER run Python (or pytest, or anything that touches JAX/CUDA) on the login node.** Every Python invocation — even a one-line import smoke test — must go through `srun --jobid=…` against an active allocation. Login-node compute is shared and the user has explicitly forbidden it.
-
-**Always export `PYTHONPATH=$(pwd):$PYTHONPATH` (assuming CWD is `/pscratch/sd/c/carag/ABCMB-k`) inside the srun shell.** The shared `actdr6` env has the sibling `/pscratch/sd/c/carag/ABCMB/` checkout editable-installed; without the override, `import abcmb` resolves to that checkout, not this one — your edits to `abcmb/*.py` in this directory will appear to do nothing.
-
-**Use both allowed allocations when you can.** NERSC permits **up to two concurrent interactive allocations** for this account; if you have two independent jobs to run (e.g., baseline + spike benchmarks), allocate two nodes and run them in parallel instead of serializing. Don't leave the second slot idle to be polite — wall-clock is the cost. Always `scancel` allocations when done so they don't sit idle.
-
-Non-interactive pattern that works inside Claude Code's per-call fresh shells:
-
-```bash
-# allocate (returns immediately with a JOBID line on stderr/stdout):
-salloc --no-shell --nodes=1 --qos=interactive --time=02:00:00 \
-       --constraint=gpu --gpus=1 --account=m3166_g
-# capture the JOBID once (e.g., echo > bench/.jobid), then for each run:
-srun --jobid=$(cat bench/.jobid) --ntasks=1 --cpus-per-task=32 \
-     --gpus-per-task=1 bash -c \
-     'module load conda && conda activate actdr6 && python <script>'
-# free the node when done:
-scancel $(cat bench/.jobid) && rm bench/.jobid
-```
-
-For parallel runs use distinct JOBID files (`bench/.jobid_a`, `bench/.jobid_b`, etc.).
-
-## Current task
-
-Major refactor of ABCMB.  The goal is to output **per k mode** to take better advantage of GPU parallelization.  Right now each power spectrum calculation is limited by the worst k to solve, and we're already vmapping to get just that far.  Instead, we'd like to refactor so I start with e.g. a grid of parameters and then compute just one k mode for all of those parameters at once.  I repeat for each k mode, and then at the end collapse back into a power spectrum to use to evaluate a likelihood in a frequentist-style analysis.
-
-### Status & where to resume (updated 2026-06-25)
-
-The per-k batched engine and the parameter-estimation tool built on it are delivered
-and live on `main`. Orientation: `scan/TOOL_PLAN.md` (the plan; Workstreams A-D done)
-→ `CHANGELOG.txt` (top entries, full detail) → `scan/HANDOFF.md` (background).
-
-What exists and works:
-- **Batched engine** — `Model.call_batched(params_list, shard=)` runs the whole
-  pipeline params-axis-batched and B-axis-sharded across GPUs (`abcmb/main.py`).
-- **Frequentist profile tool** — `scan/profile_prod_ad.py`, config-driven
-  (`scan/configs/*.py`): a lockstep BFGS over all POIs × grid points, with
-  finite-difference-on-batch or staged-AD gradients (`scan/batched_grad.py`), a
-  sigma1-stability early-stop, and a post-loop AD ‖g‖ convergence certificate.
-  Likelihoods: plik-lite (`scan/plik_lite.py`), full Planck plik via clipy with an
-  inner SPG nuisance profile (`scan/plik_full.py`), and real low-ell TT/EE
-  (`scan/lowl_like.py`). Results are combined by `scan/collect_profiles.py`.
-- **SMC posterior** — `scan/smc.py` (plik-lite, delivered) and `scan/smc_plikfull.py`
-  (full plik, fast/slow Gibbs marginalising the 21 nuisances): hand-rolled tempered
-  SMC around `call_batched`, giving the posterior and the evidence.
-- **Wilks / coverage validator (Workstream E)** — `scan/wilks.py` (+ `wilks_collect.py`,
-  `wilks.slurm`): Gaussian plik-lite mocks + a mockable Gaussian τ prior, re-fit on the
-  batch axis with a shared-Jacobian Gauss-Newton, test statistic `t = chi2_cond(POI=truth)
-  − chi2_global` checked against χ²₁ (coverage). BUILT + machinery validated; two fit bugs
-  fixed; one accuracy fix (anchor the GN Jacobian at the warm-start reference, `WK_JAC_REF=
-  warmstart`) is **pending a GPU cert check** before the production run. See the top
-  `CHANGELOG.txt` entry — "NEXT SESSION" has the exact validate-then-launch steps.
-- **Delivered headline**: the 6-POI ΛCDM profile vs plik-lite(+lowTT/EE) completed in
-  2h58m on 6 nodes; minima within +0.60σ of Planck 2018 and |0.33σ| of the SMC
-  posterior (`scan/results/profiles_summary_mn6.{npz,png}`). Full-plik and ΛCDM+Neff
-  profiles and SMC runs followed — see `CHANGELOG.txt`.
-
-Engine defaults worth knowing (`abcmb/model_specs.py`): the save grid is
-visibility-driven with `n_lna_PE=300` (revert with `n_lna_PE=500,
-lna_grid_mode="uniform"`); `k_chunk=100`; production `rtol_large_k_PE=1e-5`. The
-per-device GPU peak scales with B_local = B/n_dev, so to fit a larger batch, shard
-over more GPUs or lower B.
+- If you change the background, perturbations, recombination or spectrum, run the accuracy test and report the max relative error on TT/EE/Pk (threshold 1%), plus the snapshot test.
+- New species: subclass `Fluid` like `species.MasslessNeutrino` / `species.DarkEnergy` and pass it via `user_species`, not the LCDM default list.
+- Log substantive work in `CHANGELOG.txt` (reverse chronological, terse); keep `scan/README.md` current.
 
 **USER CONSTRAINTS (hard — honor these):** stay near permille (no tol-loosening /
 float32 / fp32-bf16 storage — all measured and rejected); no TCA / diffrax
@@ -198,9 +54,29 @@ regime-switching; no SLURM job arrays (Perlmutter is touchy; ≤2 queued jobs ge
 priority); k_chunk stays 100 (smaller is slower, no memory benefit); do not lower
 l_max for massive neutrinos.
 
-A `bench/` directory of perf archaeology and one-off validation scripts was removed in
-the 2026-06-25 cleanup; the conclusions are in `CHANGELOG.txt`, and the engine's
-correctness contract is `pytests/` (accuracy vs CLASS + snapshots).
+## GPU access (do not wait for the user)
+
+Request your own NERSC allocations when ABCMB code needs to run (account `m5403_g` for GPU, `m5403` for CPU).
+
+**NEVER run Python (or pytest, or anything that touches JAX/CUDA) on the login node.** Every Python invocation, even a one-line import, goes through `srun --jobid=...` against an active allocation.
+
+**Always export `PYTHONPATH=$(pwd):$PYTHONPATH` (CWD `/pscratch/sd/c/carag/ABCMB-k`) inside the srun shell.** The shared `actdr6` env has the sibling `/pscratch/sd/c/carag/ABCMB/` checkout editable-installed; without the override `import abcmb` resolves to that checkout and your edits here appear to do nothing. A script's own directory comes first on `sys.path`, so a script placed in another checkout's root imports that checkout's `abcmb` whatever `PYTHONPATH` says; when in doubt print `abcmb.__file__`.
+
+Up to two interactive allocations at a time are allowed: use both for independent runs, and `scancel` them when done. Non-interactive pattern for per-call fresh shells (`logs/` is git-ignored):
+
+```bash
+# allocate (returns immediately; note the JOBID it prints):
+salloc --no-shell --nodes=1 --qos=interactive --time=02:00:00 \
+       --constraint=gpu --gpus=1 --account=m5403_g
+# capture the JOBID once (e.g. echo <id> > logs/.jobid), then for each run:
+srun --jobid=$(cat logs/.jobid) --ntasks=1 --cpus-per-task=32 \
+     --gpus-per-task=1 bash -c \
+     'module load conda && conda activate actdr6 && export PYTHONPATH=$(pwd):$PYTHONPATH && python <script>'
+# free the node when done:
+scancel $(cat logs/.jobid) && rm logs/.jobid
+```
+
+For parallel runs use distinct JOBID files (`logs/.jobid_a`, `logs/.jobid_b`). CPU-only work (the toy tests, LINX checks): the same with `--constraint=cpu --account=m5403` and no GPU flags.
 
 ## Special instructions
 

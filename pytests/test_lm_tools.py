@@ -135,7 +135,7 @@ def test_union_regions_and_multimodality():
     assert len(reg) == 1 and np.isnan(reg[0][0]) and np.isnan(reg[0][1])
     reg = union_regions(xs, ys, 1e3, bound=(-3.0, None))
     assert reg[0][0] == -3.0 and np.isnan(reg[0][1])
-    # a threshold that varies along x (the boundary-aware t~ thresholds) is accepted
+    # a threshold that varies along x is accepted (the driver itself passes a scalar)
     assert len(union_regions(xs, ys, np.full_like(xs, 1.0))) == 2
     # the points of a bimodal profile vs a unimodal one with scatter on a flat bottom
     xg = np.linspace(-2, 2, 21)

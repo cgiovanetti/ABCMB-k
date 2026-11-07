@@ -1,32 +1,29 @@
 """lowl_like.py — JAX, autodiff-differentiable Planck 2018 low-ell likelihoods.
 
 Two pieces, both faithful re-implementations of cobaya's native (clik-free) low-ell
-likelihoods, re-arranged so they are pure-JAX, vmap/jacfwd-able, and consume the
-same padded D_ell[0..lmax] (muK^2) arrays that scan/plik_lite.py already produces
-from ABCMB output:
+likelihoods, re-arranged so they are pure-JAX, vmap/jacfwd-able, and consume padded
+D_ell[0..lmax] (muK^2) arrays (cl_to_Dl turns ABCMB output into these):
 
   * LowLEE  -- SRoll2 / SimAll low-ell EE (ell=2..29). cobaya stores a per-multipole
     log-prob table probEE[3000, 28]: row j is the log-likelihood at
     D_ell^EE = j * 1e-4 muK^2.  cobaya's native code does a floor lookup
     (`(D/step).astype(int)`) -> piecewise-constant, not differentiable.  We
     cubic-interpolate each column (the table step is 1e-4 muK^2, so the interpolant
-    is faithful) -> smooth, C1, AD-able.  This replaces the circular N(0.0544,0.0073)
-    tau prior: tau is now constrained by fitting the actual low-ell EE data.
+    is faithful) -> smooth, C1, AD-able.
 
   * LowLTT  -- Commander Gibbs low-ell TT (ell=2..29), Gaussianized via the public
     "cl2x" change-of-variable: per multipole a cubic spline x(C_ell) maps the cl to
     a Gaussian variable; logL = sum log(dx/dC) [Jacobian] - 0.5 (x-mu)^T Cinv (x-mu).
-    Adds the ell=2..29 temperature the plik-lite-only run dropped.
 
-The cubic-spline derivatives (interpax approx_df, a tridiagonal solve per column)
+The spline derivatives (interpax method='cubic': a local C1 spline from averaged secants,
+not the C2 spline cobaya uses for TT; on LowLEE's uniform grid it is the central difference)
 are precomputed at __init__ and passed to interp1d(..., fx=...) at call time, so
 the traced graph only evaluates -- the 56 coefficient solves never enter the
 jacfwd/vmap graph (otherwise the AD compile blows up to >10 min).
 
 Both return a chi^2 contribution = -2 ln L (up to an additive constant that cancels
-in any Delta-chi^2 profile), and both match the cobaya native formula.  calib
-(= A_planck) enters as D_ell -> D_ell/calib^2 as in cobaya; calibration is
-negligible vs low-ell uncertainty so default calib=1.
+in any Delta-chi^2 profile), and both match the cobaya native formula with the
+calibration A_planck = 1 (negligible against the low-ell uncertainty).
 """
 import os
 import numpy as np
@@ -37,8 +34,21 @@ from interpax import interp1d, Interpolator1D
 _DATA = "/pscratch/sd/c/carag/Neal_ACTDR6/cobaya_packages/data"
 
 
+def cl_to_Dl(Cl, l_arr, lmax=2508, T_CMB_uK=2.7255e6):
+    """ABCMB raw C_l on the integer grid l_arr -> zero-padded D_l[0..lmax] in muK^2. Works batched
+    (leading axes of Cl; l_arr shared, shape (n_ell,))."""
+    l_arr = jnp.asarray(l_arr)
+    fac = l_arr * (l_arr + 1.0) / (2.0 * jnp.pi) * (T_CMB_uK ** 2)
+    Dl_sparse = Cl * fac                                   # (..., n_ell)
+    keep = l_arr <= lmax
+    idx = jnp.where(keep, l_arr, 0)
+    zeros = jnp.zeros(Cl.shape[:-1] + (lmax + 1,), dtype=Dl_sparse.dtype)
+    contrib = jnp.where(keep, Dl_sparse, 0.0)
+    return zeros.at[..., idx].add(contrib)
+
+
 def _cubic_fx(x, f):
-    """precompute interpax cubic spline derivative coeffs (the tridiag solve)."""
+    """precompute interpax local-cubic (C1, averaged-secant) derivative coefficients."""
     return Interpolator1D(jnp.asarray(x), jnp.asarray(f), method="cubic").derivs["fx"]
 
 
@@ -58,11 +68,10 @@ class LowLEE:
         self._fx = _cubic_fx(self._Dgrid, self._prob)             # (nsteps, nell) precomputed
         self._Dmax = float((self.nsteps - 2) * step)
 
-    def chi2(self, Dl_padded, calib=1.0):
+    def chi2(self, Dl_padded):
         """Dl_padded: (..., lmax_pad+1) padded D_ell^EE in muK^2.  Returns (...,)
         chi^2 = -2 sum_ell lnP_ell(D_ell). Batched over leading axes."""
-        D = Dl_padded[..., self.lmin:self.lmax + 1] / (calib ** 2)
-        D = jnp.clip(D, 0.0, self._Dmax)
+        D = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1], 0.0, self._Dmax)
         def _col(xq_c, f_c, fx_c):
             return interp1d(xq_c, self._Dgrid, f_c, method="cubic", fx=fx_c, extrap=True)
         lnP = jax.vmap(_col, in_axes=(-1, -1, -1), out_axes=-1)(D, self._prob, self._fx)
@@ -124,14 +133,7 @@ class LowLTT:
         gauss = jnp.einsum("...i,ij,...j->...", delta, self._covinv, delta)
         return gauss - jac
 
-    def chi2(self, Dl_padded, calib=1.0):
+    def chi2(self, Dl_padded):
         """Dl_padded: (..., lmax_pad+1) padded D_ell^TT muK^2.  Returns (...,) chi^2."""
-        theory = Dl_padded[..., self.lmin:self.lmax + 1] / (calib ** 2)
-        theory = jnp.clip(theory, self._lo_j, self._hi_j)
+        theory = jnp.clip(Dl_padded[..., self.lmin:self.lmax + 1], self._lo_j, self._hi_j)
         return self._neglogl_raw(theory) - self._offset
-
-
-if __name__ == "__main__":
-    ee = LowLEE(); tt = LowLTT()
-    print(f"LowLEE: table {ee.nsteps}x{ee.nell}, Dmax={ee._Dmax:.4f} muK^2")
-    print(f"LowLTT: nl={tt.nl}, offset={tt._offset:.4f}")

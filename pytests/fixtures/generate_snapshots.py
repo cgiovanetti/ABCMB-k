@@ -1,15 +1,6 @@
-"""
-Generate the Phase C snapshot fixture file.
-
-Runs current ABCMB Model on each scenario in scenarios.SCENARIOS, captures
-(ClTT, ClTE, ClEE, Pk) plus the l and k axes, and writes a single
-pytests/fixtures/snapshots.npz. This is the parity oracle for everything
-after Phase C — the refactored code must reproduce these arrays to ~1e-12.
-
-Run on GPU (recommended) or CPU (slow but works):
-    module load conda && conda activate actdr6 && \\
-        python -u pytests/fixtures/generate_snapshots.py
-"""
+"""Write pytests/fixtures/snapshots.npz (ClTT/ClTE/ClEE/Pk, l, k per scenario) for test_snapshots.py.
+Run on GPU from the repo root:
+    PYTHONPATH=$(pwd) python -u pytests/fixtures/generate_snapshots.py [scenario ...]"""
 
 import os
 import sys

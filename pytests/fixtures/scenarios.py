@@ -1,21 +1,5 @@
-"""
-Scenario definitions for Phase C snapshot fixtures.
-
-Each scenario is a (specs, user_species_callable, params) triple that produces
-one Model run. The set is designed to cover every branch in
-abcmb.main.add_derived_parameters and abcmb.main.Model construction that the
-upcoming refactor must preserve under batching:
-
-  - lcdm_tau          : default reion parameterization (input_tau_reion=True)
-  - lcdm_z            : alternate reion parameterization (input_tau_reion=False)
-  - lcdm_massive_nu   : one species.MassiveNeutrino in user_species
-  - bbn_table         : bbn_type="table" branch (PArthENoPE interp)
-  - bbn_linx          : bbn_type="linx" branch (slowest; can be skipped)
-
-`user_species` is a callable returning a tuple, because importing
-abcmb.species at scenario definition time would force JAX startup. The
-generator imports + calls it.
-"""
+"""Snapshot scenarios: (specs, user_species, params) callables, one Model run each, covering the
+reion (tau / z), massive-nu and BBN (table / linx) branches. Callables so importing this skips JAX."""
 
 # kept small for fast generation; we just need branch coverage.
 ELLMAX = 800

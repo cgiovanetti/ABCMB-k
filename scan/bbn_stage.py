@@ -1,48 +1,15 @@
 """bbn_stage.py — batched LINX BBN for the profile driver.
 
-The engine's own bbn_type="linx" path runs LINX (background thermodynamics + the nuclear network) inside
-add_derived_parameters, one cosmology at a time on the CPU, and the driver's gradient block would then push
-every (row x direction) tangent through it. Here the driver does the BBN step itself for all rows of a call at
-once: (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq) -> (YHe, Neff, T_nu_massless, Y_p(BBN), 1e5 D/H), the
-three quantities the engine's LINX branch sets plus the two BBN observables, vmapped + jitted on one host CPU
-device in chunks of B_CHUNK cosmologies, plus their 5 x n_in Jacobian by forward-mode AD. The engine then runs
-with bbn_type="" (user-supplied YHe / Neff / T_nu_massless) and the driver's _phys_to_derived injects
-y + J (theta - theta_row), whose jvp is the exact tangent by the chain rule; with the BBN likelihood on
-(config bbn_like) the driver adds the Y_p and D/H terms and profiles tau_n_fac and the rate shifts q (one per
-reaction, in sigmas of LINX's log-normal rate uncertainties) as parameters of every row.
-
-One device: a vmap over 64 cosmologies runs in ~23 s warm on a Perlmutter CPU node (XLA threads the batched
-linear algebra); splitting the batch over 16 host devices is slower (every device's program competes for the
-same cores, 31 s, plus one compile per device), a sharded Mesh turns the ODE loops' batch-wide stop test into
-a cross-device all-reduce per step that times out, and pmap trips lineax's linear_solve primitive
-(ravel_vector "pytree does not match out_structure", lineax 0.0.x / jax 0.8.1). Solver settings: the
-constants below (the network 100x tighter than the engine's; see SMOOTHNESS).
-
-The Jacobian is one batched two-jvp program (values_and_jac) since the vendored LINX hands the network a
-dense fixed-size grid (below): on the old step grid the vmapped jvp through the implicit (Kvaerno) network
-solve raised for any batch of more than one lane (scan/.mm/linxdev/batched_jvp_matrix.log) and the
-Jacobians had to run one cosmology at a time, nearly serially (~6 s per row). Note EQX_ON_ERROR=nan (the
-driver sets it before importing equinox, so a failed solve is a NaN rather than an abort): equinox reduces
-the error predicate over the batch, so one failing lane nan-s its whole chunk; values_and_jac recomputes
-such lanes alone. The per-cosmology jvp is never jax.jacfwd: its vmap over the two tangent directions pushes
-an identically zero tangent through the background solve on the omega_b lane and ends in a NaN on some
-Delta_Neff_init values (scan/.mm/linx_nan_scan.log); _one_vj does two single jvps instead.
-
-SMOOTHNESS (2026-10-22). With LINX as published, YHe is rough in Delta_Neff_init at 1.5e-5 over +-0.3 sigma
-(1e-3..1e-2 in chi2 with dchi2/dYHe ~ 100-1000) and biased low by 8.5e-5; in the first _v4linx run that
-rejected LM steps once the predicted drop reached ~1e-2 (7-16 stalled rows per rank at ||g|| 0.15-0.4, none
-in _v3 with fixed YHe) and the 6 h job timed out. Not a tolerance: the network's rtol does not touch it and
-the background only matches at rtol 1e-10 at 6x the time. It is the background's output GRID: its ~300
-adaptive steps, on which the network interpolated a(t) and T(t) linearly in t, and which move with
-Delta_Neff_init. Fixed inside the vendored LINX (abcmb/linx/background.py: SaveAt(dense=True) and n_out
-log-spaced times read from the dense interpolant; abundances.py: log-log interpolation): roughness 5e-8,
-YHe 0.244238 = the converged value, no change in cost, fewer network steps. A stage-side cubic re-grid of
-the raw steps did the same from 2026-10-22 morning until this. What is left is the background's own global
-error in T_nu / T_g (7e-6 in Neff, ~1e-4 in chi2). scan/.mm/linx_roughness.log, linx_bg_roughness.log,
-linxdev/val12_pinned.log.
-
-Delta_Neff_init is LINX's Delta Neff at the START of BBN (inert radiation at T_start): the cosmology's Neff is
-~ 3.044 + 0.262 * Delta_Neff_init and is read back from the background solution, never computed from the input.
+LinxStage maps (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq) -> (YHe, Neff, T_nu_massless, Y_p(BBN), 1e5 D/H)
+for all rows of a driver call: one LINX program vmapped on one host CPU device, in chunks of B_CHUNK (more
+host devices are slower, a sharded Mesh times out on the ODE loops' batch-wide stop test, pmap trips lineax).
+The engine then runs with bbn_type="" and the driver injects y + J (theta - theta_row). The 5 x n_in Jacobian
+is a batched two-jvp program (_one_vj), never jax.jacfwd over all inputs (a zero background tangent goes NaN).
+The vendored LINX reads its background off a dense log-spaced grid with log-log interpolation: on the adaptive
+step grid YHe was rough in Delta_Neff_init (~1.5e-5) and the batched jvp through the network raised. lineax
+solves are made non-throwing below. Delta_Neff_init is Delta Neff at the START of BBN: Neff ~ 3.044 + 0.262
+Delta_Neff_init, always read back from the background solution. Measurements: CHANGELOG.txt 2026-10-20..23
+(full text at tag pre-trim-2026-11-06).
 """
 import numpy as np
 import jax
@@ -64,8 +31,8 @@ jax.config.update("jax_enable_x64", True)
 # inside the TANGENT ("A linear solver received non-finite input"), and in EQX_ON_ERROR=nan mode nan-s
 # the whole batch. It is lane- and compilation-dependent (any batch of ~64 cosmologies hits it, so did
 # jax.jacfwd and, occasionally, single lanes). Non-throwing solves process-wide: the garbage tangent of a
-# rejected stage is masked by the rejection exactly as its primal is (scan/.mm/linxdev/nothrow_test.log:
-# batched = per-lane Jacobians to 1e-4). ABCMB's own implicit solves are covered by the same rule.
+# rejected stage is masked by the rejection exactly as its primal is (batched = per-lane Jacobians to
+# 1e-4). ABCMB's own implicit solves are covered by the same rule.
 _lx_linear_solve = lx.linear_solve
 
 
@@ -78,16 +45,13 @@ lx.linear_solve = _linear_solve_nothrow
 
 B_CHUNK = 64            # cosmologies per vmapped values call (bounds memory and the union-of-steps of a vmapped
 B_PAD = 16              # solve); chunks are padded to a multiple of B_PAD so only 4 batch shapes ever compile
-JAC_DEVICES = 4         # host devices the per-cosmology Jacobian programs are spread over. Each device compiles
-                        # its own copy (~2 min, and the persistent cache cannot store them: host callbacks), so
-                        # more devices buy concurrency at a fixed cost: for ~10 gradient calls of 64 rows at ~4 s
-                        # per lane, 4 devices minimise compile + run time (~20 min total; 16 devices ~35 min)
-BG_RTOL, BG_ATOL = 1e-8, 1e-10   # the background: the engine's defaults (tighter buys nothing now: SMOOTHNESS)
+JAC_DEVICES = 4         # host devices for the per-lane Jacobian fallback (values_and_jac). Each compiles its own
+                        # copy (~2 min, not persistently cacheable), so more devices only pay off for many lanes
+BG_RTOL, BG_ATOL = 1e-8, 1e-10   # the background: the engine's defaults (tighter buys nothing on the dense grid)
 BG_MAX_STEPS = 512
 BG_N_OUT = 4096                  # the background's dense-interpolant output grid (abcmb/linx/background.py n_out)
 AB_RTOL, AB_ATOL = 1e-8, 1e-11   # the network: 100x tighter than the engine's 1e-6 / 1e-9 for +12% time; YHe
-AB_MAX_STEPS = 16384             # roughness along omega_b 7.8e-7 -> 3.4e-8; ~5000 steps at 1e-8 (65536 is the
-                                 # budget the step counts were measured with; scan/.mm/linxdev/steps_dev.log)
+AB_MAX_STEPS = 16384             # roughness along omega_b 7.8e-7 -> 3.4e-8; ~5000 steps at 1e-8
 
 
 OUT_NAMES = ("YHe", "Neff", "T_nu_massless", "YHe_BBN", "DH")   # the stage's outputs: the engine's three
@@ -103,7 +67,6 @@ class LinxStage:
     passes 1 and 0."""
 
     def __init__(self, reaction_net="key_PRIMAT_2023"):
-        self.reaction_net = reaction_net
         self.bg = BackgroundModel()
         self.ab = AbundanceModel(NuclearRates(nuclear_net=reaction_net))
         self.nq = len(self.ab.nuclear_net.reactions)
@@ -113,7 +76,6 @@ class LinxStage:
         self.cpus = jax.devices("cpu")
         self.dev = self.cpus[0]
         self._v = eqx.filter_jit(jax.vmap(self._one_x))   # values()
-        self._v1 = eqx.filter_jit(self._one_x)             # per cosmology, unbatched: the check scripts
         self._vj = eqx.filter_jit(jax.vmap(self._one_vj))  # values_and_jac(): the batched Jacobian
         self._vj1 = eqx.filter_jit(self._one_vj)           # per cosmology: the fallback for lanes that fail batched
         self.n_fallback = 0                                # lanes recomputed one at a time so far (trace line)
@@ -150,7 +112,7 @@ class LinxStage:
         """value (5,) and Jacobian (5, n_in). The Delta_Neff_init column goes through the background's jvp
         and the network; every other input enters the network only, so those columns come from forward-mode
         over the network alone with the background held (jax.jacfwd there is fine: the zero-tangent background
-        solve that made jacfwd over ALL inputs go NaN, scan/.mm/linx_nan_scan.log, never happens)."""
+        solve that made jacfwd over ALL inputs go NaN never happens)."""
         eta = x[0] * self._ETA
         bg_out, bg_dot = jax.jvp(self._background, (x[1],), (jnp.ones_like(x[1]),))
         y, y_dn = jax.jvp(lambda b: self._rest(b, eta, x[2], x[3:]), (bg_out,), (bg_dot,))

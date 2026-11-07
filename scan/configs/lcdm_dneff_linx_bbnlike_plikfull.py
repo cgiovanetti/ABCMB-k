@@ -1,19 +1,13 @@
-"""lcdm_dneff_linx_bbnlike_plikfull.py — LCDM + Neff with LINX and the BBN LIKELIHOOD, full plik.
+"""lcdm_dneff_linx_bbnlike_plikfull.py — LCDM + Delta_Neff_init with LINX and the BBN LIKELIHOOD, full plik.
 
-lcdm_dneff_linx_plikfull.py (YHe / Neff / T_nu from LINX per row, POI Delta_Neff_init) plus the primordial
-abundance measurements as data: Gaussian terms on LINX's Y_p(BBN) = 4 Y_He4 and 1e5 D/H, with LINX's BBN
-nuisances profiled with everything else -- tau_n_fac (prior N(1, 0.000682), i.e. 0.6 s on 879.4 s) and one
-N(0, 1) log-normal rate shift per reaction of the network (q0 .. q11; the driver appends them to "order" and
-prints which reaction each scales). Network key_recommended = PRIMAT 2023 with the Chen et al. 2025
-n(p,g)d rate (arXiv:2509.11743) and updated d(p,g)3He / d+d rates. Data as in
-bbn-on-cmb-bao-tension/CMB_BBN_Neff.py: Y_p 0.2458 +/- 0.0013 (Aver 2026), D/H 2.527 +/- 0.030 (Cooke 2018);
-the LBT value (Hsyu+ 2020, 0.2436 +/- 0.0040) is the alternative for "Yp".
-
-cen / grid_sig: the joint fit of THIS likelihood (the PA_MLE_PREPASS=1 prepass of job 60327767, 2026-10-26: chi2
-2763.226, 10 LM iterations from the _v4linx best fit) and its Fisher profile sigmas, so the production run
-starts warm on the joint best fit with the prepass off. The D/H term moved Delta_Neff_init -0.742 -> -0.236
-(Neff 2.85 -> 2.98) and the d(p,g)3He / d(d,n) / d(d,p) rate shifts to -0.5..-0.7 sigma; the BBN nuisances'
-warm values are given too (the driver appends them to "order" and takes cen from here when present).
+lcdm_dneff_linx_plikfull.py plus the primordial abundances as data: Gaussian terms on LINX's Y_p(BBN) =
+4 Y_He4 and 1e5 D/H, with LINX's nuisances profiled -- tau_n_fac (prior N(1, 0.000682), i.e. 0.6 s on 879.4 s)
+and one N(0, 1) log-normal rate shift per reaction (q0 .. q11; the driver appends them to "order" and prints
+which reaction each scales). Network key_recommended = PRIMAT 2023 with the Chen et al. 2025 n(p,g)d rate
+(arXiv:2509.11743) and updated d(p,g)3He / d+d rates. Data: Y_p 0.2458 +/- 0.0013 (Aver 2026), D/H 2.527 +/-
+0.030 (Cooke 2018); the LBT value (Hsyu+ 2020, 0.2436 +/- 0.0040) is the alternative for "Yp".
+cen (BBN nuisances included) / grid_sig: the PA_MLE_PREPASS=1 joint fit of this likelihood and its Fisher
+sigmas (job 60327767). Launcher: scan/profile_prod_linx_bbnlike.slurm.
 """
 from abcmb import species
 
@@ -35,7 +29,6 @@ CONFIG = {
         "h": 0.00822, "omega_b": 0.000153, "omega_cdm": 0.00167,
         "n_s": 0.00551, "ln10As": 0.0134, "tau_reion": 0.00606, "Delta_Neff_init": 0.309,
     },
-    "pois": ["h", "omega_b", "omega_cdm", "n_s", "ln10As", "tau_reion", "Delta_Neff_init"],
     "fixed": {
         "TCMB0": 2.34865418e-4,
         "N_nu_massive": 1, "T_nu_massive": 0.71611, "m_nu_massive": 0.06,
@@ -49,6 +42,6 @@ CONFIG = {
     "high_ell": "plik_full",
     "use_lowtt": True,
     "use_lowee": True,
-    "npts": 25,
-    "nsig": 3.0,
+    "npts": 21,
+    "nsig": 2.5,
 }

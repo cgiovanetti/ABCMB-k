@@ -1,10 +1,9 @@
 """plik_full.py — FULL Planck 2018 high-ell plik (TTTEEE) for the frequentist tool.
 
-Replaces plik-lite. The full plik carries 47 foreground/calibration nuisances that
-do not enter the theory code, so they are handled entirely inside the likelihood
-(profiled at fixed ABCMB theory Cls), never by re-running ABCMB. That is the whole
-point of this module: one ABCMB call per cosmology, then a cheap inner optimisation
-over the nuisances.
+The full plik carries 47 foreground/calibration nuisances that do not enter the theory
+code, so they are handled entirely inside the likelihood (profiled at fixed ABCMB theory
+Cls), never by re-running ABCMB: one ABCMB call per cosmology, then a cheap inner
+optimisation over the nuisances.
 
 Backend: `clipy` (pure-Python, JAX-native clik reimplementation; same code modern
 cobaya calls). Its constructor self-tests against the clik-stored check_value
@@ -23,10 +22,10 @@ planck_2018_highl_plik yamls):
   FIXED (26) at Planck values: cib_index=-1.3, galf_{TE,EE}_index=-2.4, galf_EE_A_*,
     A_cnoise_e2e_*_EE=1, A_sbpx_*_{TT,EE}=1, A_pol=1, calib_{100,143,217}P.
 
-Profiling (not marginalising) the nuisances is the frequentist-consistent choice and
-matches what the tool already does for the single plik-lite A_planck. The profiled
-chi^2 is differentiable in the theory Cls by the envelope theorem (hold the nuisance
-optimum fixed via stop_gradient), so the existing staged-AD gradient path is intact.
+Profiling (not marginalising) the nuisances is the frequentist-consistent choice. profile() is
+never differentiated: the driver takes the optimum nu* from profile_batched and builds the
+gradient and Gauss-Newton matrix from residual() at fixed nu* (envelope theorem, Schur
+complement over the free nuisances).
 
 Conventions:
   * cls block to clipy: shape (6, lmax+1) = [TT, EE, BB, TE, TB, EB], muK^2 C_l
@@ -106,19 +105,15 @@ class PlikFull:
     """
 
     def __init__(self, clik_file=CLIK_FILE_DEFAULT, T_CMB_uK=T_CMB_UK_DEFAULT,
-                 maxit=30, maxls=10, c1=1e-4, eigfloor=0.1):
+                 maxls=10, c1=1e-4):
         import sys
         if CLIPY_PATH not in sys.path:
             sys.path.insert(0, CLIPY_PATH)
         import clipy
-        self.clipy = clipy
         self.lkl = clipy.clik(clik_file)            # prints its self-test on construct
         self.T_CMB_uK = float(T_CMB_uK)
-        self.maxit = int(maxit)                     # projected-Newton outer iterations
         self.maxls = int(maxls)                     # Armijo backtracks per iteration
         self.c1 = float(c1)                         # Armijo sufficient-decrease constant
-        self.eigfloor = float(eigfloor)             # PD floor for the preconditioner eigenvalues
-        self.Hprec = None                           # fixed PD Hessian (set by compute/set_preconditioner)
 
         lmaxs = np.asarray(self.lkl.lmax)
         self.lmax = int(np.max(lmaxs))              # 2508
@@ -215,15 +210,7 @@ class PlikFull:
         s = jnp.zeros(len(FLOAT_NAMES)).at[self.i_ksz].set(1.0).at[self.i_asz].set(1.6)
         return 2.0 * jnp.diag(self.prior_invvar) + 2.0 * jnp.outer(s, s) / self.sz_sig ** 2
 
-    # ------------------------------------------------------------------
-    # inner nuisance profile (scaled coords): gradient-only nonmonotone Spectral
-    # Projected Gradient (SPG). See profile() for the full rationale. Short version:
-    # clipy's 2nd derivative is unreliable (1st-order AD is exact, verified) so every
-    # Hessian-Newton variant failed; two nuisances rail at uniform-prior bounds (the
-    # joint-SZ prior) so the method must be genuinely bound-constrained. SPG (projected
-    # BB steps + GLL nonmonotone Armijo) is gradient-only and projects onto the box, and
-    # matches scipy L-BFGS-B to <0.02 chi^2 by maxit=800 (offline tuning, B=8 spread).
-    # ------------------------------------------------------------------
+    # ---- inner nuisance profile (scaled coords): nonmonotone SPG, see profile() ----
     @property
     def zlo(self):
         return (self.lo - self.start) / self.scale
@@ -237,50 +224,31 @@ class PlikFull:
         curvature ~ O(1) since scale = the per-param prior/ref sigma)."""
         return self.penalized_chi2(cls2d, self.start + self.scale * z)
 
-    # no-ops retained for driver call-site stability (no external preconditioner needed)
-    def compute_preconditioner(self, cls2d_ref=None, eigfloor=None):
-        return None
-
-    def set_preconditioner(self, Hprec=None):
-        return None
-
-    def profile(self, cls2d, z0=None, maxit=None, maxls=None, eigfloor=None):
+    def profile(self, cls2d, maxls=None):
         """Inner-profile the 21 floated nuisances at fixed theory cls2d (6,lmax+1).
         Gradient-only Spectral Projected Gradient (SPG: projected gradient with
-        Barzilai-Borwein steps + Armijo) in the bounded scaled-z box. Returns
-        (chi2_prof, nu_star_phys).
+        Barzilai-Borwein steps + GLL nonmonotone Armijo) in the bounded scaled-z box,
+        from z = 0. Returns (chi2_prof, nu_star_phys).
 
-        Why this design: (1) clipy's 2nd derivative is unreliable (verified: 1st-order AD
-        is exact, every Hessian-Newton variant failed, gap 2.8-14 chi^2), so the method
-        must be gradient-only -- BB steps build curvature from consecutive gradients.
-        (2) Two nuisances rail at their uniform-prior bounds (xi_sz_cib->1, ksz_norm->0,
-        joint-SZ prior); where the data wants them far outside the box the boundary
-        gradient is steep, so a sigmoid-reparam unconstrained BFGS stalls short of the
-        bound and loses several chi^2, while projection sets them exactly at the
-        bound. (3) Scaled-z (scale = prior sigma) is well-conditioned, so SPG converges
-        like scipy L-BFGS-B (~100 iters). Smooth in cls -> clean envelope-theorem
-        gradient. Differentiable in cls2d only through the final eval; callers wanting the
-        gradient stop_gradient the cls input to the SPG, then differentiate penalized_chi2
-        at the fixed optimum. eigfloor accepted but unused."""
-        # default 3000: at 800 the profile is not converged near the best fit, and the
-        # profiled chi2 moves by 0.03-0.08 under 1e-12 Cl noise; at 3000 it is smooth to
-        # ~1e-9 for +11% on the value path (CHANGELOG 2026-10-01). PLF_MAXIT overrides.
-        if maxit is None:
-            maxit = int(os.environ.get("PLF_MAXIT", "3000"))
+        Gradient-only because clipy's 2nd derivative is unreliable (1st-order AD is exact;
+        every Hessian-Newton variant failed). Bound-constrained by projection because two
+        nuisances rail at their uniform-prior bounds (xi_sz_cib -> 1, ksz_norm -> 0), where
+        a reparametrised unconstrained BFGS stalls short of the bound. Not meant to be
+        differentiated (AD would run through every SPG iteration): use residual() at the
+        returned optimum."""
+        # 3000: at 800 the profiled chi2 moves by 0.03-0.08 under 1e-12 Cl noise (3000: ~1e-9)
+        maxit = int(os.environ.get("PLF_MAXIT", "3000"))
         maxls = self.maxls if maxls is None else maxls
         zlo, zhi, c1 = self.zlo, self.zhi, self.c1
         f = lambda zz: self._obj_z(cls2d, zz)
         gradf = jax.grad(f)
-        z = jnp.zeros(len(FLOAT_NAMES)) if z0 is None else jnp.asarray(z0)
+        z = jnp.zeros(len(FLOAT_NAMES))
         g = gradf(z)
         AMIN, AMAX = 1e-10, 1e10
         MNM = 10                                                 # GLL nonmonotone window
 
-        # Robustness (scan/.diag_nan/FINDINGS.md): the textbook sy<=0 -> AMAX rule plus an
-        # unconditional move after a failed line search sent calib_217T < 0 -> NaN, and the
-        # same junk moves made the profiled chi2 chaotic in the Cls. So: a failed line search
-        # (or a non-finite trial/gradient) leaves z where it is and shrinks alpha; sy<=0 keeps
-        # alpha; and the best iterate, not the last (GLL is nonmonotone), is returned.
+        # NaN-robust: a failed line search or non-finite trial/gradient leaves z put and shrinks
+        # alpha (an unconditional move once sent calib_217T < 0); sy<=0 keeps alpha; best iterate wins.
         def outer(carry, _):
             z, g, alpha, fbuf, zb, fb = carry
             fref = jnp.max(fbuf)                                 # GLL: compare vs max of last MNM f's
@@ -316,9 +284,7 @@ class PlikFull:
         nu_star = self.start + self.scale * z_star
         return self.penalized_chi2(cls2d, nu_star), nu_star
 
-    def profile_batched(self, cls2d_B, z0_B=None):
+    def profile_batched(self, cls2d_B):
         """vmap of profile over a leading batch axis. cls2d_B: (B,6,lmax+1).
         Returns (chi2_B (B,), nu_star_B (B,21))."""
-        if z0_B is None:
-            return jax.vmap(lambda c: self.profile(c))(cls2d_B)
-        return jax.vmap(lambda c, z: self.profile(c, z0=z))(cls2d_B, z0_B)
+        return jax.vmap(lambda c: self.profile(c))(cls2d_B)

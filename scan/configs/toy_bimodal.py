@@ -53,11 +53,8 @@ CONFIG = {
     "order": ["a", "b", "c"],
     "cen": {"a": 0.0, "b": BETA, "c": C0},
     "sig": {"a": 1.0, "b": 1.0, "c": 0.3},
-    "grid_sig": {"a": 1.0, "b": 1.0, "c": 0.3},
-    "pois": ["a"],
     "fixed": {},
     "user_species": None,
-    "use_lowtt": False, "use_lowee": False, "use_plik": False,
-    "npts": 11, "nsig": 3.0,
+    "nsig": 3.0,
     "toy": {"chi2": chi2},
 }
