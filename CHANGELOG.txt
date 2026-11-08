@@ -6,6 +6,18 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-07 — BBN nuisance priors at fixed means; _v6bbn submitted
+-----------------------------------------------------------------
+- _bbn_chi2 / _gn_block centre the tau_n_fac and q0..q11 penalties on BBN_PRIOR_MEAN (1 and 0), no longer
+  on the config cen, which is now only the warm start. _v5bbn had them at its cen (the prepass fit: q1 / q2 /
+  q3 = -0.679 / -0.726 / -0.521) and is biased.
+- At the config centre: chi2 2761.951 before (prior part 0) -> 2763.197 (recomb grid; 2763.191 frozen): the
+  prior part is the expected +1.2625, the rest moves -0.016 (-0.023) from the exact-g' numerics. The prepass
+  (job 60327767, priors at 0) had 2763.226 there.
+- Shakeout on a 40 GB A100 node at the production block shape (POI h, 21 rows = 8 per GPU, 19 directions,
+  launcher environment): no OOM, peak 33.2 GB; 20/21 rows converged after one iteration, min chi2 2763.15.
+- Launcher default tag _v6bbn; job 60988361 (4 nodes, 12 h, regular).
+
 2026-11-07 — "recomb" lna grid replaces the frozen grid; exact visibility derivative (branch lna-grid)
 -----------------------------------------------------------------------------------------------------
 - Why Cl(theta) was jagged in the node positions (the reason for the frozen grid): the Doppler source's
@@ -81,13 +93,6 @@ The repository is cut down for a human review; abcmb/ is unchanged.
 
 Known issues
 ------------
-- BBN nuisance priors: scan/profile_prod_ad.py builds the Gaussian penalties on tau_n_fac and q0..q11 as
-  ((theta - CENTER) / SIGMA)^2 (_bbn_chi2, _gn_block), and the _v5bbn config's cen holds the prepass values
-  of those nuisances (q1 / q2 / q3 = -0.679 / -0.726 / -0.521), so the priors sit there instead of at 1 and 0.
-  The _v5bbn numbers below are biased. Fix (fixed means 1 for tau_n_fac, 0 for q*) pending approval, then a
-  _v5bbn rerun from a fresh start.
-- pytests/fixtures/snapshots.npz is from 253bedb (2026-10-19), before the vendored-LINX changes (87399d2,
-  27d5397, a3db3bf). Regenerate it on GPU; a test_snapshots failure until then is not new.
 - Text older than 2026-10-22, including the tag's CHANGELOG, gives Neff ~ 3.045 + 0.272 Delta_Neff_init.
   The 0.272 came from a normalization bug in LINX's background (fixed here in 87399d2); this checkout gives
   Neff = 3.0444 + 0.2619 Delta_Neff_init. LINX main and ../ABCMB still give 0.272.

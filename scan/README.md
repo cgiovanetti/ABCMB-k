@@ -10,8 +10,9 @@ Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT a
 | `_v4linx` | CMB, YHe/Neff/T_nu from LINX, POI Delta_Neff_init | 2.850 [2.659, 3.050] [2.484, 3.250] | 2759.10 | job 60057736, 5h24m on 4 nodes |
 | `_v5bbn` | `_v4linx` + Y_p (Aver 2026) + D/H (Cooke 2018) | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
 
-All seven POIs per run, numbers and convergence counts: `CHANGELOG.txt`. `_v5bbn` is biased by the
-nuisance-prior bug under "Open items" and is to be rerun.
+All seven POIs per run, numbers and convergence counts: `CHANGELOG.txt`. `_v5bbn` is biased: its BBN
+nuisance priors sat at the config cen (the prepass fit) instead of 1 and 0. `_v6bbn` (same config, priors at
+their fixed means, recomb lna grid) replaces it.
 
 ## Files
 
@@ -27,7 +28,7 @@ nuisance-prior bug under "Open items" and is to be rerun.
 | `configs/lcdm_dneff_linx_plikfull.py` | `_v4linx` config |
 | `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v5bbn` config (cen/grid_sig = the joint fit of job 60327767) |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
-| `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v5bbn` launchers |
+| `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
 | `results/` | outputs (git-ignored) |
 
 ## Reproducing
@@ -35,7 +36,7 @@ nuisance-prior bug under "Open items" and is to be rerun.
 ```bash
 cd /pscratch/sd/c/carag/ABCMB-k
 sbatch scan/profile_prod_linx_dneff.slurm      # _v4linx -> logs/abcmb_pf_linx_<jobid>.out
-sbatch scan/profile_prod_linx_bbnlike.slurm    # _v5bbn  -> logs/abcmb_pf_bbn_<jobid>.out
+sbatch scan/profile_prod_linx_bbnlike.slurm    # _v6bbn  -> logs/abcmb_pf_bbn_<jobid>.out
 ```
 
 Each launcher takes 4 GPU nodes on `regular` (account m5403_g), one task per node with `PA_POI_SLICE=1`
@@ -125,7 +126,7 @@ recentred on the joint fit with Fisher profile sigmas sqrt(2 (H^-1)_ii) sig, cla
 [1/`PA_MLE_SIG_CLIP`, `PA_MLE_SIG_CLIP`] x sig, and rows warm-start there. Use it when the config centre
 is not the best fit, then copy the result into the config and run production with it off (as for `_v5bbn`).
 Copying a fit into cen must not change the likelihood: re-evaluate chi2 at the previous best fit first (the
-BBN nuisances' cen is currently also their prior mean, see Open items).
+BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 
 ## Environment knobs
 
@@ -184,9 +185,6 @@ BBN nuisances' cen is currently also their prior mean, see Open items).
 
 ## Open items
 
-- BBN nuisance priors: `_bbn_chi2` and `_gn_block` take (theta - cen) / sig, and the `_v5bbn` config's cen
-  holds the prepass values of tau_n_fac and q0..q11, so the priors are centred there instead of on 1 and 0.
-  Fix (fixed means) pending approval, then rerun `_v5bbn` under a NEW `PA_TAG` (resume refuses a finished npz from a different setup).
 - The 17 `_v5bbn` stalls are harmless: Newton decrements 2e-6 .. 2.3e-4, below `PA_DTOL`.
 - Wilks / coverage calibration deferred (only needed if a second mode appears within a few Delta chi2).
 - 2D joint profiles for a few parameter pairs.

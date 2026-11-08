@@ -12,8 +12,9 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=cgiovanetti@lbl.gov
 #
-# _v5bbn: the _v4linx profile plus the BBN likelihood (Y_p, D/H) with LINX's nuisances (tau_n_fac, 12 rate
-# shifts) profiled, POIs dealt out over 4 nodes by PA_POI_SLICE. Resumable: resubmit the same command.
+# _v6bbn: the _v4linx profile plus the BBN likelihood (Y_p, D/H) with LINX's nuisances (tau_n_fac, 12 rate
+# shifts) profiled, POIs dealt out over 4 nodes by PA_POI_SLICE. (_v5bbn had the nuisance priors centred on the
+# config cen and the frozen lna grid.) Resumable: resubmit the same command.
 
 module load conda
 conda activate actdr6
@@ -29,7 +30,7 @@ mkdir -p logs scan/results
 
 export PA_CONFIG=scan/configs/lcdm_dneff_linx_bbnlike_plikfull.py   # grid: npts / nsig from the config
 export PA_MLE_PREPASS=${PA_MLE_PREPASS:-0}   # the config cen is the prepass result already
-export PA_TAG=${PA_TAG:-_v5bbn}
+export PA_TAG=${PA_TAG:-_v6bbn}
 export PA_POIS=${PA_POIS:-h,omega_cdm,Delta_Neff_init,n_s,omega_b,ln10As,tau_reion}
 export PA_POI_SLICE=1
 export PA_XBOX=10                  # wide grids push h/Neff valley shifts past 5 scaling-sigma

@@ -175,9 +175,11 @@ if BBN_LIKE is not None:
     from scan.bbn_stage import LinxStage as _LinxStage
     _nq = _LinxStage.n_reactions(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
     BBN_NUIS = ["tau_n_fac"] + [f"q{i}" for i in range(_nq)]
+    # prior means of the nuisance penalties: fixed, NOT the config cen (which is only a warm start)
+    BBN_PRIOR_MEAN = {k: (1.0 if k == "tau_n_fac" else 0.0) for k in BBN_NUIS}
     CFG["order"] = list(CFG["order"]) + BBN_NUIS
     for _k in BBN_NUIS:                               # a config may give warm-start values (cen) for them
-        CFG["cen"].setdefault(_k, 1.0 if _k == "tau_n_fac" else 0.0)
+        CFG["cen"].setdefault(_k, BBN_PRIOR_MEAN[_k])
         CFG["sig"][_k] = float(BBN_LIKE["tau_n_sig"]) if _k == "tau_n_fac" else 1.0
         if "grid_sig" in CFG:
             CFG["grid_sig"][_k] = CFG["sig"][_k]
@@ -398,7 +400,7 @@ def _bbn_values(thetas):
 
 def _bbn_chi2(thetas, ys):
     """(N,) the BBN likelihood of the rows: the Gaussian terms on Y_p(BBN) and D/H plus the Gaussian priors on
-    the BBN nuisances (x^2 in their scaled coordinates); 0 without bbn_like."""
+    the BBN nuisances, ((theta - prior mean) / prior sigma)^2; 0 without bbn_like."""
     if BBN_LIKE is None:
         return 0.0
     th = np.asarray(thetas, float).reshape(-1, D)
@@ -406,7 +408,7 @@ def _bbn_chi2(thetas, ys):
          + ((ys[:, 4] - BBN_LIKE["DH"][0]) / BBN_LIKE["DH"][1]) ** 2)
     for k in BBN_NUIS:
         i = ORDER.index(k)
-        c = c + ((th[:, i] - CENTER[i]) / SIGMA[i]) ** 2
+        c = c + ((th[:, i] - BBN_PRIOR_MEAN[k]) / SIGMA[i]) ** 2
     return c
 
 
@@ -626,7 +628,7 @@ def _gn_block(BASE, FREE, X):
                     Jr[0, j] = Js[b, 3, col_of[i]] * SIGMA[i] / sY
                     Jr[1, j] = Js[b, 4, col_of[i]] * SIGMA[i] / sDH
                 if ORDER[i] in BBN_NUIS:
-                    xj = (th_np[b, i] - CENTER[i]) / SIGMA[i]
+                    xj = (th_np[b, i] - BBN_PRIOR_MEAN[ORDER[i]]) / SIGMA[i]
                     g[b, j] += 2.0 * xj; H[b, j, j] += 2.0
             g[b] += 2.0 * Jr.T @ r; H[b] += 2.0 * Jr.T @ Jr
     return c, g, H
