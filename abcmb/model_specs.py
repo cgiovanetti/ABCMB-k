@@ -113,7 +113,10 @@ def load_specs(input_specs):
     # tracks every source feature (recomb + reion + new physics) per cosmology
     # with no recompile. "recomb_dense" is the legacy hand-placed Gaussian (not
     # physics-extensible). Any non-uniform mode requires the per-interval LoS
-    # trapezoid weights in spectrum.py (already grid-agnostic).
+    # trapezoid weights in spectrum.py (already grid-agnostic). "recomb" is a base grid fixed by
+    # physics constants with its recombination core moving with the cosmology's visibility mean
+    # (perturbations.recomb_grid_base; knobs lna_recomb_<name>, defaults RECOMB_GRID_DEFAULTS), with the
+    # map's exact Jacobian as line-of-sight weights.
     specs["lna_grid_mode"]    = input_specs.get("lna_grid_mode", "visibility")
     specs["lna_grid_n_dense"] = input_specs.get("lna_grid_n_dense", 4000)
     # "fixed" mode: the n_lna_PE nodes used for every cosmology (Model.freeze_lna_grid sets both).

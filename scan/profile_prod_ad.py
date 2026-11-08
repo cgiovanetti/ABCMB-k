@@ -214,7 +214,11 @@ DTOL = float(os.environ.get("PA_DTOL", "1e-3"))
 SIGTOL = float(os.environ.get("PA_SIGTOL", "1e-2"))
 SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
-TAG = os.environ.get("PA_TAG", "")
+# Save / LoS lna grid: "recomb" (nodes move smoothly with the cosmology's recombination, perturbations.py) or
+# "fixed" (the visibility grid frozen at the config centre: the setup of every result before 2026-11-07).
+LNA_GRID = os.environ.get("PA_LNA_GRID", "recomb")
+assert LNA_GRID in ("recomb", "fixed"), LNA_GRID
+TAG =os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
 VAL_CHUNK = int(os.environ.get("PA_VAL_CHUNK", "256"))      # max cosmologies per call_batched value call
 AD_BCHUNK = int(os.environ.get("PA_AD_BCHUNK", "64"))       # max rows per staged-AD call (16 per GPU ~ 9 GB)
@@ -299,7 +303,8 @@ if TOY is None:
     model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
                   output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
                   rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
-                  rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384)
+                  rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384,
+                  lna_grid_mode="recomb" if LNA_GRID == "recomb" else "visibility")
 else:
     lowee = lowtt = plf = _plf_prof_B = model = None
     _toy_f = TOY["chi2"]
@@ -405,9 +410,9 @@ def _bbn_chi2(thetas, ys):
     return c
 
 
-# Save / LoS grid built once at the config centre and used for every row (Model.freeze_lna_grid): a grid
-# rebuilt per cosmology moves its nodes with theta and makes the per-ell AD tangents wrong.
-if TOY is None:
+# PA_LNA_GRID=fixed: the visibility grid built once at the config centre and used for every row
+# (Model.freeze_lna_grid); rebuilt per cosmology, its nodes would move jaggedly with theta.
+if TOY is None and LNA_GRID == "fixed":
     model = model.freeze_lna_grid(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
     print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "
           f"{float(model.specs['lna_grid_nodes'][0]):.6f}", flush=True)
@@ -850,6 +855,8 @@ def _run_signature():
     h = hashlib.sha1(open(CONFIG_ABS, "rb").read())
     knobs = dict(LMAX=LMAX, RTOL=RTOL, NPTS=NPTS, NSIG=NSIG, XBOX=XBOX, GTOL=GTOL, DTOL=DTOL, MS_K=MS_K,
                  MS_NPTS=MS_NPTS, MS_SPREAD=MS_SPREAD, PLF_MAXIT=os.environ.get("PLF_MAXIT", "3000"))
+    if LNA_GRID != "fixed":                 # results made before PA_LNA_GRID keep their signature
+        knobs["LNA_GRID"] = LNA_GRID
     h.update(repr(sorted(knobs.items())).encode())
     return h.hexdigest()[:16]
 

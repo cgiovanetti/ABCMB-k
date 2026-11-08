@@ -10,6 +10,7 @@ from interpax import CubicSpline
 from scipy.special import spherical_jn
 
 from . import ABCMBTools as tools
+from . import perturbations
 from . import constants as cnst
 from . import halofit
 
@@ -223,6 +224,7 @@ class SpectrumSolver(eqx.Module):
     use_bessel_tables : bool = eqx.field(static=True)
     l_top : int = eqx.field(static=True)
     n_k_cmb : int = eqx.field(static=True)
+    lna_grid_cfg : tuple = eqx.field(static=True)   # (n, recomb cfg) for a "recomb" lna grid, else None
 
     nonlinear : str = eqx.field(static=True)
     halofit_prescription : str = eqx.field(static=True)
@@ -255,7 +257,8 @@ class SpectrumSolver(eqx.Module):
                  halofit_prescription="takahashi2012",
                  halofit_k_min=1.e-4,
                  halofit_k_max=1.e3,
-                 halofit_k_per_decade=80):
+                 halofit_k_per_decade=80,
+                 lna_grid_cfg=None):
         """
         Initialize CMB spectrum solver.
 
@@ -306,6 +309,7 @@ class SpectrumSolver(eqx.Module):
         self.lensing = lensing
         self.use_bessel_tables = bool(use_bessel_tables)
         self.n_k_cmb = int(n_k_cmb)
+        self.lna_grid_cfg = lna_grid_cfg
 
         if nonlinear in (None, False, ""):
             self.nonlinear = ""
@@ -1006,7 +1010,7 @@ class SpectrumSolver(eqx.Module):
             tau0 = BG.tau0
             tau = BG.tau(lna_axis)
             g   = vmap(BG.visibility,in_axes=[0,None])(lna_axis, params)
-            g_prime = vmap(grad(BG.visibility,argnums=0),in_axes=[0,None])(lna_axis, params) # Derivative of g w.r.t. lna
+            g_prime = vmap(BG.visibility_prime,in_axes=[0,None])(lna_axis, params) # Derivative of g w.r.t. lna
             aH  = BG.aH(lna_axis, params)
             expmkappa = vmap(BG.expmkappa)(lna_axis)
             aH_dot = BG.aH_prime(lna_axis, params) * aH # Derivative of aH w.r.t. conformal time tau.
@@ -1043,7 +1047,9 @@ class SpectrumSolver(eqx.Module):
             alpha         = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha[:-1, :])
             alpha_prime   = vmap(interp_column, in_axes=0, out_axes=0)(PT.metric_alpha_prime[:-1, :])
 
-            # Source terms
+            # Source terms. The Doppler term stays in its d/dtau form (on j_l): integrated by parts onto
+            # j_l' it carries an explicit k against the j_l' oscillation, and the post-recombination tail
+            # of g (theta_b/k^2 + alpha) then needs far more lna nodes to cancel (percent-level TT at 300).
             sourceT0 = self.scale_sw * g * (delta_g/4. + aH*alpha_prime) \
                     + self.scale_isw * (
                         g * (eta - aH*alpha_prime - 2.*aH*alpha) \
@@ -1064,8 +1070,11 @@ class SpectrumSolver(eqx.Module):
             # Trapezoid weights for the LoS integral over the (possibly non-uniform) lna grid. lna_axis
             # drops the lna=0 endpoint, whose integrand is identically zero (phi_l(chi=0)=0). On an evenly
             # spaced PT.lna this is exactly the uniform rule (full delta_lna, half on the first point).
-            dl = jnp.diff(PT.lna)                                       # (N-1,)
-            w_full = 0.5 * (jnp.pad(dl, (0, 1)) + jnp.pad(dl, (1, 0)))  # (N,)
+            if self.lna_grid_cfg is not None:                           # "recomb" grid: exact map Jacobian
+                w_full = perturbations.recomb_grid_weights(PT.lna, *self.lna_grid_cfg)
+            else:
+                dl = jnp.diff(PT.lna)                                       # (N-1,)
+                w_full = 0.5 * (jnp.pad(dl, (0, 1)) + jnp.pad(dl, (1, 0)))  # (N,)
             weights = w_full[:-1].astype(sourceT0.dtype)                # (N-1,) -> lna_axis
 
             return (sourceT0, sourceT1, sourceT2, sourceE), aH_1d, tau, weights, tau0

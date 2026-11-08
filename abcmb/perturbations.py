@@ -20,6 +20,84 @@ cosmic time using background cosmology and species interactions.
 """
 
 
+# ---- "recomb" grid: a base grid fixed by physics constants whose recombination core moves with the
+# cosmology's own visibility (no reference cosmology, smooth in the parameters) ----
+RECOMB_GRID_DEFAULTS = (
+    ("start", -7.7),     # fixed first node (z ~ 2200): the line-of-sight sources vanish there for any LCDM-like model
+    ("mu0", -6.99),      # lna of the base grid's density peak (hydrogen recombination, z ~ 1090)
+    ("width", 0.31),     # Gaussian width of the dense band (the acoustic neighbourhood of last scattering)
+    ("floor", 0.4),      # density floor relative to the band's peak (late-time ISW, reionization)
+    ("core_lo", 0.3),    # the window b = 1 on [mu0 - core_lo, mu0 + core_hi] (nodes there move rigidly
+    ("core_hi", 0.6),    # with the visibility), cosine tapers to 0 at start and at mu0 + taper_hi (nodes
+    ("taper_hi", 1.6),   # outside stay fixed)
+    ("mu_lo", -7.7),     # fixed lattice over which the visibility mean mu is taken
+    ("mu_hi", -5.9),
+)
+
+
+def recomb_grid_cfg(specs):
+    """the "recomb" grid constants (specs keys lna_recomb_<name>) as a hashable tuple."""
+    return tuple(float(specs.get(f"lna_recomb_{k}", v)) for k, v in RECOMB_GRID_DEFAULTS)
+
+
+def _recomb_taper(t, start, mu0, core_lo, core_hi, taper_hi):
+    """window b(t) and b'(t): 0 at start, cosine up to 1 at mu0 - core_lo, 1 to mu0 + core_hi, cosine
+    down to 0 at mu0 + taper_hi, 0 after (numpy)."""
+    a0, a1, a2, a3 = start, mu0 - core_lo, mu0 + core_hi, mu0 + taper_hi
+    b = np.zeros_like(t); bp = np.zeros_like(t)
+    m = (t > a0) & (t < a1)
+    b[m] = 0.5 * (1. - np.cos(np.pi * (t[m] - a0) / (a1 - a0)))
+    bp[m] = 0.5 * np.pi / (a1 - a0) * np.sin(np.pi * (t[m] - a0) / (a1 - a0))
+    b[(t >= a1) & (t <= a2)] = 1.
+    m = (t > a2) & (t < a3)
+    b[m] = 0.5 * (1. + np.cos(np.pi * (t[m] - a2) / (a3 - a2)))
+    bp[m] = -0.5 * np.pi / (a3 - a2) * np.sin(np.pi * (t[m] - a2) / (a3 - a2))
+    return b, bp
+
+
+_RECOMB_BASE_CACHE = {}
+
+
+def recomb_grid_base(n, cfg):
+    """(t0, w0, b, bp, jc) of the "recomb" grid, numpy, cached: the base nodes t0 = inverse CDF of
+    rho0(t) = floor + exp(-(t - mu0)^2 / 2 width^2) on [start, 0] at n uniform levels; the mapped-trapezoid
+    weights w0 = ds M / rho0(t0) (halved at both ends: the trapezoid rule in the CDF coordinate, spectrally
+    accurate for an integrand that vanishes at both ends); the window b(t0) and its slope b'(t0); and the
+    index jc of a node inside the core (b = 1)."""
+    key = (int(n),) + tuple(cfg)
+    if key in _RECOMB_BASE_CACHE:
+        return _RECOMB_BASE_CACHE[key]
+    from scipy.special import erf
+    start, mu0, width, floor, core_lo, core_hi, taper_hi = cfg[:7]
+    r2 = np.sqrt(2.) * width
+    rho = lambda t: floor + np.exp(-0.5 * ((t - mu0) / width) ** 2)
+    cdf = lambda t: floor * (t - start) + width * np.sqrt(np.pi / 2.) * (erf((t - mu0) / r2) - erf((start - mu0) / r2))
+    M = cdf(0.)
+    s = np.linspace(0., 1., n)
+    lo, hi = np.full(n, start), np.zeros(n)
+    for _ in range(80):                                   # bisection to machine precision (cdf is increasing)
+        mid = 0.5 * (lo + hi)
+        below = cdf(mid) < s * M
+        lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
+    t0 = 0.5 * (lo + hi)
+    t0[0], t0[-1] = start, 0.
+    w0 = M / (n - 1) / rho(t0)
+    w0[0] *= 0.5; w0[-1] *= 0.5
+    b, bp = _recomb_taper(t0, start, mu0, core_lo, core_hi, taper_hi)
+    jc = int(np.argmin(np.abs(t0 - mu0)))
+    out = (t0, w0, b, bp, jc)
+    _RECOMB_BASE_CACHE[key] = out
+    return out
+
+
+def recomb_grid_weights(lna, n, cfg):
+    """line-of-sight quadrature weights of a "recomb" grid lna = t0 + dmu b(t0): the exact Jacobian
+    w0 (1 + dmu b'(t0)); dmu is read off a core node."""
+    t0, w0, b, bp, jc = recomb_grid_base(n, cfg)
+    dmu = lna[jc] - t0[jc]
+    return jnp.asarray(w0) * (1. + dmu * jnp.asarray(bp))
+
+
 def make_lna_grid(BG, params, n, specs):
     """Build the perturbation save / LoS-quadrature grid of ``n`` points from
     ``BG.lna_transfer_start`` to ``0`` (today).
@@ -39,6 +117,12 @@ def make_lna_grid(BG, params, n, specs):
         (and optionally ``lna_reion_center``). Kept for reference; not
         physics-extensible (a recomb-only bump starves reionization and biases
         EE). Prefer ``"visibility"``.
+      - ``"recomb"`` : a base grid fixed by physics constants (``recomb_grid_base``: dense band at
+        the hydrogen-recombination epoch over a floor, on a fixed range ``[start, 0]``), whose
+        recombination core is shifted by ``dmu = mu - mu0``, ``mu`` the cosmology's visibility mean on a
+        fixed lattice, through a smooth window ``b`` (nodes far from recombination never move). Nodes
+        are smooth in theta and depend on no reference cosmology; the line-of-sight weights are the
+        map's exact Jacobian (``recomb_grid_weights``).
       - ``"fixed"`` : the nodes ``specs["lna_grid_nodes"]`` (length ``n``), the same
         for every cosmology. Set by ``Model.freeze_lna_grid(params)``, which stores
         the grid another mode builds at ``params``. The nodes are then data that does
@@ -51,9 +135,9 @@ def make_lna_grid(BG, params, n, specs):
     Shape-controlling values (``n``, ``lna_grid_n_dense``, the mode/knobs) are
     static; ``BG``/``params`` are traced, so the grid auto-adapts per cosmology
     with no recompile when scanning parameters at fixed specs. Endpoints are
-    exactly ``lna_transfer_start`` and ``0``; the grid is strictly increasing.
-    A non-uniform grid must be paired with the per-interval ``jnp.diff`` trapezoid
-    weights in ``spectrum.py`` (already grid-agnostic).
+    ``lna_transfer_start`` (``"recomb"``: its fixed ``start``) and ``0``; the grid is
+    strictly increasing. ``spectrum.py`` integrates the line of sight with the
+    per-interval ``jnp.diff`` trapezoid weights, or the map's Jacobian for ``"recomb"``.
     """
     lna_start = BG.lna_transfer_start
     mode = specs.get("lna_grid_mode", "uniform")
@@ -64,6 +148,15 @@ def make_lna_grid(BG, params, n, specs):
 
     if mode == "uniform":
         return jnp.linspace(lna_start, 0., n)
+
+    if mode == "recomb":
+        cfg = recomb_grid_cfg(specs)
+        t0, w0, b, bp, jc = recomb_grid_base(n, cfg)
+        mu0, mu_lo, mu_hi = cfg[1], cfg[7], cfg[8]
+        u = jnp.linspace(mu_lo, mu_hi, 1800)                 # fixed lattice: mu is smooth in theta
+        gl = vmap(lambda l: BG.visibility(l, params) / BG.aH(l, params))(u)   # visibility per unit lna
+        mu = jnp.sum(u * gl) / jnp.sum(gl)
+        return jnp.asarray(t0) + (mu - mu0) * jnp.asarray(b)
 
     n_dense = specs.get("lna_grid_n_dense", 4000)
     u = jnp.linspace(lna_start, 0., n_dense)

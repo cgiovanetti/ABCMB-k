@@ -179,6 +179,8 @@ class Model(eqx.Module):
             halofit_k_min=float(k_axis_perturbations[0]),
             halofit_k_max=float(k_axis_perturbations[-1]),
             halofit_k_per_decade=specs["halofit_k_per_decade"],
+            lna_grid_cfg=((specs["n_lna_PE"], perturbations.recomb_grid_cfg(specs))
+                          if specs["lna_grid_mode"] == "recomb" else None),
         )
 
         # Initialize recombination model.

@@ -307,6 +307,25 @@ def fast_interp(x, xp_min, xp_max, fp):
     w_lower = 1.0 - w_upper
     return w_lower * fp[i_lower] + w_upper * fp[i_upper]
 
+def fast_interp_hermite(x, xp_min, xp_max, fp, dfp):
+    """
+    Cubic Hermite interpolation on a uniform grid from the values ``fp`` and the
+    exact derivatives ``dfp`` (df/dx) at the nodes: C^1 and fourth-order accurate,
+    with no finite-difference slopes. Query points outside the grid are clamped
+    to its ends, as in fast_interp.
+    """
+    eps = 1.e-6
+    n = fp.shape[-1]
+    h = (xp_max - xp_min) / (n - 1)
+    i = jnp.clip((x - xp_min) / h, eps, n - 1.0 - eps)
+    i0 = jnp.floor(i).astype(jnp.int32)
+    i1 = jnp.minimum(i0 + 1, n - 1)
+    t = i - i0
+    t2 = t * t
+    t3 = t2 * t
+    return ((2. * t3 - 3. * t2 + 1.) * fp[i0] + (t3 - 2. * t2 + t) * h * dfp[i0]
+            + (3. * t2 - 2. * t3) * fp[i1] + (t3 - t2) * h * dfp[i1])
+
 def fast_interp_cubic(x, xp_min, xp_max, fp):
     """
     Cubic version of fast_interp to avoid gradient discontinuities at 

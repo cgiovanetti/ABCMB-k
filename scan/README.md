@@ -89,9 +89,13 @@ failures. Every acceptance test uses `call_batched` values; there are no finite 
 Gauss-Newton / Fisher scoring with LM damping follows MSTW 2008 (arXiv:0901.0002), Bond, Jaffe & Knox
 (astro-ph/9708203) and im3shape (arXiv:1302.0183).
 
-Smooth theory: the driver freezes the save / line-of-sight lna grid at the config centre
-(`Model.freeze_lna_grid`); a grid that moves with theta makes the Cls jagged and the per-ell AD tangents
-wrong. The engine side carries C^1 x_e and j_l lookups, Tsit5 optical depth, Debye j_l through u_3 at
+Smooth theory: the save / line-of-sight lna grid is `lna_grid_mode="recomb"` (perturbations.py): a base grid
+fixed by physics constants whose recombination core moves with the cosmology's visibility mean, with the
+map's Jacobian as LoS weights, so the nodes are smooth in theta and tied to no reference cosmology.
+`PA_LNA_GRID=fixed` restores the visibility grid frozen at the config centre (`Model.freeze_lna_grid`). The
+visibility-adaptive grid rebuilt per row moved its nodes jaggedly. The engine side carries Hermite tau and
+exp(-kappa) lookups with exact slopes, the visibility derivative from d exp(-kappa)/d lna = exp(-kappa)/(tau_c aH),
+C^1 x_e and j_l lookups, Tsit5 optical depth, Debye j_l through u_3 at
 large x and `dtmax_PE` 0.03 for k < 0.06, so AD tangents agree with finite differences.
 
 LINX (config `bbn: linx`): the POI is Delta_Neff_init, Delta Neff at the START of BBN (Neff ~ 3.044 +
@@ -139,6 +143,7 @@ BBN nuisances' cen is currently also their prior mean, see Open items).
 | `PA_DTOL` | 1e-3 | noise floor for stalled rows; 0 = off |
 | `PA_SIGTOL` / `PA_SIGTOL_PATIENCE` | 1e-2 / 3 | interval-stability stop; `PA_SIGTOL<=0` = off |
 | `PA_RTOL` | 1e-5 | `rtol_large_k_PE` (atol = 1e-2 rtol) |
+| `PA_LNA_GRID` | recomb | save / LoS grid: `recomb` (moves smoothly with recombination) or `fixed` (frozen at the config centre; every result before 2026-11-07) |
 | `PA_RESUME` | 1 | skip done POIs, resume from the checkpoints |
 | `PA_VAL_CHUNK` | 256 | max cosmologies per value call |
 | `PA_AD_BCHUNK` | 64 | max rows per gradient block (`_v5bbn` launcher: 32) |

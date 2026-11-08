@@ -17,7 +17,7 @@ pip install -r pytest_requirements.txt    # test deps (adds classy)
 
 - `pytests/accuracy_test.py`: the 1%-vs-CLASS gate and the contract for theory changes (needs `classy`). classy 3.3.4's default `delta_l_max=500` vs ABCMB's `l_max/2` fails TT by ~1.2% at l~2500; compare with CLASS given ABCMB's `delta_l_max`.
 - `pytests/test_snapshots.py`: parity against frozen output (`pytests/fixtures/snapshots.npz`) at `rtol=5e-5`, `atol=1e-18`, no classy. Run it on GPU (`JAX_PLATFORM_NAME=gpu` inside srun), the backend the snapshots were made on; regenerate with `python pytests/fixtures/generate_snapshots.py` after a deliberate change (the current file is stale, see `CHANGELOG.txt`).
-- `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_lm_tools.py` and `test_profile_toy.py` (the profile machinery on toys, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
+- `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_recomb_grid.py` (the "recomb" grid and its Jacobian weights, CPU); `pytests/test_lm_tools.py` and `test_profile_toy.py` (the profile machinery on toys, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
 
 CI forces CPU; `pytests/conftest.py` enables x64 and `jax_debug_nans`. Run long suites one file at a time. `time_tests.py` is a hand-run timing script. Pins that matter: `jax==0.8.1`, `equinox==0.13.2`, `optimistix==0.0.11` (`setup.cfg`).
 
@@ -37,10 +37,10 @@ JAX / eqx conventions:
 
 Batched pipeline: `Model.call_batched(params_list, shard=None, k_chunk_size=100)` returns a `BatchedOutput` (Cls, Pk, l, k, params):
 1. `add_derived_parameters` per cosmology in a Python loop (not vmappable).
-2. `_build_bgs_batched`: vmapped `BackgroundPreRecomb` (GPU), HyRex (CPU) and `get_BG` (GPU). `Background` stacks because `exp(-kappa)` is tabulated (`expmkappa_tab`, cubic interpolation so `grad(visibility)` stays C^1).
+2. `_build_bgs_batched`: vmapped `BackgroundPreRecomb` (GPU), HyRex (CPU) and `get_BG` (GPU). `Background` stacks because `exp(-kappa)` is tabulated (`expmkappa_tab` with its exact slope `dexpmkappa_tab`, Hermite lookup; the Doppler source takes `visibility_prime`, not `grad(visibility)`).
 3. `PE.full_evolution_batched`: k chunks of 100, `vmap(k_chunk) x vmap(B)` in `_evolve_chunk`, output table built per chunk.
 4. `SpectrumSolver.get_Cl_batched` / `Pk_lin_batched`: one `filter_jit` vmap over B.
-With more than one GPU (or `shard=True`) the inputs are B-sharded (`Mesh` + `NamedSharding`) **before** the setup stages, B padded to a multiple of the device count; sharding after the setup builds everything on device 0 and OOMs. Batched modes do not bit-match the single-call path (step-controller noise within rtol); compare Cls peak-normalized (~1e-6). Defaults: `n_lna_PE=300` visibility grid, `dtmax_PE=0.03` for k < 0.06, `rtol_large_k_PE=1e-4` (production profiles use 1e-5); GPU peak scales with B/n_dev.
+With more than one GPU (or `shard=True`) the inputs are B-sharded (`Mesh` + `NamedSharding`) **before** the setup stages, B padded to a multiple of the device count; sharding after the setup builds everything on device 0 and OOMs. Batched modes do not bit-match the single-call path (step-controller noise within rtol); compare Cls peak-normalized (~1e-6). Defaults: `n_lna_PE=300` visibility grid (`scan/` uses `lna_grid_mode="recomb"`, see `scan/README.md`), `dtmax_PE=0.03` for k < 0.06, `rtol_large_k_PE=1e-4` (production profiles use 1e-5); GPU peak scales with B/n_dev.
 
 ## When making changes
 

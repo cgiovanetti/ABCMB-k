@@ -62,6 +62,7 @@ class BackgroundPreRecomb(eqx.Module):
 
     lna_tau_tab = jnp.linspace(-33.0, 0.0, 10000) # Axis for tabulating conformal time.
     tau_tab : jnp.array # Tabulated conformal time. 
+    dtau_tab : jnp.array # dtau/dlna = 1/aH on lna_tau_tab (exact slopes for the Hermite lookup)
     tau0 : float # Conformal time today
 
     recomb_inputs : "RecombInputs"
@@ -90,6 +91,7 @@ class BackgroundPreRecomb(eqx.Module):
         self.species_list = species_list
 
         self.tau_tab = self._tabulate_conformal_time(params)
+        self.dtau_tab = vmap(lambda l: 1. / self.aH(l, params))(self.lna_tau_tab)
         self.tau0 = self.tau(0.)
 
         # Bundle the background quantities HyRex needs onto its sampling
@@ -430,7 +432,10 @@ class BackgroundPreRecomb(eqx.Module):
         radiation approximation, and starting diffrax integration at the
         early time with appropriate initial conditions.
         """
-        return tools.fast_interp(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1], self.tau_tab)
+        # Cubic Hermite with the exact slope 1/aH: C^1 in lna, so line-of-sight nodes that move with the
+        # cosmology see a smooth tau (a linear lookup has a kink at every table point).
+        return tools.fast_interp_hermite(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1], self.tau_tab,
+                                         self.dtau_tab)
 
     def nH(self, lna, params):
         """
@@ -579,6 +584,7 @@ class Background(BackgroundPreRecomb):
     Tm_tab     : "array_with_padding"
     lna_Tm_tab : "array_with_padding"
     expmkappa_tab : jnp.array  # exp(-kappa) tabulated on the shared lna_tau_tab axis
+    dexpmkappa_tab : jnp.array # its exact lna-derivative exp(-kappa) / (tau_c aH) on the same axis
     z_reion    : float
     tau_reion  : float
     lna_rec    : float
@@ -610,6 +616,7 @@ class Background(BackgroundPreRecomb):
         self.adjoint = pre_BG.adjoint
         self.species_list = pre_BG.species_list
         self.tau_tab = pre_BG.tau_tab
+        self.dtau_tab = pre_BG.dtau_tab
         self.tau0 = pre_BG.tau0
         self.recomb_inputs = pre_BG.recomb_inputs
 
@@ -649,6 +656,10 @@ class Background(BackgroundPreRecomb):
             l_in = jnp.clip(l, -10.0, 0.0)                       # ODE domain is [-10, 0]
             return jnp.where(l < -10.0, 0.0, jnp.exp(-_kappa_sol.evaluate(l_in)))
         self.expmkappa_tab = vmap(_expmkappa_on)(self.lna_tau_tab)
+        # dkappa/dlna = -1/(tau_c aH), the optical-depth ODE's own integrand; zero where exp(-kappa) is.
+        _l = jnp.maximum(self.lna_tau_tab, -10.0)
+        _dk = vmap(lambda l: 1. / (self.tau_c(l, params) * self.aH(l, params)))(_l)
+        self.dexpmkappa_tab = jnp.where(self.lna_tau_tab < -10.0, 0.0, self.expmkappa_tab * _dk)
 
         # Find approximate maximum of visibility function.
         lna_vals = jnp.linspace(-8.0, -4.0, 1500)  # Decoupling falls in here.
@@ -882,17 +893,14 @@ class Background(BackgroundPreRecomb):
         float
             exp(-(optical depth)) (units: dimensionless)
         """
-        # Cubic (C^1) interpolation: ClTE depends on grad(visibility) =
-        # d/dlna[exp(-kappa)/tau_c], so expmkappa must have a continuous
-        # derivative. Linear fast_interp gives a piecewise-constant grad that
-        # blows up ClTE (~1e-1 rel); interpax cubic keeps grad smooth. The
-        # 10000-pt lna_tau_tab makes the cubic essentially exact vs the old
-        # dense diffrax.Solution.evaluate.
+        # Cubic Hermite with the exact slope exp(-kappa)/(tau_c aH): C^1 and fourth-order. The former
+        # finite-difference-slope cubic (interpax 'cubic') left an error pattern with the table's
+        # period that moving line-of-sight nodes sampled as Cl ripples of ~1e-3 at low l.
         return jnp.where(
             lna < -10.,
             0.,
-            interp1d(lna, self.lna_tau_tab, self.expmkappa_tab,
-                     method="cubic", extrap=True)
+            tools.fast_interp_hermite(lna, self.lna_tau_tab[0], self.lna_tau_tab[-1],
+                                      self.expmkappa_tab, self.dexpmkappa_tab)
         )
 
     def visibility(self, lna, params):
@@ -920,6 +928,12 @@ class Background(BackgroundPreRecomb):
         Used in computing source functions for CMB anisotropies.
         """
         return self.expmkappa(lna)/self.tau_c(lna, params)
+
+    def visibility_prime(self, lna, params):
+        """d(visibility)/d(lna), with d exp(-kappa)/d lna = exp(-kappa)/(tau_c aH) exact rather than the
+        slope of the exp(-kappa) table (whose interpolation error made the Doppler source jagged in lna)."""
+        tc, dtc = jax.value_and_grad(self.tau_c, argnums=0)(lna, params)
+        return self.expmkappa(lna) / tc * (1. / (tc * self.aH(lna, params)) - dtc / tc)
 
     ###########################################
     ### tools for computing decoupling time ###

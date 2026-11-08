@@ -6,6 +6,34 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-07 — "recomb" lna grid replaces the frozen grid; exact visibility derivative (branch lna-grid)
+-----------------------------------------------------------------------------------------------------
+- Why Cl(theta) was jagged in the node positions (the reason for the frozen grid): the Doppler source's
+  g' = grad(visibility) went through the finite-difference-slope cubic of exp(-kappa), an error pattern with
+  the table's period. Shifting every node by delta at fixed cosmology: low-l TT ripple 1.3e-3 (8.5e-7 with
+  the Doppler term off).
+- abcmb/ (every grid mode): Hermite tau and exp(-kappa) lookups with exact slopes 1/aH and
+  exp(-kappa)/(tau_c aH); g' = Background.visibility_prime = exp(-kappa)/tau_c [1/(tau_c aH) - tau_c'/tau_c].
+  Ripple 1.3e-3 -> 3e-6 at low-l TT, 3e-8 at l > 500.
+- Rejected: the Doppler term integrated by parts onto j_l' (needs no g' or theta_b'; ripple 7e-9) is 2-6% off
+  CLASS in TT at 300 nodes: k g V j_l' in the post-recombination tail cancels only on a dense grid.
+- lna_grid_mode="recomb" (perturbations.py): a base grid from physics constants (floor + Gaussian at
+  mu0 = -6.99, width 0.31, on [-7.7, 0]) whose core shifts by mu - mu0 (mu = the visibility-per-lna mean on a
+  fixed lattice) through a cosine window; LoS weights are the map's exact Jacobian. Knobs lna_recomb_<name>.
+- Accuracy over a profile's range (P0, omega_b +-3.8e-4, Neff 2.6 / 3.5) vs a 2400-node uniform grid: recomb
+  TT 2.6e-4 (l < 500), 2e-5 (l > 500), TE/EE 1e-5 (l > 30); the frozen grid TT 2-4e-4, TE/EE 1-2e-4. Low-l
+  TE/EE 1.5e-3 on both (reionization, as on the visibility grid). Vs CLASS 3.3.4 with delta_l_max matched:
+  TT <= 8.8e-4 everywhere (main: 2.7e-3 at l < 30, the old 300-node low-l bias).
+- AD along omega_b / Neff over +-0.5 sigma (v - v0 - int AD): max|R| 3e-6 / 1.3e-6 at l < 30 TT, <= 9e-7
+  elsewhere; AD roughness 2% / 0.5% of the low-l TT slope per sigma, ~1e-4 at l >= 100. The frozen grid on
+  the same code: max|R| 4.4e-6 at l < 30 TT (the value floor is HyRex's, as before) but smoother tangents
+  (roughness 5.5e-9 vs 5.6e-6 at l < 30, 6e-8 vs 1.2e-6 at l 30-99): moving nodes see x_e' (a Catmull-Rom
+  table of HyRex output) through g'. Exact x_e' would need HyRex's own derivative; not done.
+- Cost: the same as the frozen grid (B = 8 on one A100, compiled: values 148.7 vs 148.2 s, staged gradient
+  with 2 directions 448 vs 442 s).
+- scan: PA_LNA_GRID=recomb is the default (fixed = every earlier result); recomb runs carry LNA_GRID in the
+  run signature. Snapshots regenerated; new CPU test pytests/test_recomb_grid.py.
+
 2026-11-07 — Audit fixes: resume signature, NaN guard, A_planck shared with low-ell, cobaya's TT spline
 ------------------------------------------------------------------------------------------------------
 - Every npz and checkpoint carries a run signature (config file bytes + LMAX, RTOL, NPTS, NSIG, XBOX, GTOL,
