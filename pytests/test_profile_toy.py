@@ -10,15 +10,16 @@ import pytest
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, ROOT)
 
-ENV = dict(PA_CONFIG=os.path.join(ROOT, "scan", "configs", "toy_bimodal.py"), PA_XBOX="10", PA_NPTS="21",
+ENV = dict(PA_CONFIG=os.path.join(ROOT, "scan", "configs", "toy_bimodal.py"), PA_XBOX="10", PA_NPTS="21", PA_MS_K="3",
            PA_MS_SPREAD="2.5", PA_TAG="_toy", PA_RESUME="0", PA_CPU_DEVICES="1", JAX_PLATFORM_NAME="cpu")
 
 
 @pytest.fixture(scope="module")
 def driver():
     os.environ.update(ENV)
+    import importlib
     import scan.profile_prod_ad as d
-    return d
+    return importlib.reload(d)                      # the driver reads its config at import
 
 
 def _run(d, outdir, **overrides):

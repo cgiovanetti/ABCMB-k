@@ -6,6 +6,30 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-09 — Bounds and one-sided intervals back (and extended); convergence is the stop
+---------------------------------------------------------------------------------------
+- Restored from the pre-trim driver (the review trim 9a2e1f6 cut them): config `bounds` (hard optimizer
+  limits, POI grids inside them) and the boundary-aware thresholds of Cowan, Cranmer, Gross & Vitells (t~,
+  the Feldman-Cousins ordering in the Gaussian limit), so an interval next to a bound is two-sided or a
+  one-sided limit as the data decide; threshold curves and bounds in the png.
+- New: config `box` (per-parameter optimizer box, scaled sigmas). A row on a box face converges when chi2 is
+  flat outward (slope < GTOL), and is held by the box (at_box, not converged) only while chi2 still falls;
+  before, any row at +-XBOX was unconverged, so an open nuisance direction (a decoupling mass) failed. Each
+  interval end is a crossing, the bound or open; kinds two-sided / upper / lower limit / unconstrained (npz
+  ends*, kind*, log). A POI grid crossing a bound is shifted onto it, width kept. pchip instead of the quartic
+  for a profile still falling at a non-bound grid end (the quartic invented a turn-over, 0.02 off on the toy).
+  compare_profile_runs.py draws bounds, skips the parabola for bounded / one-sided panels, and takes pinned
+  rows from the npz at_box.
+- Stop: lm_rows logs and returns why it ended (converged / sigtol / maxit; npz stop_reason). PA_SIGTOL
+  default 1e-2 -> 0: convergence is the stop. Interval stability dates from the BFGS era (06-23), when
+  gradients floored at |g| ~ 2 and rows never converged; every run since _v3 converged (_v6bbn: two ranks
+  stopped on stability with every row already converged, two on convergence, none at MAXIT). It stays as an
+  option for a likelihood too rough for rows to converge or stall.
+- Tests: pytests/test_profile_bounds.py on configs/toy_bounded.py against closed forms (upper limits 1.000 /
+  1.960 for a best fit on the bound, the shorter limit for one outside, lower limit / unconstrained for an
+  open POI, a flat vs a falling box face); CPU 17/17 in either file order. On the stored _v6bbn profiles the
+  new interval code reproduces every interval exactly, all two-sided.
+
 2026-11-09 — _v6bbn: _v5bbn rerun with the nuisance priors at 1 / 0 and the recomb lna grid
 -------------------------------------------------------------------------------------------
 Job 60988361 (11-08 09:11 to 14:07, 4h56m on 4 nodes, 12 h requested), code f3c4fc9, same config and launcher.

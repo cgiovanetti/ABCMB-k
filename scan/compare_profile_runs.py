@@ -32,8 +32,12 @@ SURF_ORDER = ["massive-nu", "linx", "linx-bbn-cen", "linx-bbn"]
 LINX_RUNS = {"_v4linx", "_v5bbn", "_v6bbn"}
 
 
+META = {}      # (tag, poi) -> (physical bound (lo, hi), 68% interval kind) from the driver's npz
+
+
 def load_rows(tags):
-    """(tag, poi, chi2, pinned, theta[7]) for every row of every selected run."""
+    """(tag, poi, chi2, pinned, theta[7]) for every row of every selected run; pinned = held by the optimizer
+    box (the npz at_box; older npz: a nuisance at the +-XBOX face). Fills META."""
     rows = []
     for tag in tags:
         cen, sig = RUNS[tag]
@@ -44,6 +48,8 @@ def load_rows(tags):
             if not os.path.exists(p):
                 continue
             d = np.load(p)
+            META[(tag, poi)] = (tuple(d["bound"]) if "bound" in d.files else (np.nan, np.nan),
+                                str(d["kind1"]) if "kind1" in d.files else "two-sided")
             names = ["Neff" if str(n) == "Delta_Neff_init" else str(n) for n in d["nuis"]]
             sel = [k for k, n in enumerate(names) if n in ORDER]      # the BBN nuisances (q*, tau_n_fac) are not plotted
             nuis = [ORDER.index(names[k]) for k in sel]
@@ -53,8 +59,9 @@ def load_rows(tags):
                 th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i][sel]
                 if tag in LINX_RUNS:
                     th[6] = d["derived_bbn"][i, 1]
-                box = XBOX.get(tag, 5.0)
-                rows.append((tag, poi, float(c), bool((np.abs(d["xstar"][i]) >= box - 1e-3).any()), th))
+                pinned = (bool(d["at_box"][i]) if "at_box" in d.files
+                          else bool((np.abs(d["xstar"][i]) >= XBOX.get(tag, 5.0) - 1e-3).any()))
+                rows.append((tag, poi, float(c), pinned, th))
     return rows
 
 
@@ -92,6 +99,16 @@ def main():
                     k = round(xi, 8); env[k] = min(env.get(k, np.inf), ci)
         if len(env) < 3:
             ax.set_title(f"{poi} (no envelope)"); continue
+        meta = [META[(t, poi)] for t in tags if (t, poi) in META]
+        for b in sorted({float(v) for bd, _ in meta for v in bd if np.isfinite(v)}):
+            ax.axvline(b, color="k", lw=1.0)
+        one_sided = [k for bd, k in meta if k != "two-sided" or np.isfinite(np.asarray(bd, float)).any()]
+        if one_sided:                                  # no parabola for a bounded or one-sided profile
+            ax.axhline(1, color="#999999", lw=0.8, ls=":")
+            ax.set_ylim(-0.2, 10); ax.set_title(f"{poi} ({', '.join(sorted(set(one_sided)))})")
+            ax.set_xlabel(poi); ax.grid(alpha=0.2, lw=0.6)
+            print(f"{poi:10s} {'bounded / one-sided: see the driver npz (sigma1, cl95, kind1)':>40s}")
+            continue
         ex = np.array(sorted(env)); ec = np.array([env[k] for k in ex])
         sel = ec - ec.min() < 8
         a2, a1, a0 = np.polyfit(ex[sel], ec[sel], 2)
@@ -107,8 +124,8 @@ def main():
     axes[0].legend(fontsize=8, loc="upper center")
     axes[-1].axis("off")
     axes[-1].text(0.0, 0.95, "LCDM+Neff full-plik profiles\n(ABCMB-k, l_max 2508)\n\n"
-                  "lines: per-run profile rows\n× : row with a nuisance pinned\n"
-                  "    at the ±5σ box (clipped at 9.6)\ndashed: parabola to the pointwise\n"
+                  "lines: per-run profile rows\n× : row held by the optimizer box\n"
+                  "    (clipped at 9.6)\ndashed: parabola to the pointwise\n"
                   "    lower envelope (newest Cl\n    surface selected)",
                   va="top", fontsize=9, family="monospace")
     fig.tight_layout()

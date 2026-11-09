@@ -29,6 +29,7 @@ their fixed means, recomb lna grid) replaces it.
 | `configs/lcdm_dneff_linx_plikfull.py` | `_v4linx` config |
 | `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v5bbn` config (cen/grid_sig = the joint fit of job 60327767) |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
+| `configs/toy_bounded.py` | toy objective for `pytests/test_profile_bounds.py` (bounds, one-sided limits, the box) |
 | `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
 | `results/` | outputs (git-ignored) |
 
@@ -63,7 +64,7 @@ CPU tests of the machinery (no ABCMB, seconds), on an allocation, never the logi
 salloc --no-shell --nodes=1 --qos=interactive --constraint=cpu --time=00:30:00 --account=m5403
 srun --jobid=<id> --ntasks=1 --cpus-per-task=16 bash -c 'module load conda && conda activate actdr6 &&
   cd /pscratch/sd/c/carag/ABCMB-k && export PYTHONPATH=$(pwd):$PYTHONPATH JAX_PLATFORM_NAME=cpu &&
-  python -m pytest -q pytests/test_lm_tools.py && python -m pytest -q pytests/test_profile_toy.py'
+  python -m pytest -q pytests/test_lm_tools.py pytests/test_profile_toy.py pytests/test_profile_bounds.py'
 ```
 
 ## Method
@@ -114,13 +115,33 @@ seeds a branch (an LM run at every grid point of its POI). The profile is the lo
 
 Stopping: a row converges at max|g| < `PA_GTOL`, or when it stalls with Newton decrement 0.5 g'H^-1 g
 below `PA_DTOL` ("floor": the likelihood's jitter, e.g. D/H at ~5e-5, is above what GTOL demands along a
-stiff direction). The run stops when every POI's 68% ends moved less than `PA_SIGTOL` x grid_sig over
-`PA_SIGTOL_PATIENCE` iterations (after the spread starts finish), or at `PA_MAXIT`.
+stiff direction). The run stops when no row is active (each converged, stalled, on the floor or held by the
+box) or at `PA_MAXIT`; the log line `stop at itN: ...` and the npz `stop_reason` say which. `PA_SIGTOL > 0`
+adds an interval-stability stop (every POI's 68% ends moved less than `PA_SIGTOL` x grid_sig over
+`PA_SIGTOL_PATIENCE` iterations, after the spread starts finish): off by default, it is for a likelihood too
+rough for rows to converge or stall, and certifies no row.
+
+Bounds and the box (config, both optional): `bounds = {name: (lo, hi)}` (None = open) are physical limits,
+hard for the optimizer, and a POI's grid is kept inside them (a span crossing a bound is shifted onto it,
+width kept). `box = {name: (lo, hi)}` in scaled sigmas (None = -+`PA_XBOX`) is the optimizer box of a free
+parameter, inside its bounds. A row on a box face is converged when chi2 is flat outward there (outward slope
+below `PA_GTOL`: a direction the data leave open); when chi2 still falls outward the box holds it (`at_box`,
+not converged): widen the box or give a bound. A physical bound is a real limit and never counts as the box.
 
 Intervals: a degree-`PA_FIT_DEG` polynomial through the points within `PA_FIT_DCHI2` of the minimum, or
-pchip through every point when the profile shows two minima; the interval is the union of the regions
-below the chi2_1 quantiles: 1 (68.27%), 3.84 (95%, the quoted 95% intervals) and 4 (95.45%, `sigma2` in the npz). A Delta_Neff_init profile is also mapped to Neff through each
-row's derived Neff (`derived_neff`, `sigma1_neff`, `cl95_neff`, and the "as Neff" log line).
+pchip through every point when the profile shows two minima or is still falling at a grid end that is not a
+bound; the interval is the union of the regions below threshold. Without a bound the thresholds are the
+chi2_1 quantiles: 1 (68.27%), 3.84 (95%, the quoted 95% intervals) and 4 (95.45%, `sigma2` in the npz). Next to
+a bound they are the boundary-aware asymptotic thresholds of Cowan, Cranmer, Gross & Vitells
+(arXiv:1007.1727, the t~ statistic): the likelihood-ratio ordering of Feldman & Cousins, exact for a Gaussian
+profile, so the interval turns into a one-sided limit by itself when the data sit at the bound (best fit on
+the bound: 68 / 95% upper limits 1.00 / 1.96 sigma). Each end is a crossing, the bound, or open (below
+threshold up to the grid end: the data leave the POI open there, or the grid is too narrow), and the
+interval is two-sided, an upper or a lower limit, or unconstrained (npz `ends1` / `ends95`, `kind1` /
+`kind95`; the log prints an open end as `>grid end (open)`). Full Feldman-Cousins (toys) is needed only where
+the profile is far from Gaussian near a bound. A Delta_Neff_init profile is also mapped to Neff through each
+row's derived Neff from LINX (`derived_neff`, `sigma1_neff`, `cl95_neff`, and the "as Neff" log line).
+Test: `pytests/test_profile_bounds.py` on `configs/toy_bounded.py`.
 
 MLE prepass (`PA_MLE_PREPASS=1`): the same LM with every parameter free from the config cen; the grids are
 recentred on the joint fit with Fisher profile sigmas sqrt(2 (H^-1)_ii) sig, clamped to
@@ -139,11 +160,11 @@ BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 | `PA_POI_SLICE` | 0 | 1: rank r of n profiles `POIS[r::n]` and writes its own checkpoints |
 | `PA_LMAX` | 2508 | engine l_max |
 | `PA_NPTS` / `PA_NSIG` | config `npts` / `nsig` | grid points per POI / half-span in config `grid_sig` units |
-| `PA_XBOX` | 5 | free-dim box in scaled sigmas; a row on it is not converged (launchers 10) |
+| `PA_XBOX` | 5 | default free-dim box in scaled sigmas (config `box` overrides per parameter); a row the box holds is not converged (launchers 10) |
 | `PA_MAXIT` | 40 | LM iterations (launchers 30) |
 | `PA_GTOL` | 0.03 | gradient test, max-norm in scaled coordinates |
 | `PA_DTOL` | 1e-3 | noise floor for stalled rows; 0 = off |
-| `PA_SIGTOL` / `PA_SIGTOL_PATIENCE` | 1e-2 / 3 | interval-stability stop; `PA_SIGTOL<=0` = off |
+| `PA_SIGTOL` / `PA_SIGTOL_PATIENCE` | 0 / 3 | interval-stability stop, off by default (rough likelihoods only) |
 | `PA_RTOL` | 1e-5 | `rtol_large_k_PE` (atol = 1e-2 rtol) |
 | `PA_LNA_GRID` | recomb | save / LoS grid: `recomb` (moves smoothly with recombination) or `fixed` (frozen at the config centre; every result before 2026-11-07) |
 | `PA_RESUME` | 1 | skip done POIs, resume from the checkpoints |

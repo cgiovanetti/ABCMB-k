@@ -27,9 +27,26 @@ profiled chi2, the best fit, 68/95% intervals and a per-point AD convergence cer
      max|g| < PA_GTOL. A row that stalls (no accepted step for PA_STALL_MAX
      iterations) while its Newton decrement 0.5 g'H^-1 g, the chi2 its Gauss-Newton
      model still expects to gain, is below PA_DTOL sits on the likelihood's noise
-     floor: it counts as converged and is recorded as "floor" in the npz.
+     floor: it counts as converged and is recorded as "floor" in the npz. The loop stops
+     when no row is active (every row converged, stalled or on the floor), at PA_MAXIT,
+     or with PA_SIGTOL > 0 once every POI's 68% interval is stable; the reason is logged
+     and saved (npz stop_reason).
 
-  4. Multimodality (scan/lm_tools.py). By default every POI gets PA_MS_K extra starts at
+  4. Bounds and one-sided intervals (config, both optional). bounds = {name: (lo, hi)},
+     None = open: physical limits, hard for the optimizer (projected steps), a POI's grid
+     kept inside them, and the POI's intervals from the boundary-aware asymptotic
+     thresholds of Cowan, Cranmer, Gross & Vitells (arXiv:1007.1727, the t~ statistic;
+     the Feldman-Cousins likelihood-ratio ordering in the Gaussian limit), so an interval
+     next to a bound comes out two-sided or as a one-sided limit as the data decide.
+     box = {name: (lo, hi)} in scaled sigmas, None = -+PA_XBOX: the optimizer box of a
+     free parameter (inside its bounds). A row on a box face counts as converged when chi2
+     is flat outward there (outward slope below PA_GTOL: a direction the data leave open);
+     when chi2 still falls outward the box, not the likelihood, holds it (npz at_box), so
+     widen the box or set a bound. Each interval end is a threshold crossing, the bound,
+     or open (below threshold up to the grid end); the interval is two-sided, an upper or
+     lower limit, or unconstrained (npz ends1/ends95, kind1/kind95).
+
+  5. Multimodality (scan/lm_tools.py). By default every POI gets PA_MS_K extra starts at
      PA_MS_NPTS of its grid points, spread +-PA_MS_SPREAD profile sigmas along the softest
      eigen-directions of the warm Gauss-Newton matrix on the row's free dims; they run in
      the same lockstep and leave the batch as they converge. A grid point is flagged when
@@ -43,7 +60,7 @@ profiled chi2, the best fit, 68/95% intervals and a per-point AD convergence cer
 Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs (default):
   PA_CONFIG(required) PA_TAG('') PA_POIS(csv; the config order without the BBN nuisances)
   PA_POI_SLICE(0) PA_LMAX(2508) PA_NPTS(config npts, else 25) PA_NSIG(config nsig, else 3.0)
-  PA_XBOX(5) PA_MAXIT(40) PA_GTOL(3e-2) PA_DTOL(1e-3; 0 = off) PA_SIGTOL(1e-2; 0 = off)
+  PA_XBOX(5) PA_MAXIT(40) PA_GTOL(3e-2) PA_DTOL(1e-3; 0 = off) PA_SIGTOL(0 = off)
   PA_SIGTOL_PATIENCE(3) PA_RTOL(1e-5) PA_RESUME(1) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
   PA_GRAD_SPECB(4) PA_LM_K(4) PA_STEP_MAX(1.0) PA_STALL_MAX(3) PA_WARM_LR(0) PA_TRACE_EVALS(0)
   PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
@@ -69,6 +86,7 @@ os.environ.setdefault("EQX_ON_ERROR", "nan")
 os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", os.path.join(_SCRATCH, ".jax_cache_abcmb"))
 import numpy as np
 from scipy.stats import chi2 as _chi2_dist
+from scipy.special import ndtr
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -87,22 +105,30 @@ CL1, CL2, CL95 = 0.682689492137, 0.954499736104, 0.95
 # ======================================================================
 # profile-interval helpers
 # ======================================================================
-def _interval_mode(x, y):
+def _interval_mode(x, y, bound=(-np.inf, np.inf)):
     """'pchip' for a profile whose points show two minima separated by a barrier above the roughness
-    (lm_tools.is_multimodal; a polynomial would smooth the second mode away), else 'fit'."""
+    (lm_tools.is_multimodal; a polynomial would smooth the second mode away) or whose lowest point is a
+    grid end that is not a physical bound (a profile still falling at the grid end, where a polynomial
+    invents a turn-over), else 'fit'."""
+    x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
+    if m.sum() >= 2:
+        xm, ym = x[m], y[m]; o = np.argsort(xm); xm, ym = xm[o], ym[o]
+        j = int(np.argmin(ym))
+        if (j == 0 and xm[0] != bound[0]) or (j == len(xm) - 1 and xm[-1] != bound[1]):
+            return "pchip"
     return "pchip" if is_multimodal(x, y, FIT_DCHI2, MS_DCHI2) else "fit"
 
 
-def _smooth_profile(x, y):
+def _smooth_profile(x, y, bound=(-np.inf, np.inf)):
     """Dense Delta-chi2 curve (xs, ys) through a profile's points. 'fit': least-squares polynomial of
     degree FIT_DEG through the points within FIT_DCHI2 of the minimum (averages per-row scatter; a
-    quartic follows the skew of tau / Neff); 'pchip' (multimodal profile, or too few points for the
-    fit): shape-preserving interpolation through every point. None with fewer than 4 finite points."""
+    quartic follows the skew of tau / Neff); 'pchip' (_interval_mode, or too few points for the fit):
+    shape-preserving interpolation through every point. None with fewer than 4 finite points."""
     x = np.asarray(x, float); y = np.asarray(y, float); m = np.isfinite(y)
     if m.sum() < 4:
         return None
     x, y = x[m], y[m]; o = np.argsort(x); x, y = x[o], y[o]
-    if _interval_mode(x, y) == "fit":
+    if _interval_mode(x, y, bound) == "fit":
         sel = (y - y.min()) <= FIT_DCHI2
         if sel.sum() >= FIT_DEG + 3:
             xs_, ys_ = x[sel], y[sel]; xc = xs_.mean()
@@ -132,18 +158,64 @@ def wald_fit(x, y):
     return 1.0 / np.sqrt(a), m, float(np.max(np.abs(np.polyval([a, b, c], x[sel]) - y[sel])))
 
 
-def poi_interval(x, y, cl):
-    """Confidence interval at level cl from a profile (x, chi2): the region below the chi2_1 quantile.
-    Returns (lo, best, hi, regions): regions is the UNION of the regions below threshold as a list of
-    (lo, hi) in increasing x (one region for a unimodal profile), lo/hi are the outer ends of that
-    union; NaN means not reached within the grid."""
-    sp = _smooth_profile(x, y)
+def t_threshold(cl, d):
+    """Asymptotic critical value of the boundary-aware statistic t~ at confidence cl for tested values
+    d = (distance from the bound) / sigma >= 0 Wald sigmas inside the physical region (Cowan, Cranmer,
+    Gross & Vitells 2011, arXiv:1007.1727): F(t) = 2 Phi(sqrt t) - 1 for t <= d^2 and
+    Phi(sqrt t) + Phi((t + d^2) / (2 d)) - 1 beyond. Far from the bound this is the chi2_1 quantile
+    (1 / 4 at 68.27 / 95.45%); at the bound the one-sided Phi^-1(cl)^2 (2.71 at 95%)."""
+    d = np.maximum(np.asarray(d, float), 0.0)
+    q = _chi2_dist.ppf(cl, 1)
+    lo, hi = d ** 2, np.full_like(d, q)
+    for _ in range(80):                   # F(d^2) < cl <= F(q): bisect the second branch
+        t = 0.5 * (lo + hi)
+        F = ndtr(np.sqrt(t)) + ndtr((t + d ** 2) / np.maximum(2 * d, 1e-300)) - 1.0
+        lo, hi = np.where(F < cl, t, lo), np.where(F < cl, hi, t)
+    return np.where(d ** 2 >= q, q, 0.5 * (lo + hi))
+
+
+def poi_interval(x, y, cl, bound=(-np.inf, np.inf)):
+    """Confidence interval at level cl from a profile (x, chi2). bound = the POI's physical (lo, hi)
+    (+-inf = open). With no bound the threshold is the chi2_1 quantile; with one, t_threshold at each
+    tested value (sigma from wald_fit, distance from the bound nearer the best fit), so the interval
+    becomes a one-sided limit by itself when the data sit near the bound. Returns (lo, best, hi,
+    regions): regions is the UNION of the regions below threshold as a list of (lo, hi) in increasing
+    x (one region for a unimodal profile), lo/hi the outer ends of that union; an end equal to the
+    bound is a one-sided limit, NaN means below threshold up to the grid end (end_kinds)."""
+    sp = _smooth_profile(x, y, bound)
     if sp is None:
         return np.nan, np.nan, np.nan, []
     xs, ys = sp
     best = xs[int(np.argmin(ys))]
-    regions = union_regions(xs, ys, _chi2_dist.ppf(cl, 1))   # non-empty: ys = 0 <= thr at the minimum
+    thr = np.full_like(xs, _chi2_dist.ppf(cl, 1))
+    blo, bhi = (float(b) for b in bound)
+    sig = wald_fit(x, y)[0]
+    near = [(d, dist) for d, dist in (((best - blo) / sig, xs - blo), ((bhi - best) / sig, bhi - xs))
+            if np.isfinite(d)]
+    if near:
+        thr = t_threshold(cl, min(near, key=lambda t: t[0])[1] / sig)
+    regions = union_regions(xs, ys, thr, (blo, bhi))     # non-empty: ys = 0 <= thr at the minimum
     return regions[0][0], best, regions[-1][1], regions
+
+
+def end_kinds(lo, hi, bound, regions):
+    """('crossing' | 'bound' | 'open') for each end of an interval from poi_interval: 'bound' is a
+    one-sided limit at the POI's physical bound, 'open' is below threshold up to the grid end (the
+    data leave the POI open there, or the grid is too narrow); ('none', 'none') without a profile."""
+    if not regions:
+        return "none", "none"
+    k = lambda v, b: "open" if not np.isfinite(v) else ("bound" if v == b else "crossing")
+    return k(lo, float(bound[0])), k(hi, float(bound[1]))
+
+
+def interval_kind(ends):
+    """'two-sided', 'upper limit' (no lower crossing), 'lower limit' (no upper crossing),
+    'unconstrained' or 'none' from end_kinds."""
+    lo, hi = ends
+    if lo == "none":
+        return "none"
+    return {(True, True): "two-sided", (False, True): "upper limit", (True, False): "lower limit",
+            (False, False): "unconstrained"}[(lo == "crossing", hi == "crossing")]
 
 
 # ======================================================================
@@ -196,6 +268,17 @@ SIGMA = np.array([CFG["sig"][k] for k in ORDER])
 GRID_CEN = CENTER.copy()
 # optional config 'grid_sig': grid half-span unit per POI (else the scaling SIGMA).
 GRID_SIG = np.array([CFG.get("grid_sig", CFG["sig"])[k] for k in ORDER], float)
+# optional config 'bounds' {name: (lo, hi)} (physical limits, None = open) and 'box' {name: (lo, hi)} (the
+# optimizer box in scaled sigmas, None = -+PA_XBOX); see the module docstring, item 4
+_BOUNDS, _BOX = CFG.get("bounds", {}) or {}, CFG.get("box", {}) or {}
+for _k in list(_BOUNDS) + list(_BOX):
+    if _k not in ORDER:
+        raise ValueError(f"{CONFIG_ABS}: bounds / box given for {_k!r}, which is not in the order {ORDER}")
+BLO = np.array([-np.inf if _BOUNDS.get(k, (None, None))[0] is None else float(_BOUNDS[k][0]) for k in ORDER])
+BHI = np.array([np.inf if _BOUNDS.get(k, (None, None))[1] is None else float(_BOUNDS[k][1]) for k in ORDER])
+if not ((BLO <= CENTER) & (CENTER <= BHI)).all():
+    raise ValueError(f"{CONFIG_ABS}: cen outside the bounds for "
+                     f"{[k for i, k in enumerate(ORDER) if not BLO[i] <= CENTER[i] <= BHI[i]]}")
 FIXED = dict(CFG["fixed"])
 USER_SPECIES = CFG.get("user_species", None)
 # ABCMB evolves a massive neutrino only when the MassiveNeutrino species is passed; with
@@ -212,8 +295,11 @@ MAXIT = int(os.environ.get("PA_MAXIT", 40))
 GTOL = float(os.environ.get("PA_GTOL", 3e-2))        # ||projected grad||_inf gate (scaled coords)
 # Noise floor: a stalled row whose Newton decrement 0.5 g'H^-1 g is below PA_DTOL counts as converged ("floor").
 DTOL = float(os.environ.get("PA_DTOL", "1e-3"))
-# Early stop once every POI's 68% ends moved < PA_SIGTOL * grid_sig over PA_SIGTOL_PATIENCE iters (<= 0: off).
-SIGTOL = float(os.environ.get("PA_SIGTOL", "1e-2"))
+# Optional early stop once every POI's 68% ends moved < PA_SIGTOL * grid_sig over PA_SIGTOL_PATIENCE iters.
+# Off by default: the stop is convergence (every row converged, stalled or on the noise floor). For a
+# likelihood too rough for rows to converge or stall (they keep taking noise-level steps) it saves the
+# iterations to PA_MAXIT; it certifies no row.
+SIGTOL = float(os.environ.get("PA_SIGTOL", "0"))
 SIGTOL_PATIENCE = int(os.environ.get("PA_SIGTOL_PATIENCE", "3"))
 RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 # Save / LoS lna grid: "recomb" (nodes move smoothly with the cosmology's recombination, perturbations.py) or
@@ -248,7 +334,12 @@ MLE_SIG_CLIP = float(os.environ.get("PA_MLE_SIG_CLIP", "3.0"))  # grid sigma cla
 POI_SLICE = os.environ.get("PA_POI_SLICE", "0") != "0"   # multi-node scale-out: each
 # rank owns a DISJOINT subset of POIs (POIS[RANK::NPROC]) and runs its own lockstep,
 # writing only its own per-POI npz -> no shared-file clobber, no MPI gather.
-XBOX = float(os.environ.get("PA_XBOX", "5.0"))         # free-dim box (sigma units)
+XBOX = float(os.environ.get("PA_XBOX", "5.0"))         # default free-dim box (scaled sigmas)
+BOXLO = np.array([-XBOX if _BOX.get(k, (None, None))[0] is None else float(_BOX[k][0]) for k in ORDER])
+BOXHI = np.array([XBOX if _BOX.get(k, (None, None))[1] is None else float(_BOX[k][1]) for k in ORDER])
+if not ((BOXLO <= 0) & (BOXHI >= 0) & (BOXLO < BOXHI)).all():
+    raise ValueError(f"{CONFIG_ABS}: each box must contain 0 (the config cen): "
+                     f"{ {k: (BOXLO[i], BOXHI[i]) for i, k in enumerate(ORDER)} }")
 FIT_DEG = int(os.environ.get("PA_FIT_DEG", "4"))       # _smooth_profile polynomial degree
 FIT_DCHI2 = float(os.environ.get("PA_FIT_DCHI2", "9"))  # _smooth_profile: points within this of the min
 WARM_LR = os.environ.get("PA_WARM_LR", "0") != "0"     # rows start at the warm-point linear response
@@ -358,9 +449,16 @@ def theta_of(base, free, x):
     return theta
 
 
+def phys_box(free):
+    """(lo, hi) of the physical bounds of free dims in scaled coords (+-inf where open)."""
+    return (BLO[free] - CENTER[free]) / SIGMA[free], (BHI[free] - CENTER[free]) / SIGMA[free]
+
+
 def scaled_box(free):
-    """(lo, hi) of a row's free dims in scaled coords: +-XBOX."""
-    return np.full(len(free), -XBOX), np.full(len(free), XBOX)
+    """(lo, hi) of a row's free dims in scaled coords: the box (config 'box', else +-XBOX) inside the
+    physical bounds."""
+    plo, phi = phys_box(free)
+    return np.maximum(plo, BOXLO[free]), np.minimum(phi, BOXHI[free])
 
 
 def build_dict(theta, bbn_y=None):
@@ -674,7 +772,8 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=N
     rows at one PV are starts of the same point and the profile takes their lowest chi2. EXTRA (N,)
     marks the multistart rows: with MS_WAIT the stop waits until none is active. Returns a dict of
     per-row arrays: X, F (values-path chi2), G, H (at X), gnorm (projected, exact AD), stalled, floor
-    (stopped on the noise floor: a stall with Newton decrement < DTOL; not in stalled), lam, it. The full
+    (stopped on the noise floor: a stall with Newton decrement < DTOL; not in stalled), lam, it, and stop
+    (why the loop ended: "converged" | "sigtol" | "maxit"). The full
     state is checkpointed every iteration (ckpt_path); resume_state restarts from such a checkpoint.
     gtol None = GTOL at call time."""
     gtol = GTOL if gtol is None else gtol
@@ -702,14 +801,16 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=N
         out = {}
         for p, r in groups.items():
             pv, f = _envelope(PV[r], F[r])
-            lo, _, hi, reg = poi_interval(pv, f, CL1)
+            lo, _, hi, reg = poi_interval(pv, f, CL1, (BLO[p], BHI[p]))
             out[p] = (lo, hi, len(reg))
         return out
     hist = [_ends()]
     it = it0
+    stop = "maxit"
     for it in range(it0, maxit):
         act = (np.abs(gproj).max(1) > gtol) & ~stalled & ~floor
         if not act.any():
+            stop = "converged"
             break
         A = np.where(act)[0]
         cand = np.empty((LM_K, len(A), Pp)); pred = np.empty((LM_K, len(A)))
@@ -786,8 +887,18 @@ def lm_rows(BASE, FREE, XLO, XHI, X0, POI_IDX=None, PV=None, maxit=MAXIT, gtol=N
                 else:
                     print(f"  {log_prefix} intervals stable: worst move {worst:.2e} grid_sig < SIGTOL "
                           f"{SIGTOL:.0e} over {SIGTOL_PATIENCE} iters -> stop at it{it}", flush=True)
+                    stop = "sigtol"
                     break
-    return dict(X=X, F=F, G=G, H=H, gnorm=np.abs(gproj).max(1), stalled=stalled, floor=floor, lam=lam, it=it)
+    nact = int(((np.abs(gproj).max(1) > gtol) & ~stalled & ~floor).sum())
+    if stop == "maxit" and nact == 0:                 # the last iteration finished the rows
+        stop = "converged"
+    if log_prefix:
+        why = {"converged": "no active row (each one converged, stalled, on the noise floor or held by the box)",
+               "sigtol": f"68% intervals stable (PA_SIGTOL {SIGTOL:.0e}) with {nact} rows active",
+               "maxit": f"MAXIT {maxit} reached with {nact} rows active"}[stop]
+        print(f"  {log_prefix} stop at it{it}: {why}", flush=True)
+    return dict(X=X, F=F, G=G, H=H, gnorm=np.abs(gproj).max(1), stalled=stalled, floor=floor, lam=lam, it=it,
+                stop=stop)
 
 
 # ======================================================================
@@ -834,9 +945,16 @@ KINDS = ("warm", "spread", "branch")      # row kinds, T["KIND"] = index into th
 
 
 def _grid_for(poi):
-    """NPTS points over GRID_CEN +- NSIG*GRID_SIG."""
+    """NPTS points over GRID_CEN +- NSIG*GRID_SIG, inside the POI's physical bounds: a span that crosses a
+    bound is shifted to start on it, keeping its width (the points past the bound go where a one-sided
+    limit needs them), then clipped if the bounds are narrower than the span."""
     i = ORDER.index(poi)
-    return np.linspace(GRID_CEN[i] - NSIG * GRID_SIG[i], GRID_CEN[i] + NSIG * GRID_SIG[i], NPTS)
+    lo, hi = GRID_CEN[i] - NSIG * GRID_SIG[i], GRID_CEN[i] + NSIG * GRID_SIG[i]
+    if lo < BLO[i]:
+        lo, hi = BLO[i], hi + (BLO[i] - lo)
+    if hi > BHI[i]:
+        lo, hi = lo - (hi - BHI[i]), BHI[i]
+    return np.linspace(max(lo, BLO[i]), min(hi, BHI[i]), NPTS)
 
 
 def _ckpt_path(outdir, what):
@@ -900,9 +1018,16 @@ def _append(T, **rows):
 
 
 def _row_conv(T):
-    """(converged, at_box) per row: ||g||_AD < GTOL or stopped on the noise floor, off the +-XBOX box and
-    not stalled."""
-    at_box = ((T["X"] <= -XBOX + 1e-9) | (T["X"] >= XBOX - 1e-9)).any(1)
+    """(converged, at_box) per row: converged = ||g||_AD < GTOL (projected) or stopped on the noise floor,
+    not stalled and not held by the box. at_box = held by the box rather than the likelihood: a free dim on
+    a box face (config 'box' / +-XBOX; a physical bound is a real limit and never counts) with chi2 still
+    falling outward by more than GTOL per scaled sigma. On a face where chi2 is flat outward (a direction
+    the data leave open) the row is converged."""
+    plo, phi = phys_box(T["FREE"])
+    X, G = T["X"], T["G"]
+    on_lo = (X <= T["XLO"] + 1e-9) & (T["XLO"] > plo)
+    on_hi = (X >= T["XHI"] - 1e-9) & (T["XHI"] < phi)
+    at_box = (on_lo & (G > GTOL)).any(1) | (on_hi & (-G > GTOL)).any(1)
     return ((T["gnorm"] < GTOL) | T["floor"]) & ~at_box & ~T["stalled"], at_box
 
 
@@ -961,7 +1086,8 @@ def profile_lockstep(pois, outdir):
               f"{len(T['PV'])} (" + ", ".join(f"{k} {int((T['KIND'] == i).sum())}" for i, k in enumerate(KINDS))
               + f"); converged {int(conv.sum())} (||g||_AD<{GTOL:.1e}, or a stall with 0.5g'H^-1g<{DTOL:.0e}: "
               f"{int((conv & T['floor']).sum())}); stalled {int(T['stalled'].sum())}; "
-              f"on the XBOX box {int(at_box.sum())}; max||g||_AD={T['gnorm'].max():.2e}", flush=True)
+              f"held by the box {int(at_box.sum())}; max||g||_AD={T['gnorm'].max():.2e}; "
+              f"lockstep stop: {str(T.get('lock_stop', '?'))}", flush=True)
 
     # ================= phase 1: lockstep LM over the base + spread rows =================
     if T is None:
@@ -1025,7 +1151,8 @@ def profile_lockstep(pois, outdir):
                     log_prefix="[lock]", ckpt_path=ckpt, resume_state=resume_state)
         T = dict(BASE=BASE_f, FREE=FREE_f, XLO=XLO_f, XHI=XHI_f, POI=POI_f, J=J_f, PV=PV_f, KIND=KIND,
                  START=START, X0=X0_f, X=S["X"], F=S["F"], G=S["G"], H=S["H"],
-                 gnorm=S["gnorm"], stalled=S["stalled"], floor=S["floor"])
+                 gnorm=S["gnorm"], stalled=S["stalled"], floor=S["floor"],
+                 lock_stop=np.array(S["stop"]))          # why the lockstep LM ended (not per row)
         stage = "lm"
         _save_table(tpath, T, stage)
         try:
@@ -1103,9 +1230,13 @@ def profile_lockstep(pois, outdir):
         rows = np.where(T["POI"] == i)[0]
         e = np.array([r[np.argmin(T["F"][r])] for r in (rows[T["J"][rows] == j] for j in range(NPTS))], int)
         chi2 = T["F"][e]
-        lo1, mid, hi1, reg1 = poi_interval(grid, chi2, CL1)
-        lo2, _, hi2, reg2 = poi_interval(grid, chi2, CL2)
-        lo95, _, hi95, reg95 = poi_interval(grid, chi2, CL95)
+        bnd = (BLO[i], BHI[i])
+        lo1, mid, hi1, reg1 = poi_interval(grid, chi2, CL1, bnd)
+        lo2, _, hi2, reg2 = poi_interval(grid, chi2, CL2, bnd)
+        lo95, _, hi95, reg95 = poi_interval(grid, chi2, CL95, bnd)
+        ends1, ends2, ends95 = (end_kinds(a, b, bnd, r) for a, b, r in
+                                ((lo1, hi1, reg1), (lo2, hi2, reg2), (lo95, hi95, reg95)))
+        kind1, kind95 = interval_kind(ends1), interval_kind(ends95)
         sw, mw, dw = wald_fit(grid, chi2)
         extra = {}
         if BBN is not None:                          # BBN outputs of the envelope rows; the Delta_Neff_init
@@ -1134,10 +1265,13 @@ def profile_lockstep(pois, outdir):
                  gn_eig=ev[e], hess_pd=ev[e].min(1) > 0,
                  nuis=np.array([ORDER[k] for k in nuis_idx_of(i)]), done=True,
                  sigma1=np.array([lo1, mid, hi1]), sigma2=np.array([lo2, hi2]),
-                 cl95=np.array([lo95, hi95]), bound=np.array([np.nan, np.nan]),  # schema only: no bounds
+                 cl95=np.array([lo95, hi95]),
+                 bound=np.array([b if np.isfinite(b) else np.nan for b in bnd]),     # NaN = open
+                 ends1=np.array(ends1), ends2=np.array(ends2), ends95=np.array(ends95), kind1=kind1,
+                 kind95=kind95, stop_reason=str(T.get("lock_stop", "")),
                  regions1=np.array(reg1, float).reshape(-1, 2), regions2=np.array(reg2, float).reshape(-1, 2),
                  regions95=np.array(reg95, float).reshape(-1, 2),
-                 sigma_wald=sw, wald_vertex=mw, wald_misfit=dw, interval_mode=_interval_mode(grid, chi2),
+                 sigma_wald=sw, wald_vertex=mw, wald_misfit=dw, interval_mode=_interval_mode(grid, chi2, bnd),
                  n_starts=np.array([int((T["J"][rows] == j).sum()) for j in range(NPTS)]),
                  n_minima=np.array([len(flags[(i, j)][2]) for j in range(NPTS)]), flag=flag, flag_reason=reason,
                  minima_x=minima_x, minima_chi2=minima_chi2, minima_kind=minima_kind,
@@ -1149,20 +1283,22 @@ def profile_lockstep(pois, outdir):
                  kinds=np.array(KINDS), ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2]),
                  gtol=GTOL, dtol=DTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
-        edge = j <= 1 or j >= NPTS - 2
+        edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
         warn = ""
-        if edge or not (np.isfinite(lo1) and np.isfinite(hi1)):
-            why = []
-            if edge:
-                why.append(f"min at grid index {j}")
-            if not np.isfinite(lo1):
-                why.append("lower 68% end beyond the grid")
-            if not np.isfinite(hi1):
-                why.append("upper 68% end beyond the grid")
-            warn = "  ** CENTERING: " + "; ".join(why) + " (widen PA_NSIG / the config grid_sig, or PA_MLE_PREPASS=1)"
+        if edge:
+            warn = (f"  ** CENTERING: min at grid index {j}, not a physical bound (widen PA_NSIG / the config "
+                    f"grid_sig, or PA_MLE_PREPASS=1)")
+        for side, k, gend in (("lower", ends1[0], grid[0]), ("upper", ends1[1], grid[-1])):
+            if k == "open":
+                warn += (f"  ** OPEN {side} 68% end: below threshold up to the grid end {gend:.5g} (the data "
+                         f"leave {poi} open there, or the grid is too narrow)")
+
+        def _iv(lo, hi, ends):
+            f = lambda v, k, g, s: f"{s}{g:.5f} (open)" if k == "open" else f"{v:.5f}" + (" (bound)" if k == "bound" else "")
+            return f"[{f(lo, ends[0], grid[0], '<')}, {f(hi, ends[1], grid[-1], '>')}]"
         multi = f"; 68% UNION of {len(reg1)} regions {[(round(a, 5), round(b, 5)) for a, b in reg1]}" if len(reg1) > 1 else ""
-        print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; 68% [{lo1:.5f},{hi1:.5f}] (two-sided, "
-              f"best {mid:.5f}); 95% [{lo95:.5f},{hi95:.5f}]; wald sigma {sw:.5f} (misfit {dw:.2f}); "
+        print(f"[{poi}] minchi2={chi2[j]:.2f} at {poi}={grid[j]:.5f}; 68% {_iv(lo1, hi1, ends1)} ({kind1}, "
+              f"best {mid:.5f}); 95% {_iv(lo95, hi95, ends95)} ({kind95}); wald sigma {sw:.5f} (misfit {dw:.2f}); "
               f"converged {int(conv[e].sum())}/{nval} ({int((conv[e] & T['floor'][e]).sum())} on the noise floor), "
               f"stalled {int(T['stalled'][e].sum())}; "
               f"max||g||_AD={np.nanmax(T['gnorm'][e]):.2e}; {len(rows)} rows ("
@@ -1171,7 +1307,8 @@ def profile_lockstep(pois, outdir):
               + ", ".join(f"{k} {int((T['KIND'][e] == ki).sum())}" for ki, k in enumerate(KINDS)
                           if (T["KIND"][e] == ki).any())
               + f"{multi} -> {npz}{warn}", flush=True)
-        _plot(poi, grid, chi2, npz, rows=(T["PV"][rows], T["F"][rows], T["KIND"][rows]), regions=reg1)
+        _plot(poi, grid, chi2, npz, rows=(T["PV"][rows], T["F"][rows], T["KIND"][rows]), regions=reg1,
+              bnd=bnd, ends=ends1)
     try:
         if os.path.exists(tpath):
             os.remove(tpath)                           # run finished cleanly
@@ -1179,9 +1316,11 @@ def profile_lockstep(pois, outdir):
         pass
 
 
-def _plot(poi, grid, chi2, npz, rows=None, regions=None):
+def _plot(poi, grid, chi2, npz, rows=None, regions=None, bnd=(-np.inf, np.inf), ends=None):
     """Delta-chi2 of the envelope; with rows = (pv, chi2, kind) every other row's end point too
-    (starts, branches), and the 68% union regions shaded when there are several."""
+    (starts, branches), and the 68% union regions shaded when there are several. Next to a physical
+    bound (bnd) the thresholds are the boundary-aware ones and the bound is drawn; an open 68% end
+    (ends from end_kinds) gets an arrow off the grid."""
     try:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
         i = ORDER.index(poi)
@@ -1201,8 +1340,27 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None):
                 ax.axvspan(grid[0] if not np.isfinite(a) else a, grid[-1] if not np.isfinite(b) else b,
                            color="g", alpha=0.08)
         xs = np.linspace(grid.min(), grid.max(), 400)
+        sw = wald_fit(grid, chi2)[0]
+        best = grid[int(np.nanargmin(chi2))]
+        near = [(abs(best - b), sgn * (xs - b)) for b, sgn in ((bnd[0], 1), (bnd[1], -1)) if np.isfinite(b)]
         for cl, col, lab in ((CL1, "g", "68%"), (CL95, "orange", "95%")):
-            ax.plot(xs, np.full_like(xs, _chi2_dist.ppf(cl, 1)), "--", lw=0.8, color=col, label=f"{lab} threshold")
+            thr = np.full_like(xs, _chi2_dist.ppf(cl, 1))
+            if near and np.isfinite(sw):
+                thr = t_threshold(cl, min(near, key=lambda t: t[0])[1] / sw)
+            ax.plot(xs, thr, "--", lw=0.8, color=col, label=f"{lab} threshold")
+        for b in bnd:
+            if np.isfinite(b):
+                ax.axvline(b, color="k", lw=1.0, label="physical bound")
+        if ends is not None:
+            thr1 = _chi2_dist.ppf(CL1, 1)
+            for k, x0, dx in ((ends[0], grid[0], -1), (ends[1], grid[-1], 1)):
+                if k == "open":
+                    w = 0.08 * (grid[-1] - grid[0])
+                    ax.annotate("", xy=(x0 + dx * w, 0.5 * thr1), xytext=(x0, 0.5 * thr1),
+                                arrowprops=dict(arrowstyle="->", color="g", lw=1.2))
+                    ax.text(x0, 0.62 * thr1, "68% open", color="g", fontsize=7,
+                            ha="right" if dx < 0 else "left")
+            ax.set_xlim(grid[0] - 0.1 * (grid[-1] - grid[0]), grid[-1] + 0.1 * (grid[-1] - grid[0]))
         ax.axvline(CENTER[i], ls=":", color="gray", lw=0.8, label=f"fiducial {poi}")
         ax.set_xlabel(poi); ax.set_ylabel(r"$\Delta\chi^2$ (profiled)")
         top = max(10, float(np.nanmax(d)) * 1.05)
@@ -1245,7 +1403,8 @@ def main():
     print(f"rank {RANK}/{NPROC} devices={jax.devices()} config={CONFIG_ABS} "
           f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} DTOL={DTOL} rtol={RTOL} shard={DO_SHARD} "
           f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} multistart={MS_K}x{MS_NPTS}pts "
-          f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}) poi_slice={POI_SLICE} nproc={NPROC}", flush=True)
+          f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}) poi_slice={POI_SLICE} nproc={NPROC} "
+          f"sigtol={SIGTOL} xbox={XBOX} bounds={_BOUNDS or None} box={_BOX or None}", flush=True)
     if POI_SLICE and NPROC > 1:
         pois = _resume_skip(POIS[RANK::NPROC], outdir)     # each rank: a disjoint POI subset
     else:
