@@ -8,7 +8,8 @@ Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT a
 |---|---|---|---|---|
 | `_v3` | CMB, YHe fixed, POI Neff | 2.818 [2.596, 3.052] [2.395, 3.287] | 2759.06 | job 60025795, 3h52m on 4 nodes |
 | `_v4linx` | CMB, YHe/Neff/T_nu from LINX, POI Delta_Neff_init | 2.850 [2.659, 3.050] [2.484, 3.250] | 2759.10 | job 60057736, 5h24m on 4 nodes |
-| `_v5bbn` | `_v4linx` + Y_p (Aver 2026) + D/H (Cooke 2018) | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
+| `_v5bbn` (biased) | `_v4linx` + Y_p (Aver 2026) + D/H (Cooke 2018); nuisance priors at the config cen | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
+| `_v6bbn` | `_v5bbn` with the nuisance priors at 1 / 0, recomb lna grid | 2.982 [2.902, 3.064] [2.825, 3.143] | 2763.15 | job 60988361, 4h56m on 4 nodes |
 
 All seven POIs per run, numbers and convergence counts: `CHANGELOG.txt`. `_v5bbn` is biased: its BBN
 nuisance priors sat at the config cen (the prepass fit) instead of 1 and 0. `_v6bbn` (same config, priors at
@@ -53,7 +54,7 @@ the flags, the full row table (`rows_*`) and, for LINX runs, `derived_bbn` (YHe,
 plus `derived_neff` / `sigma1_neff` / `cl95_neff` on the Delta_Neff_init profile. Comparison figure:
 
 ```bash
-python scan/compare_profile_runs.py _v3 _v4linx _v5bbn   # -> results/profile_neff_runs_compared_v3_v4linx_v5bbn.png
+python scan/compare_profile_runs.py _v3 _v4linx _v6bbn   # -> results/profile_neff_runs_compared_v3_v4linx_v6bbn.png
 ```
 
 CPU tests of the machinery (no ABCMB, seconds), on an allocation, never the login node:
@@ -185,7 +186,6 @@ BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 
 ## Open items
 
-- The 17 `_v5bbn` stalls are harmless: Newton decrements 2e-6 .. 2.3e-4, below `PA_DTOL`.
 - Wilks / coverage calibration deferred (only needed if a second mode appears within a few Delta chi2).
 - 2D joint profiles for a few parameter pairs.
 - Vendored LINX (`abcmb/linx`) and LINX main have diverged: the inert-radiation normalization fix and the

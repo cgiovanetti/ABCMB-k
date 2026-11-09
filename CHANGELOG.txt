@@ -6,6 +6,21 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-09 — _v6bbn: _v5bbn rerun with the nuisance priors at 1 / 0 and the recomb lna grid
+-------------------------------------------------------------------------------------------
+Job 60988361 (11-08 09:11 to 14:07, 4h56m on 4 nodes, 12 h requested), code f3c4fc9, same config and launcher.
+All 7 POIs 21/21 converged (9 rows on the noise floor), none stalled; min chi2 2763.15 (ln10As 2763.16).
+Best / 68% / 95%:
+  h 0.66482 [0.65667, 0.67308] [0.64894, 0.68110]; omega_b 0.02217 [0.02201, 0.02232] [0.02187, 0.02247];
+  omega_cdm 0.11991 [0.11825, 0.12159] [0.11667, 0.12322]; n_s 0.96087 [0.95540, 0.96637] [0.95020, 0.97168];
+  ln10As 3.0482 [3.0354, 3.0619] [3.0236, 3.0762]; tau_reion 0.05704 [0.05142, 0.06321] [0.04640, 0.06994];
+  Delta_Neff_init -0.237 [-0.545, 0.074] [-0.837, 0.375] = Neff 2.982 [2.902, 3.064] [2.825, 3.143].
+  At the best fit Y_p(BBN) 0.24626, D/H 2.494e-5, YHe 0.24493.
+vs _v5bbn: 68% midpoints move <= 0.3 sigma (omega_cdm +0.30, omega_b -0.24, Delta_Neff_init +0.20 = Neff +0.016,
+ln10As +0.11, the rest <= 0.06), widths within 0.7%. q1 / q2 / q3 stay at the prepass values -0.68 / -0.73 /
+-0.52; _v5bbn had moved them to -1.14 / -1.22 / -0.87. The prior fix and the grid change are not separated.
+Figures: results/profile_neff_runs_compared_v3_v4linx_v6bbn.png, ..._v5bbn_v6bbn.png.
+
 2026-11-07 — BBN nuisance priors at fixed means; _v6bbn submitted
 -----------------------------------------------------------------
 - _bbn_chi2 / _gn_block centre the tau_n_fac and q0..q11 penalties on BBN_PRIOR_MEAN (1 and 0), no longer

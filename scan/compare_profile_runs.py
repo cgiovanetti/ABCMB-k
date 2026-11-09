@@ -1,8 +1,8 @@
-"""compare_profile_runs.py — overlay the LCDM+Neff full-plik profile runs (_v3, _v4linx, _v5bbn).
+"""compare_profile_runs.py — overlay the LCDM+Neff full-plik profile runs (_v3, _v4linx, _v5bbn, _v6bbn).
 
 Each run is offset by its own best chi2 (each has its own chi2 surface); the parabola is fitted to the
 pointwise lower envelope of the newest surface selected. CPU only:
-    python scan/compare_profile_runs.py [TAG ...]   (default: _v3 _v4linx _v5bbn)
+    python scan/compare_profile_runs.py [TAG ...]   (default: _v3 _v4linx _v6bbn)
 """
 import os
 import sys
@@ -19,16 +19,17 @@ CEN_V4 = CEN_V3[:6] + [-0.823]      # lcdm_dneff_linx_plikfull.py: the 7th param
 CEN_V5 = [0.6649, 0.022166, 0.1199, 0.96097, 3.0469, 0.056934, -0.23625]   # lcdm_dneff_linx_bbnlike_plikfull.py
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]
 SIG_V4 = SIG_NEW[:6] + [0.37]
-RUNS = {"_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4), "_v5bbn": (CEN_V5, SIG_V4)}
-STYLE = {"_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X"), "_v5bbn": ("#2ca02c", "D")}
-XBOX = {"_v3": 10.0, "_v4linx": 10.0, "_v5bbn": 10.0}                       # PA_XBOX; 5.0 otherwise
+RUNS = {"_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4), "_v5bbn": (CEN_V5, SIG_V4), "_v6bbn": (CEN_V5, SIG_V4)}
+STYLE = {"_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X"), "_v5bbn": ("#2ca02c", "D"), "_v6bbn": ("#9467bd", "s")}
+XBOX = {"_v3": 10.0, "_v4linx": 10.0, "_v5bbn": 10.0, "_v6bbn": 10.0}                       # PA_XBOX; 5.0 otherwise
 # chi2 surface of each run: "massive-nu" = the massive neutrino evolved; "linx" = YHe/Neff from LINX;
-# "linx-bbn" = plus the BBN likelihood. Runs on different surfaces never share an envelope.
-SURFACE = {"_v3": "massive-nu", "_v4linx": "linx", "_v5bbn": "linx-bbn"}
-SURF_ORDER = ["massive-nu", "linx", "linx-bbn"]
+# "linx-bbn" = plus the BBN likelihood (_v5bbn: its nuisance priors sat at the config cen, a different and biased
+# surface). Runs on different surfaces never share an envelope.
+SURFACE = {"_v3": "massive-nu", "_v4linx": "linx", "_v5bbn": "linx-bbn-cen", "_v6bbn": "linx-bbn"}
+SURF_ORDER = ["massive-nu", "linx", "linx-bbn-cen", "linx-bbn"]
 # runs whose 7th parameter is LINX's Delta_Neff_init: their Neff file is the Delta_Neff_init one and every row is
 # placed at its derived Neff (npz derived_bbn[:, 1]) so it plots on the Neff axis with the others
-LINX_RUNS = {"_v4linx", "_v5bbn"}
+LINX_RUNS = {"_v4linx", "_v5bbn", "_v6bbn"}
 
 
 def load_rows(tags):
@@ -58,7 +59,7 @@ def load_rows(tags):
 
 
 def main():
-    tags = sys.argv[1:] or list(RUNS)
+    tags = sys.argv[1:] or ["_v3", "_v4linx", "_v6bbn"]
     rows = load_rows(tags)
     gmins = {}
     for surf in SURF_ORDER:
