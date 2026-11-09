@@ -4,7 +4,7 @@ import numpy as np
 
 import jax.numpy as jnp 
 import jax.lax as lax
-from jax import grad, vmap, device_put, devices
+from jax import grad, vmap, value_and_grad, device_put, devices
 
 from . import const 
 from .special_funcs import Li, K1, K2
@@ -1047,3 +1047,31 @@ def collision_terms_std(
     ) / const.hbar
 
     return C_rho_nue, C_rho_numu, C_n_nue, C_n_numu
+
+####################################################################
+#   EM-coupled thermal relic chi (from em_dm: LCDM + m_chi model)  #
+####################################################################
+
+# Floor on m_chi (MeV) only to keep K1/K2 finite inside the jnp.where branches of the massive functions
+# (both branches are evaluated, K1(0) = inf). Switch chi off with g_chi = 0: every term is proportional to g.
+M_CHI_FLOOR = 1e-6
+
+
+def rho_chi(T_g, m_chi, g_chi, chi_is_boson=False):
+    """Energy density (MeV^4) of a thermal relic chi of mass m_chi (MeV) and g_chi internal degrees of
+    freedom in equilibrium with the EM plasma at T_g (MeV); Bose-Einstein if chi_is_boson (static)."""
+    m = jnp.maximum(m_chi, M_CHI_FLOOR)
+    return rho_massive_BE(T_g, 0., m, g_chi) if chi_is_boson else rho_massive_FD(T_g, 0., m, g_chi)
+
+
+def p_chi(T_g, m_chi, g_chi, chi_is_boson=False):
+    """Pressure (MeV^4) of chi, as rho_chi."""
+    m = jnp.maximum(m_chi, M_CHI_FLOOR)
+    return p_massive_BE(T_g, 0., m, g_chi) if chi_is_boson else p_massive_FD(T_g, 0., m, g_chi)
+
+
+rho_chi_v = vmap(rho_chi, in_axes=(0, None, None, None))
+p_chi_v = vmap(p_chi, in_axes=(0, None, None, None))
+# rho_chi and d rho_chi / d T_g in one pass: chi's share of the EM sector's energy density and heat capacity in
+# the T_g equation (background.dY)
+rho_chi_and_deriv = value_and_grad(rho_chi, argnums=0)

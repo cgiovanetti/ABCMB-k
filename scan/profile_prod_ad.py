@@ -360,6 +360,12 @@ TRACE_EVALS = os.environ.get("PA_TRACE_EVALS", "0") != "0"   # log every batch b
 
 POIS = os.environ.get("PA_POIS", ",".join(k for k in ORDER if k not in BBN_NUIS)).split(",")
 POIS = [p.strip() for p in POIS if p.strip() in ORDER]
+# PA_POI2D="a,b": a 2D profile of the pair (profile_2d) instead of the 1D profiles; PA_NPTS2D points per axis unless
+# the config gives grid2d = {name: (lo, hi, n)}
+POI2D = [p.strip() for p in os.environ.get("PA_POI2D", "").split(",") if p.strip()]
+NPTS2D = int(os.environ.get("PA_NPTS2D", "11"))
+if POI2D and (len(POI2D) != 2 or POI2D[0] == POI2D[1] or not set(POI2D) <= set(ORDER)):
+    raise ValueError(f"PA_POI2D needs two distinct parameters of the order {ORDER}, got {POI2D}")
 RANK = int(os.environ.get("SLURM_PROCID", 0))
 NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 
@@ -406,22 +412,31 @@ else:
 # BBN stage (bbn = "linx"): LINX per row gives YHe / Neff / T_nu_massless from omega_b and Delta_Neff_init.
 # Delta_Neff_init is Delta Neff at the START of BBN, not the cosmology's (scan/bbn_stage.py).
 BBN = None
+LINX_ONLY = set()          # LINX inputs that are not ABCMB parameters (Delta_Neff_init, log10_m_chi, BBN nuisances)
 if TOY is None and str(CFG.get("bbn", "")).lower() == "linx":
-    from scan.bbn_stage import LinxStage, B_CHUNK as _BBN_CHUNK
+    from scan.bbn_stage import LinxStage
     for _k in ("omega_b", "Delta_Neff_init"):
         if _k not in ORDER:
             raise ValueError(f"{CONFIG_ABS}: bbn=linx needs {_k} in order")
     for _k in ("YHe", "Neff", "N_nu_massless", "T_nu_massless"):
         if _k in FIXED:
             raise ValueError(f"{CONFIG_ABS}: bbn=linx sets {_k}; remove it from fixed")
-    BBN = LinxStage(CFG.get("linx_reaction_net", "key_PRIMAT_2023"))
+    # config linx_chi = {"g_chi": 4.0, "boson": False}: an EM-coupled thermal relic chi of mass 10**log10_m_chi MeV
+    # in the plasma (the EM-WIMP model; abcmb/linx thermo.rho_chi); log10_m_chi is then a parameter of the run
+    _chi = CFG.get("linx_chi") or {}
+    BBN = LinxStage(CFG.get("linx_reaction_net", "key_PRIMAT_2023"), g_chi=float(_chi.get("g_chi", 0.)),
+                    chi_is_boson=bool(_chi.get("boson", False)))
+    if BBN.chi != ("log10_m_chi" in ORDER):
+        raise ValueError(f"{CONFIG_ABS}: log10_m_chi in order needs linx_chi with g_chi != 0, and vice versa")
+    LINX_ONLY = set(BBN.in_names) - {"omega_b"}
     I_OB, I_DN = ORDER.index("omega_b"), ORDER.index("Delta_Neff_init")
     # the stage inputs that are parameters of this run (global index -> stage column); the others stay at
     # their reference values (tau_n_fac 1, q 0)
     BBN_IDX = [ORDER.index(n) for n in BBN.in_names if n in ORDER]
     BBN_COLS = [BBN.in_names.index(ORDER[i]) for i in BBN_IDX]
     print(f"[bbn] LINX stage ({CFG.get('linx_reaction_net', 'key_PRIMAT_2023')}) on one host device, vmapped in "
-          f"chunks of {_BBN_CHUNK}; {BBN.nq} reactions" + (": BBN likelihood on, nuisances " + ", ".join(
+          f"chunks of {BBN.b_chunk}" + (f", m_chi = 10**log10_m_chi MeV (g_chi {_chi['g_chi']})" if BBN.chi else "")
+          + f"; {BBN.nq} reactions" + (": BBN likelihood on, nuisances " + ", ".join(
               f"{n} = {r}" for n, r in zip(BBN_NUIS[1:], BBN.reaction_names)) + f" and tau_n_fac (sigma "
               f"{BBN_LIKE['tau_n_sig']}); data Yp {BBN_LIKE['Yp']}, DH {BBN_LIKE['DH']}" if BBN_LIKE else ""),
           flush=True)
@@ -469,7 +484,7 @@ def build_dict(theta, bbn_y=None):
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = float(np.exp(theta[i]) / 1e10)
-        elif name == "Delta_Neff_init" or name in BBN_NUIS:
+        elif name in LINX_ONLY:
             continue
         else:
             p[name] = float(theta[i])
@@ -609,7 +624,7 @@ def _phys_to_derived(thD, bbn=None):
     for i, name in enumerate(ORDER):
         if name == "ln10As":
             p["A_s"] = jnp.exp(thD[i]) / 1e10
-        elif name == "Delta_Neff_init" or name in BBN_NUIS:
+        elif name in LINX_ONLY:
             continue
         else:
             p[name] = thD[i]
@@ -977,6 +992,8 @@ def _run_signature():
                  MS_NPTS=MS_NPTS, MS_SPREAD=MS_SPREAD, PLF_MAXIT=os.environ.get("PLF_MAXIT", "3000"))
     if LNA_GRID != "fixed":                 # results made before PA_LNA_GRID keep their signature
         knobs["LNA_GRID"] = LNA_GRID
+    if POI2D:
+        knobs["NPTS2D"] = NPTS2D
     h.update(repr(sorted(knobs.items())).encode())
     return h.hexdigest()[:16]
 
@@ -1316,6 +1333,86 @@ def profile_lockstep(pois, outdir):
         pass
 
 
+# ======================================================================
+# 2D profile (PA_POI2D="a,b"): both POIs fixed on a grid, every other parameter free
+# ======================================================================
+def _grid2d_for(poi):
+    """config grid2d[poi] = (lo, hi, n), else PA_NPTS2D points over the POI's 1D span (inside its bounds)."""
+    g = (CFG.get("grid2d") or {}).get(poi)
+    if g is not None:
+        return np.linspace(float(g[0]), float(g[1]), int(g[2]))
+    full = _grid_for(poi)
+    return np.linspace(full[0], full[-1], NPTS2D)
+
+
+def _npz2d(outdir, pa, pb):
+    part = f"_part{RANK}of{NPROC}" if (POI_SLICE and NPROC > 1) else ""
+    return os.path.join(outdir, f"profile_prod_ad_2d_{pa}_{pb}{TAG}{part}.npz")
+
+
+def profile_2d(pa, pb, outdir):
+    """chi2 profiled over every other parameter on the (pa, pb) grid: one LM row per point, started at the
+    config centre (with PA_WARM_LR at the better of it and the warm point's linear response). No spread
+    starts or branches. With PA_POI_SLICE each rank takes every NPROC-th pa value and writes its own part
+    npz (part<rank>of<nproc>); the parts together are the grid. npz: grid_a, grid_b, ja (this part's pa
+    indices), chi2 / converged / at_box / stalled / floor (n_ja, n_b), xstar (n_ja, n_b, D-2), derived_bbn."""
+    ia, ib = ORDER.index(pa), ORDER.index(pb)
+    ga, gb = _grid2d_for(pa), _grid2d_for(pb)
+    ja = np.arange(len(ga))[RANK::NPROC] if (POI_SLICE and NPROC > 1) else np.arange(len(ga))
+    A, Bm = np.meshgrid(ga[ja], gb, indexing="ij")
+    N, shape = A.size, A.shape
+    free = np.array([k for k in range(D) if k not in (ia, ib)])
+    FREE = np.tile(free, (N, 1))
+    BASE = np.tile(CENTER, (N, 1)); BASE[:, ia] = A.ravel(); BASE[:, ib] = Bm.ravel()
+    XLO, XHI = map(np.array, zip(*[scaled_box(f) for f in FREE]))
+    print(f"[2d] {pa} x {pb}: {len(ga)} x {len(gb)} grid, this rank {len(ja)} x {len(gb)} = {N} rows, "
+          f"{len(free)} free dims", flush=True)
+    ckpt = _ckpt_path(outdir, f"STATE_2d_{pa}_{pb}")
+    resume_state = None
+    if RESUME and os.path.exists(ckpt):
+        st = np.load(ckpt)
+        if st["BASE"].shape == BASE.shape and np.allclose(st["BASE"], BASE) and _same_run(st):
+            resume_state = {k: st[k] for k in st.files}
+            print(f"[resume] 2d LM checkpoint @ it{int(st['it'])} matches; continuing", flush=True)
+    if resume_state is not None:
+        X0 = np.array(resume_state["X0"], float)
+    else:
+        X0 = np.clip(np.zeros((N, len(free))), XLO, XHI)
+        if WARM_LR:
+            _, _, Hw = joint_fit(CENTER, 0)
+            dab = (BASE[:, [ia, ib]] - CENTER[[ia, ib]]) / SIGMA[[ia, ib]]
+            resp = np.linalg.lstsq(Hw[np.ix_(free, free)], Hw[np.ix_(free, [ia, ib])], rcond=None)[0]
+            Xlr = np.clip(-(dab @ resp.T), XLO, XHI)
+            fk = values_rows(np.tile(BASE, (2, 1)), np.tile(FREE, (2, 1)), np.concatenate([X0, Xlr]))
+            use = fk[N:] < fk[:N]
+            X0 = np.where(use[:, None], Xlr, X0)
+            print(f"[warm-lr] linear-response start kept for {int(use.sum())}/{N} rows", flush=True)
+    S = lm_rows(BASE, FREE, XLO, XHI, X0, log_prefix="[2d]", ckpt_path=ckpt, resume_state=resume_state)
+    T = dict(X=S["X"], G=S["G"], gnorm=S["gnorm"], floor=S["floor"], stalled=S["stalled"], FREE=FREE,
+             XLO=XLO, XHI=XHI)
+    conv, at_box = _row_conv(T)
+    th = np.array([theta_of(BASE[b], FREE[b], S["X"][b]) for b in range(N)])
+    extra = {}
+    if BBN is not None:
+        extra["derived_bbn"] = _bbn_values(th).reshape(shape + (-1,))
+    rs = lambda v: np.asarray(v).reshape(shape)
+    npz = _npz2d(outdir, pa, pb)
+    np.savez(npz, poi=np.array([pa, pb]), run_sig=_run_signature(), grid_a=ga, grid_b=gb, ja=ja,
+             chi2=rs(S["F"]), converged=rs(conv), at_box=rs(at_box), stalled=rs(S["stalled"]), floor=rs(S["floor"]),
+             gnorm=rs(S["gnorm"]), xstar=S["X"].reshape(shape + (-1,)), theta=th.reshape(shape + (-1,)),
+             nuis=np.array([ORDER[k] for k in free]), order=np.array(ORDER),
+             bound=np.array([[b if np.isfinite(b) else np.nan for b in (BLO[i], BHI[i])] for i in (ia, ib)]),
+             stop_reason=S["stop"], gtol=GTOL, dtol=DTOL, config=CONFIG_ABS, done=True, **extra)
+    k = int(np.argmin(S["F"]))
+    print(f"[2d] {pa} x {pb}: min chi2 {S['F'][k]:.3f} at {pa}={BASE[k, ia]:.5g}, {pb}={BASE[k, ib]:.5g}; converged "
+          f"{int(conv.sum())}/{N} ({int((conv & S['floor']).sum())} on the noise floor), stalled "
+          f"{int(S['stalled'].sum())}, held by the box {int(at_box.sum())} -> {npz}", flush=True)
+    try:
+        os.remove(ckpt)
+    except Exception:
+        pass
+
+
 def _plot(poi, grid, chi2, npz, rows=None, regions=None, bnd=(-np.inf, np.inf), ends=None):
     """Delta-chi2 of the envelope; with rows = (pv, chi2, kind) every other row's end point too
     (starts, branches), and the 68% union regions shaded when there are several. Next to a physical
@@ -1405,6 +1502,14 @@ def main():
           f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} multistart={MS_K}x{MS_NPTS}pts "
           f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}) poi_slice={POI_SLICE} nproc={NPROC} "
           f"sigtol={SIGTOL} xbox={XBOX} bounds={_BOUNDS or None} box={_BOX or None}", flush=True)
+    if POI2D:
+        npz = _npz2d(outdir, *POI2D)
+        if RESUME and os.path.exists(npz) and _same_run(np.load(npz, allow_pickle=True)):
+            print(f"[2d] resume: {npz} done, skip", flush=True)
+        else:
+            profile_2d(*POI2D, outdir)
+        print(f"rank {RANK}: done", flush=True)
+        return
     if POI_SLICE and NPROC > 1:
         pois = _resume_skip(POIS[RANK::NPROC], outdir)     # each rank: a disjoint POI subset
     else:

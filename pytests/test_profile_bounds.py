@@ -91,3 +91,17 @@ def test_box_holds_a_falling_direction_and_an_open_poi_is_a_lower_limit(falling)
     lo95 = -np.log(chi2_dist.ppf(CL95, 1) / 0.5 + np.exp(-3.0))
     assert abs(u["sigma1"][0] - lo1) < 2e-3 and abs(u["cl95"][0] - lo95) < 2e-3, (u["sigma1"], u["cl95"])
     assert u["converged"].all()                  # u is the POI: nothing free sits on a box face
+
+
+def test_2d_profile_matches_the_exact_surface(tmp_path):
+    """PA_POI2D path: chi2 profiled over (u, c) on an (m, n) grid is m^2 + (n + 1)^2 + 0.01 exactly (u on its flat
+    box face at 0, c at C0), every row converged, nothing held by the box, both grids inside the bounds."""
+    d = _driver(0.01)
+    d.NPTS2D = 5
+    d.profile_2d("m", "n", str(tmp_path))
+    r = np.load(d._npz2d(str(tmp_path), "m", "n"))
+    ga, gb = r["grid_a"], r["grid_b"]
+    assert ga[0] == 0.0 and gb[0] == 0.0 and r["chi2"].shape == (5, 5)
+    exact = ga[:, None] ** 2 + (gb[None, :] + 1.0) ** 2 + 0.01
+    assert np.abs(r["chi2"] - exact).max() < 1e-6, r["chi2"] - exact
+    assert r["converged"].all() and not r["at_box"].any() and str(r["stop_reason"]) == "converged"

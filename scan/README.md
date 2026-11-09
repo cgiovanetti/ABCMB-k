@@ -26,11 +26,14 @@ their fixed means, recomb lna grid) replaces it.
 | `lowl_like.py` | JAX Planck 2018 low-ell TT (Commander) and EE (SRoll2) likelihoods |
 | `bbn_stage.py` | `LinxStage`: batched LINX values and Jacobians on the host CPU (config `bbn: linx`) |
 | `compare_profile_runs.py` | overlays runs, lower envelope, parabola fit (CPU only) |
+| `profiles.ipynb` | self-contained notebook: loads `results/` and plots 1D / 2D profiles, nuisances, convergence |
 | `configs/lcdm_dneff_linx_plikfull.py` | `_v4linx` config |
-| `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v5bbn` config (cen/grid_sig = the joint fit of job 60327767) |
+| `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v6bbn` config (cen/grid_sig = the joint fit of job 60327767) |
+| `configs/lcdm_mchi_dneff_linx_bbnlike_plikfull.py` | EM-coupled WIMP: `_v6bbn` + log10_m_chi (1D `_v1emwimp`, 2D `_v1emwimp2d`) |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
 | `configs/toy_bounded.py` | toy objective for `pytests/test_profile_bounds.py` (bounds, one-sided limits, the box) |
 | `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
+| `profile_prod_emwimp.slurm` | the EM-WIMP launcher (1D; 2D with `PA_POI2D`) |
 | `results/` | outputs (git-ignored) |
 
 ## Reproducing
@@ -107,6 +110,16 @@ Jacobian for all rows of a call on one host device (vmapped in chunks of 64; bat
 lanes that fail recomputed alone); the engine runs with `bbn_type=""` and receives y + J (theta - theta_row),
 so the staged jvp carries LINX's exact tangent. With `bbn_like`, tau_n_fac and q0..q11 (key_recommended
 rate shifts) are appended to the order and profiled in every row.
+Config `linx_chi = {"g_chi": 4, "boson": False}` adds an EM-coupled thermal relic chi of mass
+10**`log10_m_chi` MeV, a LINX-only parameter like Delta_Neff_init: its annihilation heats the photons relative
+to the neutrinos (abcmb/linx thermo.rho_chi, background.dY, taken from em_dm; the background then solves with
+Kvaerno5, 1024 steps). Above ~30 MeV the model is LCDM.
+
+2D profiles (`PA_POI2D=a,b`): one LM row per point of the (a, b) grid, every other parameter free, started
+at the config centre (with `PA_WARM_LR`, at the better of it and the warm point's linear response); no spread
+starts or branches. With `PA_POI_SLICE` each rank takes every NPROC-th a value and writes
+`results/profile_prod_ad_2d_<a>_<b><TAG>_part<k>of<n>.npz` (grid_a, grid_b, ja, chi2 / converged / at_box / xstar /
+theta / derived_bbn on its rows); `profiles.ipynb` stitches the parts. Contours at the 2-parameter thresholds.
 
 Multimodality: `PA_MS_K` spread starts at `PA_MS_NPTS` grid points per POI, +-`PA_MS_SPREAD` profile sigmas
 along the softest GN eigendirections. A point is flagged for a stalled start, converged starts more than
@@ -184,6 +197,8 @@ BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 | `PA_MLE_PREPASS` | 0 | joint fit first, grids recentred on it |
 | `PA_MLE_MAXITER` | 40 | LM iterations of the prepass |
 | `PA_MLE_SIG_CLIP` | 3.0 | clamp of the prepass grid sigmas |
+| `PA_POI2D` | `''` | `a,b`: a 2D profile of the pair instead of the 1D profiles |
+| `PA_NPTS2D` | 11 | points per 2D axis, unless the config gives `grid2d = {name: (lo, hi, n)}` |
 | `PLF_MAXIT` | 3000 | SPG iterations of the plik nuisance profile (`plik_full.py`) |
 
 ## Gotchas

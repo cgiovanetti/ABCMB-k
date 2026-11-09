@@ -6,6 +6,32 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-09 — EM-coupled WIMP (from em_dm), 2D profiles, profiles.ipynb
+---------------------------------------------------------------------
+- abcmb/linx: the EM-coupled thermal relic chi of em_dm and nothing else: thermo.rho_chi / p_chi (FD or BE, g_chi,
+  m_chi floored at 1e-6 MeV), and in background.BackgroundModel(g_chi, chi_is_boson)(Delt_Neff_init, m_chi) chi in
+  the EM sector of dY (its annihilation heats the photons) and in the rho_NP / P_NP slot of the output; Kvaerno5
+  and 1024 steps when chi is on. Ported onto this tree's dense-output background. Against em_dm's LINX
+  (key_PRIMAT_2023, 2-50 MeV): Neff equal to 1e-8..4e-7; Y_p / D/H offset by a mass-independent +1.9e-4 / +1.1e-3
+  (also at 50 MeV, where chi is off: the two vendored LINX copies' abundance paths). chi off: values and Jacobian
+  1.6e-11 from HEAD (a different compiled program), main.py untouched.
+- scan/bbn_stage.py: LinxStage(g_chi, chi_is_boson) with input log10_m_chi (Jacobian column through the
+  background's jvp, like Delta_Neff_init); with chi every chunk is exactly 32 rows (one batch shape: each Kvaerno5
+  LINX program takes ~20 min to compile on the host CPU). Driver: config linx_chi; LINX-only inputs skipped in the
+  ABCMB dicts by name (LINX_ONLY).
+- 2D profiles: PA_POI2D=a,b (profile_2d): one LM row per (a, b) grid point, every other parameter free, grids from
+  config grid2d or PA_NPTS2D; with PA_POI_SLICE one part npz per rank (every NPROC-th a value). CPU test on the
+  bounded toy: the exact surface to 1e-6.
+- Config lcdm_mchi_dneff_linx_bbnlike_plikfull.py (the _v6bbn likelihood + log10_m_chi, g_chi 4 Dirac) and
+  launcher profile_prod_emwimp.slurm; 2D grid 7-63 MeV x Delta_Neff_init -1.2..2.4 (11 x 10, <= 30 rows per node)
+  placed with a LINX-only map (below ~6 MeV the BBN chi2 stays > 40 for any Delta_Neff_init). At the _v6bbn best
+  fit with m_chi 100 / 316 MeV the chi2 is 2763.1972 / .1973 (_v6bbn 2763.197), Neff 2.98259; at 40 / 20 MeV
+  +0.23 / +6.0 before re-profiling. Shakeouts on a 40 GB A100 (launcher environment, 1 iteration): 1D at 8 rows x 20
+  directions per GPU peaked at 37.9 GB, so the launcher uses 6 rows per GPU (PA_AD_BCHUNK 24); 2D 13 rows ran end to
+  end (20 GB). PA_STEP_MAX 2 for these runs: rows that start far (light chi) need fewer iterations. With the
+  persistent compile cache warm, a 32-row chi LINX Jacobian takes ~200 s.
+- scan/profiles.ipynb: one self-contained notebook (numpy / scipy / matplotlib) for the 1D / 2D results.
+
 2026-11-09 — Bounds and one-sided intervals back (and extended); convergence is the stop
 ---------------------------------------------------------------------------------------
 - Restored from the pre-trim driver (the review trim 9a2e1f6 cut them): config `bounds` (hard optimizer

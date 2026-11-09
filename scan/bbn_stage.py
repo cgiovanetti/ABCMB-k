@@ -45,10 +45,13 @@ lx.linear_solve = _linear_solve_nothrow
 
 B_CHUNK = 64            # cosmologies per vmapped values call (bounds memory and the union-of-steps of a vmapped
 B_PAD = 16              # solve); chunks are padded to a multiple of B_PAD so only 4 batch shapes ever compile
+B_CHI = 32              # with chi: every chunk exactly 32 rows, ONE batch shape (the Kvaerno5 background makes each
+                        # LINX program take ~20 min to compile on the host CPU)
 JAC_DEVICES = 4         # host devices for the per-lane Jacobian fallback (values_and_jac). Each compiles its own
                         # copy (~2 min, not persistently cacheable), so more devices only pay off for many lanes
 BG_RTOL, BG_ATOL = 1e-8, 1e-10   # the background: the engine's defaults (tighter buys nothing on the dense grid)
 BG_MAX_STEPS = 512
+BG_MAX_STEPS_CHI = 1024          # with chi (stiff, Kvaerno5): converged well below this (em_dm)
 BG_N_OUT = 4096                  # the background's dense-interpolant output grid (abcmb/linx/background.py n_out)
 AB_RTOL, AB_ATOL = 1e-8, 1e-11   # the network: 100x tighter than the engine's 1e-6 / 1e-9 for +12% time; YHe
 AB_MAX_STEPS = 16384             # roughness along omega_b 7.8e-7 -> 3.4e-8; ~5000 steps at 1e-8
@@ -60,18 +63,24 @@ OUT_NAMES = ("YHe", "Neff", "T_nu_massless", "YHe_BBN", "DH")   # the stage's ou
 
 
 class LinxStage:
-    """x = (omega_b, Delta_Neff_init, tau_n_fac, q_1..q_nq) -> (YHe (CMB mass fraction), Neff,
+    """x = (omega_b, Delta_Neff_init[, log10_m_chi], tau_n_fac, q_1..q_nq) -> (YHe (CMB mass fraction), Neff,
     T_nu_massless / T_CMB, YHe_BBN, D/H x 1e5), batched on one host CPU device; values() and values_and_jac()
     take and return numpy. The inputs after the first two are LINX's BBN nuisances: the neutron-lifetime
     factor and one log-normal rate shift (in sigmas) per reaction of the network; a caller without them
-    passes 1 and 0."""
+    passes 1 and 0. With g_chi != 0 an EM-coupled thermal relic chi (abcmb/linx thermo.rho_chi) of mass
+    10**log10_m_chi MeV is in the plasma (the EM-WIMP model); log10_m_chi is then the third input."""
 
-    def __init__(self, reaction_net="key_PRIMAT_2023"):
-        self.bg = BackgroundModel()
+    def __init__(self, reaction_net="key_PRIMAT_2023", g_chi=0., chi_is_boson=False):
+        self.chi = g_chi != 0.
+        self.bg = BackgroundModel(g_chi=g_chi, chi_is_boson=chi_is_boson)
+        self.bg_max_steps = BG_MAX_STEPS_CHI if self.chi else BG_MAX_STEPS
+        self.b_chunk, self.b_pad = (B_CHI, B_CHI) if self.chi else (B_CHUNK, B_PAD)
         self.ab = AbundanceModel(NuclearRates(nuclear_net=reaction_net))
         self.nq = len(self.ab.nuclear_net.reactions)
         self.reaction_names = tuple(self.ab.nuclear_net.reactions_names)
-        self.in_names = ("omega_b", "Delta_Neff_init", "tau_n_fac") + tuple(f"q{i}" for i in range(self.nq))
+        self.in_names = (("omega_b", "Delta_Neff_init") + (("log10_m_chi",) if self.chi else ()) + ("tau_n_fac",)
+                         + tuple(f"q{i}" for i in range(self.nq)))
+        self.i_tau = self.in_names.index("tau_n_fac")     # the network-only inputs: omega_b and from here on
         self.n_in = len(self.in_names)
         self.cpus = jax.devices("cpu")
         self.dev = self.cpus[0]
@@ -83,12 +92,15 @@ class LinxStage:
     def x_default(self, omega_b, dneff):
         """(N, n_in) inputs with the nuisances at their reference values (tau_n_fac 1, q 0)."""
         ob = np.asarray(omega_b, float).reshape(-1); dn = np.asarray(dneff, float).reshape(-1)
-        x = np.zeros((len(ob), self.n_in)); x[:, 0] = ob; x[:, 1] = dn; x[:, 2] = 1.0
+        x = np.zeros((len(ob), self.n_in)); x[:, 0] = ob; x[:, 1] = dn; x[:, self.i_tau] = 1.0
+        if self.chi:
+            x[:, 2] = 3.0                                  # 1 GeV: decoupled (a run sets its own)
         return x
 
     # ---- one cosmology: exactly the engine's bbn_type="linx" branch (abcmb/main.py) ----
-    def _background(self, dneff):
-        return self.bg(dneff, rtol=BG_RTOL, atol=BG_ATOL, max_steps=BG_MAX_STEPS, n_out=BG_N_OUT)
+    def _background(self, dneff, log10_m=0.):
+        return self.bg(dneff, m_chi=10.0 ** log10_m, rtol=BG_RTOL, atol=BG_ATOL, max_steps=self.bg_max_steps,
+                       n_out=BG_N_OUT)
 
     def _rest(self, bg_out, eta_fac, tau_n_fac, q):
         """(YHe, Neff, T_nu, YHe_BBN, DH) from the background outputs, eta_fac = omega_b * Omegabh2_to_eta0
@@ -105,27 +117,36 @@ class LinxStage:
 
     _ETA = linxconst.Omegabh2_to_eta0 / linxconst.eta0
 
+    def _lm(self, x):
+        return x[2] if self.chi else 0.
+
     def _one_x(self, x):
-        return self._rest(self._background(x[1]), x[0] * self._ETA, x[2], x[3:])
+        return self._rest(self._background(x[1], self._lm(x)), x[0] * self._ETA, x[self.i_tau], x[self.i_tau + 1:])
 
     def _one_vj(self, x):
-        """value (5,) and Jacobian (5, n_in). The Delta_Neff_init column goes through the background's jvp
-        and the network; every other input enters the network only, so those columns come from forward-mode
+        """value (5,) and Jacobian (5, n_in). The Delta_Neff_init (and log10_m_chi) columns go through the
+        background's jvp and the network, one jvp each; every other input enters the network only, so those columns come from forward-mode
         over the network alone with the background held (jax.jacfwd there is fine: the zero-tangent background
         solve that made jacfwd over ALL inputs go NaN never happens)."""
         eta = x[0] * self._ETA
-        bg_out, bg_dot = jax.jvp(self._background, (x[1],), (jnp.ones_like(x[1]),))
-        y, y_dn = jax.jvp(lambda b: self._rest(b, eta, x[2], x[3:]), (bg_out,), (bg_dot,))
+        net = lambda b: self._rest(b, eta, x[self.i_tau], x[self.i_tau + 1:])
+        lm = self._lm(x)
+        bg_out, bg_dot = jax.jvp(lambda d: self._background(d, lm), (x[1],), (jnp.ones_like(x[1]),))
+        y, y_dn = jax.jvp(net, (bg_out,), (bg_dot,))
+        cols = [y_dn[:, None]]
+        if self.chi:
+            _, bg_dm = jax.jvp(lambda m: self._background(x[1], m), (x[2],), (jnp.ones_like(x[2]),))
+            cols.append(jax.jvp(net, (bg_out,), (bg_dm,))[1][:, None])
         bg_c = jax.lax.stop_gradient(bg_out)
-        u0 = jnp.concatenate([x[:1], x[2:]])                      # (omega_b, tau_n_fac, q)
-        Ju = jax.jacfwd(lambda u: self._rest(bg_c, u[0] * self._ETA, u[1], u[2:]))(u0)   # (5, n_in - 1)
-        return y, jnp.concatenate([Ju[:, :1], y_dn[:, None], Ju[:, 1:]], axis=1)
+        u0 = jnp.concatenate([x[:1], x[self.i_tau:]])            # (omega_b, tau_n_fac, q)
+        Ju = jax.jacfwd(lambda u: self._rest(bg_c, u[0] * self._ETA, u[1], u[2:]))(u0)   # (5, n_net)
+        return y, jnp.concatenate([Ju[:, :1]] + cols + [Ju[:, 1:]], axis=1)
 
-    # ---- batching: chunks of <= B_CHUNK, each padded to a multiple of B_PAD (shape reuse) ----
+    # ---- batching: chunks of <= b_chunk, each padded to a multiple of b_pad (shape reuse) ----
     def _chunks(self, x):
         x = np.asarray(x, float).reshape(-1, self.n_in)
-        for s in range(0, len(x), B_CHUNK):
-            xc = x[s:s + B_CHUNK]; n = len(xc); m = -(-n // B_PAD) * B_PAD
+        for s in range(0, len(x), self.b_chunk):
+            xc = x[s:s + self.b_chunk]; n = len(xc); m = -(-n // self.b_pad) * self.b_pad
             if m > n:
                 xc = np.concatenate([xc, np.repeat(xc[-1:], m - n, 0)])
             yield n, jax.device_put(jnp.asarray(xc), self.dev)
