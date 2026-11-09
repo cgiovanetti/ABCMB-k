@@ -42,6 +42,9 @@ their fixed means, recomb lna grid) replaces it.
 cd /pscratch/sd/c/carag/ABCMB-k
 sbatch scan/profile_prod_linx_dneff.slurm      # _v4linx -> logs/abcmb_pf_linx_<jobid>.out
 sbatch scan/profile_prod_linx_bbnlike.slurm    # _v6bbn  -> logs/abcmb_pf_bbn_<jobid>.out
+sbatch scan/profile_prod_emwimp.slurm         # _v1emwimp (EM WIMP, 1D) -> logs/abcmb_pf_emwimp_<jobid>.out
+# the 2D profile: set the pair in the environment (sbatch --export would split it at the comma)
+PA_POI2D=log10_m_chi,Delta_Neff_init PA_TAG=_v1emwimp2d PA_AD_BCHUNK=32 sbatch scan/profile_prod_emwimp.slurm
 ```
 
 Each launcher takes 4 GPU nodes on `regular` (account m5403_g), one task per node with `PA_POI_SLICE=1`

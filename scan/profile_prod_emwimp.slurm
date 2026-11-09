@@ -14,8 +14,9 @@
 #
 # EM-coupled WIMP (scan/configs/lcdm_mchi_dneff_linx_bbnlike_plikfull.py): the _v6bbn data and LINX nuisances,
 # LCDM + Delta_Neff_init + log10_m_chi. 1D: the 8 POIs dealt out over 4 nodes (PA_POI_SLICE), tag _v1emwimp.
-# 2D: sbatch --export=ALL,PA_POI2D=log10_m_chi,Delta_Neff_init,PA_TAG=_v1emwimp2d,PA_AD_BCHUNK=32 scan/profile_prod_emwimp.slurm
-# (the config's grid2d rows dealt out over the nodes, one part npz per node). Resumable: resubmit the same command.
+# 2D: PA_POI2D=log10_m_chi,Delta_Neff_init PA_TAG=_v1emwimp2d PA_AD_BCHUNK=32 sbatch scan/profile_prod_emwimp.slurm
+# (in the environment: sbatch --export would split the pair at the comma; the config's grid2d rows dealt out over
+# the nodes, one part npz per node). Resumable: resubmit the same command.
 
 module load conda
 conda activate actdr6
