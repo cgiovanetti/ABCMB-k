@@ -1,0 +1,63 @@
+# Reference posterior for hmc/run_lcdm.py: the same data, priors and neutrino content, sampled by
+# cobaya's Metropolis-Hastings with CLASS (v3.3.4, pip classy) instead of HMC with ABCMB-k.
+#   plik-lite TTTEEE (native) + Commander low-ell TT (native) + SimAll low-ell EE (native, floor lookup)
+#   Neff 3.044 all massless (N_ur 3.044, no ncdm), YHe from CLASS's default sBBN_2025 (= ABCMB's table)
+#   delta_l_max 1254 = ABCMB-k's l_max/2 (CLASS 3.3.4's default 500 differs by ~1% in lensed TT at l~2500)
+# Launcher: hmc/reference/run_class_mh.slurm
+output: /pscratch/sd/c/carag/ABCMB-k/hmc/results/ref/class_mh
+packages_path: /pscratch/sd/c/carag/Neal_ACTDR6/cobaya_packages
+resume: true
+likelihood:
+  planck_2018_lowl.TT: null
+  planck_2018_lowl.EE: null
+  planck_2018_highl_plik.TTTEEE_lite_native: null
+theory:
+  classy:
+    path: global
+    extra_args:
+      N_ur: 3.044
+      N_ncdm: 0
+      delta_l_max: 1254
+params:
+  omega_b:
+    prior: {min: 0.005, max: 0.1}
+    ref: {dist: norm, loc: 0.02238, scale: 0.0001}
+    proposal: 0.0001
+    latex: \omega_\mathrm{b}
+  omega_cdm:
+    prior: {min: 0.001, max: 0.99}
+    ref: {dist: norm, loc: 0.1201, scale: 0.001}
+    proposal: 0.001
+    latex: \omega_\mathrm{cdm}
+  H0:
+    prior: {min: 40, max: 100}
+    ref: {dist: norm, loc: 67.3, scale: 0.5}
+    proposal: 0.5
+    latex: H_0
+  logA:
+    prior: {min: 1.61, max: 3.91}
+    ref: {dist: norm, loc: 3.045, scale: 0.01}
+    proposal: 0.01
+    drop: true
+    latex: \ln(10^{10} A_\mathrm{s})
+  A_s:
+    value: 'lambda logA: 1e-10*np.exp(logA)'
+    latex: A_\mathrm{s}
+  n_s:
+    prior: {min: 0.8, max: 1.2}
+    ref: {dist: norm, loc: 0.966, scale: 0.004}
+    proposal: 0.004
+    latex: n_\mathrm{s}
+  tau_reio:
+    prior: {min: 0.01, max: 0.8}
+    ref: {dist: norm, loc: 0.054, scale: 0.006}
+    proposal: 0.006
+    latex: \tau_\mathrm{reio}
+  Omega_m:
+    latex: \Omega_\mathrm{m}
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    Rminus1_cl_stop: 0.1
+    learn_proposal: true
+    max_tries: 10000

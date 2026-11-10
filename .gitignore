@@ -12,3 +12,6 @@
 logs/
 scan/results/
 .pr_review/
+
+# HMC outputs (chains, checkpoints, figures)
+hmc/results/
