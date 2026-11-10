@@ -24,6 +24,7 @@ This file is a condensed record of the current state. The full session log (3173
   spectrum sub-batches of 2) 58.7 min per gradient block incl. compile; 32 values (8 per GPU) 18.3 min incl.
   compile; 16 values per GPU reach 32.8 GB, so PA_VAL_CHUNK 32. ~3.6 min per row-iteration per node vs ~0.5 for
   the Planck profiles.
+- _v1act submitted: job 61111914 (regular, 6 nodes, 20 h; estimate 10-12 h, ~70 node-h).
 
 2026-11-10 — _v1emwimp2d_lo: the Delta_Neff_init = -1.6 row of the EM-WIMP 2D profile
 -------------------------------------------------------------------------------------
