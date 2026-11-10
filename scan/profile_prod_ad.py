@@ -364,6 +364,9 @@ POIS = [p.strip() for p in POIS if p.strip() in ORDER]
 # the config gives grid2d = {name: (lo, hi, n)}
 POI2D = [p.strip() for p in os.environ.get("PA_POI2D", "").split(",") if p.strip()]
 NPTS2D = int(os.environ.get("PA_NPTS2D", "11"))
+# PA_GRID2D='{"name": [v, ...]}' (JSON, explicit values) overrides the config grid2d per axis, e.g. one more row
+# of an existing 2D profile under a new PA_TAG (the notebook merges tags by coordinate)
+GRID2D_ENV = os.environ.get("PA_GRID2D", "")
 if POI2D and (len(POI2D) != 2 or POI2D[0] == POI2D[1] or not set(POI2D) <= set(ORDER)):
     raise ValueError(f"PA_POI2D needs two distinct parameters of the order {ORDER}, got {POI2D}")
 RANK = int(os.environ.get("SLURM_PROCID", 0))
@@ -994,6 +997,8 @@ def _run_signature():
         knobs["LNA_GRID"] = LNA_GRID
     if POI2D:
         knobs["NPTS2D"] = NPTS2D
+        if GRID2D_ENV:
+            knobs["GRID2D"] = GRID2D_ENV
     h.update(repr(sorted(knobs.items())).encode())
     return h.hexdigest()[:16]
 
@@ -1337,8 +1342,13 @@ def profile_lockstep(pois, outdir):
 # 2D profile (PA_POI2D="a,b"): both POIs fixed on a grid, every other parameter free
 # ======================================================================
 def _grid2d_for(poi):
-    """config grid2d[poi] = (lo, hi, n), else PA_NPTS2D points over the POI's 1D span (inside its bounds)."""
-    g = (CFG.get("grid2d") or {}).get(poi)
+    """the 2D grid of one POI: PA_GRID2D or config grid2d[poi] as a tuple (lo, hi, n) or a list of values, else
+    PA_NPTS2D points over the POI's 1D span (inside its bounds)."""
+    import json
+    spec = dict(CFG.get("grid2d") or {}); spec.update(json.loads(GRID2D_ENV) if GRID2D_ENV else {})
+    g = spec.get(poi)
+    if isinstance(g, list):
+        return np.asarray(g, float)
     if g is not None:
         return np.linspace(float(g[0]), float(g[1]), int(g[2]))
     full = _grid_for(poi)

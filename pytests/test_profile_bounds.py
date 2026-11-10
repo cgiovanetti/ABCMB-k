@@ -105,3 +105,21 @@ def test_2d_profile_matches_the_exact_surface(tmp_path):
     exact = ga[:, None] ** 2 + (gb[None, :] + 1.0) ** 2 + 0.01
     assert np.abs(r["chi2"] - exact).max() < 1e-6, r["chi2"] - exact
     assert r["converged"].all() and not r["at_box"].any() and str(r["stop_reason"]) == "converged"
+
+
+def test_2d_extra_row_from_the_environment(tmp_path):
+    """PA_GRID2D (explicit values) overrides one axis of the 2D grid: a single extra row, and the signature changes."""
+    d = _driver(0.01)
+    sig0 = d._run_signature()
+    os.environ["PA_POI2D"], os.environ["PA_GRID2D"] = "m,n", '{"n": [0.25]}'
+    try:
+        d = importlib.reload(d)
+        d.NPTS2D = 5
+        assert d._run_signature() != sig0
+        d.profile_2d("m", "n", str(tmp_path))
+        r = np.load(d._npz2d(str(tmp_path), "m", "n"))
+        assert r["chi2"].shape == (5, 1) and r["grid_b"][0] == 0.25
+        assert np.abs(r["chi2"][:, 0] - (r["grid_a"] ** 2 + 1.25 ** 2 + 0.01)).max() < 1e-6
+    finally:
+        del os.environ["PA_POI2D"], os.environ["PA_GRID2D"]
+        importlib.reload(d)
