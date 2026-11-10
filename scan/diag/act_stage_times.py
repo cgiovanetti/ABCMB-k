@@ -2,7 +2,7 @@
 act_lmax_check config, to see what the ACT l range costs: setup (pre-recomb + HyRex + get_BG), perturbations,
 spectrum (LoS recurrence + lensing). Also n_k of the perturbation grid and the state size.
 
-  python hmc/diag/act_stage_times.py <cfg> <B>      # B sharded over the visible GPUs; 2 passes, the 2nd is timed
+  python scan/diag/act_stage_times.py <cfg> <B>      # B sharded over the visible GPUs; 2 passes, the 2nd is timed
 """
 import os, sys, time
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
@@ -11,7 +11,7 @@ import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
 from abcmb.main import Model
-from hmc.diag.act_lmax_check import COMMON, CFGS, FIXED, cosmologies
+from scan.diag.act_lmax_check import COMMON, CFGS, FIXED, cosmologies
 
 cfg, B = sys.argv[1], int(sys.argv[2])
 model = Model(**COMMON, **CFGS[cfg])

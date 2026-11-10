@@ -24,6 +24,7 @@ their fixed means, recomb lna grid) replaces it.
 | `lm_tools.py` | pure numpy: projected LM step, Newton decrement, spread starts, clustering/flags, union of regions |
 | `batched_grad.py` | `staged_cl_and_grad`: C_ell and their tangents, one `jax.jvp` per batched engine stage |
 | `plik_full.py` | full plik via clipy; 21 nuisances profiled per cosmology at fixed theory (bounded SPG) |
+| `act_lite.py` | ACT DR6 TT/TE/EE CMB-only (candl); A_act, P_act profiled per cosmology at fixed theory (config `high_ell: act_lite`) |
 | `lowl_like.py` | JAX Planck 2018 low-ell TT (Commander) and EE (SRoll2 or SimAll: config `lowee`) likelihoods |
 | `bbn_stage.py` | `LinxStage`: batched LINX values and Jacobians on the host CPU (config `bbn: linx`) |
 | `compare_profile_runs.py` | overlays runs, lower envelope, parabola fit (CPU only) |
@@ -32,10 +33,13 @@ their fixed means, recomb lna grid) replaces it.
 | `configs/lcdm_dneff_linx_simall_plikfull.py` | `_v7simall` config: `_v4linx` with `lowee: "simall"` |
 | `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v6bbn` config (cen/grid_sig = the joint fit of job 60327767) |
 | `configs/lcdm_mchi_dneff_linx_bbnlike_plikfull.py` | EM-coupled WIMP: `_v6bbn` + log10_m_chi (1D `_v1emwimp`, 2D `_v1emwimp2d`) |
+| `configs/lcdm_actlite.py` | LCDM with ACT DR6 lite + SRoll2 lowE (`_v1act`), one 0.06 eV neutrino, YHe from the sBBN table |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
 | `configs/toy_bounded.py` | toy objective for `pytests/test_profile_bounds.py` (bounds, one-sided limits, the box) |
 | `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
 | `profile_prod_emwimp.slurm` | the EM-WIMP launcher (1D; 2D with `PA_POI2D`) |
+| `profile_prod_act.slurm` | the ACT launcher (`_v1act`; candl from the venv `envs/abcmb-k`) |
+| `diag/` | ACT l-range checks (`act_lmax_check.py`: delta_l_max / hierarchy / truncation vs the ACT paper's CLASS range), `act_lite_check.py` (= candl), `lensing_stream_check.py` |
 | `results/` | outputs (git-ignored) |
 
 ## Reproducing
@@ -110,6 +114,15 @@ visibility-adaptive grid rebuilt per row moved its nodes jaggedly. The engine si
 exp(-kappa) lookups with exact slopes, the visibility derivative from d exp(-kappa)/d lna = exp(-kappa)/(tau_c aH),
 C^1 x_e and j_l lookups, Tsit5 optical depth, Debye j_l through u_3 at
 large x and `dtmax_PE` 0.03 for k < 0.06, so AD tangents agree with finite differences.
+
+ACT (config `high_ell: act_lite`, `scan/act_lite.py`): ACT DR6 TT/TE/EE CMB-only through candl's data, the
+residual and covariance in plik_full's interface, A_act (prior N(1, 0.003)) and P_act (flat [0.9, 1.1]) profiled per
+cosmology by a 2-parameter Newton and entering the Schur complement like plik's nuisances; the low-ell likelihoods
+take calibration 1. Engine for it (overridable by config `engine`): lensed l_max 6325 (the kept windows end there),
+delta_l_max 5000 (unlensed and phiphi to 11325, the ACT paper's CLASS range: chi2 within 0.006 of it, while 1800 is up
+to 0.6 off), photon hierarchy 40 / 60, HALOFIT, computed j_l, `lensing_streamed` (the matrix lensing's jvp needs ~60
+GB per row). Config `bbn: table` takes YHe(omega_b) from the sBBN table. The venv
+`/global/common/software/m3166/carag/envs/abcmb-k` (actdr6 + candl) is needed; `profile_prod_act.slurm` activates it.
 
 LINX (config `bbn: linx`): the POI is Delta_Neff_init, Delta Neff at the START of BBN (Neff ~ 3.044 +
 0.262 x; the true Neff is read back per row). `LinxStage` computes (YHe, Neff, T_nu, Y_p, D/H) and their

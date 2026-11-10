@@ -6,6 +6,25 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — ACT DR6 lite in the profile driver (high_ell act_lite); the ACT HMC files removed
+---------------------------------------------------------------------------------------------
+- The ACT work is for the profiles, not the HMC: hmc/posterior_act.py, run_act.py, run_act.slurm and the README
+  section are gone (the HMC job was cancelled while pending); the l-range diagnostics moved to scan/diag/ (outputs
+  scan/results/act_lmax/). The entry below keeps its numbers; its hmc/ paths now live in scan/diag/.
+- scan/act_lite.py (ACTLite): candl's ACT DR6 TT/TE/EE data (windows, covariance, bandpowers) in plik_full's
+  interface; A_act (prior N(1, 0.003)) and P_act (flat [0.9, 1.1]) profiled per cosmology by a 2-parameter Newton.
+  = candl's chi_square to 5e-13; the profile = Nelder-Mead on candl's chi2 + prior (scan/diag/act_lite_check.py).
+- Driver: config high_ell "plik_full" (default, numerically unchanged) or "act_lite"; per-likelihood engine
+  settings (plik: hierarchy 12/10; ACT: l_max 6325, delta_l_max 5000, 40/60, halofit, computed j_l, streamed
+  lensing) overridable by config engine; config bbn "table" (YHe from the sBBN table, with its tangent); the low-ell
+  likelihoods take calibration 1 when the high-ell likelihood has none (I_CAL None). Toy tests 11/11.
+- configs/lcdm_actlite.py (LCDM, ACT + SRoll2, one 0.06 eV neutrino, Neff 3.044, YHe table) and
+  profile_prod_act.slurm (6 nodes, one POI each, 20 h, prepass on).
+- Cost at the production block shape (one 40 GB node, massive neutrino): 32 rows x 5 directions (8 per GPU,
+  spectrum sub-batches of 2) 58.7 min per gradient block incl. compile; 32 values (8 per GPU) 18.3 min incl.
+  compile; 16 values per GPU reach 32.8 GB, so PA_VAL_CHUNK 32. ~3.6 min per row-iteration per node vs ~0.5 for
+  the Planck profiles.
+
 2026-11-10 — _v1emwimp2d_lo: the Delta_Neff_init = -1.6 row of the EM-WIMP 2D profile
 -------------------------------------------------------------------------------------
 Job 61084345 (1h53m, 1 node; PA_GRID2D): 10/11 converged, 1 held by the box; min chi2 2775.25 (Delta chi2 12 above

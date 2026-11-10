@@ -16,7 +16,8 @@ profiled chi2, the best fit, 68/95% intervals and a per-point AD convergence cer
   3. Optimizer: Levenberg-Marquardt on the Gauss-Newton curvature, AD only. Every
      gradient call pushes the free directions through ABCMB (forward mode) to the
      C_ell tangents dC_ell/dtheta and turns them into the chi2 gradient AND its
-     Gauss-Newton matrix J^T W J (plik's own data covariance; the plik nuisances
+     Gauss-Newton matrix J^T W J (the high-ell likelihood's data covariance, config
+     high_ell: full plik or ACT DR6 lite; its nuisances
      enter through the profiled-likelihood Schur complement; the low-ell
      likelihoods through their exact Hessian in D_ell), at the row's own point.
      Each iteration tries PA_LM_K damping values per active row in one batched
@@ -288,7 +289,10 @@ if float(FIXED.get("N_nu_massive", 0)) > 0 and _species.MassiveNeutrino not in t
                      f"user_species=(species.MassiveNeutrino,); without it ABCMB drops the massive neutrino")
 
 # ---------------- env config (overrides config-file defaults) ----------------
-LMAX = int(os.environ.get("PA_LMAX", 2508))
+# high-ell likelihood (config high_ell): "plik_full" (Planck 2018 full plik, scan/plik_full.py) or "act_lite" (ACT DR6
+# TT/TE/EE CMB-only via candl, scan/act_lite.py). Each has its engine settings (ENGINE below) and default l_max.
+HIGH_ELL = str(CFG.get("high_ell", "plik_full")).lower()
+LMAX = int(os.environ.get("PA_LMAX", CFG.get("l_max", 6325 if HIGH_ELL == "act_lite" else 2508)))
 NPTS = int(os.environ.get("PA_NPTS", CFG.get("npts", 25)))
 NSIG = float(os.environ.get("PA_NSIG", CFG.get("nsig", 3.0)))
 MAXIT = int(os.environ.get("PA_MAXIT", 40))
@@ -382,36 +386,62 @@ USE_LOWEE = TOY is None and bool(CFG.get("use_lowee", True))
 LOWEE = str(CFG.get("lowee", "sroll2")).lower()     # low-ell EE table: "sroll2" or "simall" (Planck 2018 lowE)
 if LOWEE not in LOWEE_TABLES:
     raise ValueError(f"{CONFIG_ABS}: lowee must be one of {sorted(LOWEE_TABLES)}, not {LOWEE!r}")
+# YHe: config bbn = "linx" (the LINX stage below), "table" (ABCMB's sBBN table, YHe(omega_b) with its tangent), or
+# absent (fixed YHe / ABCMB's default)
+BBN_TYPE = str(CFG.get("bbn", "")).lower()
+if BBN_TYPE not in ("", "linx", "table"):
+    raise ValueError(f"{CONFIG_ABS}: bbn must be 'linx', 'table' or absent, not {BBN_TYPE!r}")
 if TOY is None:
-    if str(CFG.get("high_ell", "")).lower() != "plik_full":
-        raise ValueError(f"{CONFIG_ABS}: needs high_ell = 'plik_full' (the only high-ell likelihood)")
+    if HIGH_ELL not in ("plik_full", "act_lite"):
+        raise ValueError(f"{CONFIG_ABS}: high_ell must be 'plik_full' or 'act_lite', not {HIGH_ELL!r}")
     lowee = LowLEE(LOWEE_TABLES[LOWEE]) if USE_LOWEE else None
     lowtt = LowLTT() if USE_LOWTT else None
-    # full Planck plik (clipy): its 21 floated foreground/calibration nuisances (of 47; 26 fixed) are profiled per cosmology
-    # at fixed ABCMB theory (scan/plik_full.py)
-    from scan.plik_full import PlikFull, FLOAT_NAMES as _PLF_NAMES
-    plf = PlikFull()
-    I_APL = _PLF_NAMES.index("A_planck")
+    if HIGH_ELL == "plik_full":
+        # full Planck plik (clipy): its 21 floated foreground/calibration nuisances (of 47; 26 fixed) are profiled
+        # per cosmology at fixed ABCMB theory (scan/plik_full.py). The low-ell likelihoods take its A_planck.
+        from scan.plik_full import PlikFull, FLOAT_NAMES as HIL_NAMES
+        hil = PlikFull()
+        I_CAL = HIL_NAMES.index("A_planck")
+        ENGINE = dict(l_max_g=12, l_max_pol_g=10)
+    else:
+        # ACT DR6 lite (candl): A_act and P_act profiled per cosmology at fixed theory (scan/act_lite.py). The
+        # low-ell likelihoods take calibration 1 (no A_planck: ACT's "ACT" = ACT DR6 + SRoll2 lowE). Engine: lensed
+        # l_max 6325 (where the kept bins' windows end), unlensed / phiphi to 6325 + 5000 = the ACT paper's CLASS
+        # range (chi2 within 0.006 of it; delta_l_max 1800 is up to 0.6 off), photon hierarchy 40 / 60, HALOFIT,
+        # computed j_l, lensing streamed over l (scan/diag/act_*.py, CHANGELOG 2026-11-10).
+        from scan.act_lite import ACTLite, FLOAT_NAMES as HIL_NAMES
+        hil = ACTLite()
+        I_CAL = None
+        if LMAX < hil.l_window_max:
+            raise ValueError(f"l_max {LMAX} < {hil.l_window_max}, where the ACT windows end")
+        ENGINE = dict(l_max_g=40, l_max_pol_g=60, delta_l_max=5000, nonlinear="halofit",
+                      use_bessel_tables=False, lensing_streamed=True)
+    ENGINE.update(CFG.get("engine", {}) or {})          # config overrides
 
     def _lowl_chi2(nu, Dtt, Dee):
-        """the low-ell likelihoods at plik's calibration nu[A_planck]: Planck shares A_planck across its
-        likelihoods (cobaya divides the low-ell D_ell by A_planck^2), so it is profiled over all of them."""
+        """the low-ell likelihoods at the high-ell likelihood's calibration nu[I_CAL] (plik: A_planck, which Planck
+        shares across its likelihoods, cobaya dividing the low-ell D_ell by A_planck^2, so it is profiled over all
+        of them), or at 1 (I_CAL None)."""
+        cal = 1.0 if I_CAL is None else nu[I_CAL]
         c = 0.0
         if lowtt is not None:
-            c = c + lowtt.chi2(Dtt, calib=nu[I_APL])
+            c = c + lowtt.chi2(Dtt, calib=cal)
         if lowee is not None:
-            c = c + lowee.chi2(Dee, calib=nu[I_APL])
+            c = c + lowee.chi2(Dee, calib=cal)
         return c
 
-    # batched inner nuisance profile of plik + low-ell: (chi2 (B,), nu* (B,21))
-    _plf_prof_B = jax.jit(lambda c, dtt, dee: plf.profile_batched(c, _lowl_chi2, (dtt, dee)))
+    # batched inner nuisance profile of the high-ell likelihood + low-ell: (chi2 (B,), nu* (B, n_nuisances))
+    _hil_prof_B = jax.jit(lambda c, dtt, dee: hil.profile_batched(c, _lowl_chi2, (dtt, dee)))
     model = Model(user_species=USER_SPECIES, output_Cl=True, l_max=LMAX, lensing=True,
-                  output_Pk=False, l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+                  output_Pk=False, l_max_ur=17, l_max_ncdm=17,
                   rtol_large_k_PE=RTOL, atol_large_k_PE=RTOL * 1e-2,
                   rtol_small_k_PE=min(1e-5, RTOL), max_steps_PE=16384,
-                  lna_grid_mode="recomb" if LNA_GRID == "recomb" else "visibility")
+                  lna_grid_mode="recomb" if LNA_GRID == "recomb" else "visibility",
+                  **({"bbn_type": "table"} if BBN_TYPE == "table" else {}), **ENGINE)
+    print(f"[engine] {HIGH_ELL}: l_max {LMAX}, " + ", ".join(f"{k} {v}" for k, v in ENGINE.items())
+          + (", YHe from the sBBN table" if BBN_TYPE == "table" else ""), flush=True)
 else:
-    lowee = lowtt = plf = _plf_prof_B = model = None
+    lowee = lowtt = hil = _hil_prof_B = model = None
     _toy_f = TOY["chi2"]
     _toy_chi2_B = jax.jit(jax.vmap(_toy_f))
     _toy_cgh_B = jax.jit(jax.vmap(lambda t: (_toy_f(t), jax.grad(_toy_f)(t), jax.hessian(_toy_f)(t))))
@@ -419,7 +449,7 @@ else:
 # Delta_Neff_init is Delta Neff at the START of BBN, not the cosmology's (scan/bbn_stage.py).
 BBN = None
 LINX_ONLY = set()          # LINX inputs that are not ABCMB parameters (Delta_Neff_init, log10_m_chi, BBN nuisances)
-if TOY is None and str(CFG.get("bbn", "")).lower() == "linx":
+if TOY is None and BBN_TYPE == "linx":
     from scan.bbn_stage import LinxStage
     for _k in ("omega_b", "Delta_Neff_init"):
         if _k not in ORDER:
@@ -562,9 +592,9 @@ def _padded(n, cap, *arrs):
 def _chi2_from_out(out):
     Dtt = cl_to_Dl(out.ClTT, out.l)                  # for the low-ell likelihoods (muK^2 D_l)
     Dee = cl_to_Dl(out.ClEE, out.l)
-    cls2d = plf.abcmb_cls_to_clik(out.ClTT, out.ClTE, out.ClEE, out.l)   # (B,6,Lcol)
-    # plik + low-ell, plik's 21 floated nuisances (A_planck shared with low-ell) profiled
-    chi2 = np.asarray(_plf_prof_B(cls2d, Dtt, Dee)[0], dtype=float)
+    cls2d = hil.abcmb_cls_to_clik(out.ClTT, out.ClTE, out.ClEE, out.l)   # (B, ..., Lcol) its theory block
+    # high-ell + low-ell, the high-ell nuisances (plik's A_planck shared with low-ell) profiled
+    chi2 = np.asarray(_hil_prof_B(cls2d, Dtt, Dee)[0], dtype=float)
     return np.where(np.isfinite(chi2), chi2, 1e6)
 
 
@@ -672,28 +702,30 @@ def _lowl_gn(like, D_, dD, A):
 
 def _gn_one(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu):
     """total chi2, gradient (P',) and Gauss-Newton matrix (P',P') of ONE cosmology from its C_ell
-    (n_l,) and C_ell tangents (P', n_l); nu = its plik nuisance optimum."""
+    (n_l,) and C_ell tangents (P', n_l); nu = its high-ell nuisance optimum."""
     lvec = model.SS.ells
-    cls2d = plf.abcmb_cls_to_clik(ClTT, ClTE, ClEE, lvec)                   # (6, Lcol)
-    dcls = plf.abcmb_cls_to_clik(dTT, dTE, dEE, lvec)                       # (P', 6, Lcol), linear
-    res = plf.residual
+    cls2d = hil.abcmb_cls_to_clik(ClTT, ClTE, ClEE, lvec)                   # theory block (..., Lcol)
+    dcls = hil.abcmb_cls_to_clik(dTT, dTE, dEE, lvec)                       # (P', ..., Lcol), linear
+    res = hil.residual
     r = res(cls2d, nu)
     Jt = jax.vmap(lambda dc: jax.jvp(lambda c2: res(c2, nu), (cls2d,), (dc,))[1])(dcls)
     Jn = jax.jacfwd(lambda n: res(cls2d, n))(nu).T
-    free = (nu - plf.lo > 1e-6 * plf.scale) & (plf.hi - nu > 1e-6 * plf.scale)
-    W = plf.siginv
-    c = r @ W @ r + plf.prior_penalty(nu)
+    free = (nu - hil.lo > 1e-6 * hil.scale) & (hil.hi - nu > 1e-6 * hil.scale)
+    W = hil.siginv
+    c = r @ W @ r + hil.prior_penalty(nu)
     WJt = Jt @ W
     g = 2.0 * WJt @ r
     Htt = 2.0 * WJt @ Jt.T
     Htn = 2.0 * WJt @ Jn.T
-    Hnn = 2.0 * (Jn @ W) @ Jn.T + plf.prior_hessian()
-    for like, C, dC in ((lowtt, ClTT, dTT), (lowee, ClEE, dEE)):     # low-ell at the shared A_planck
+    Hnn = 2.0 * (Jn @ W) @ Jn.T + hil.prior_hessian()
+    for like, C, dC in ((lowtt, ClTT, dTT), (lowee, ClEE, dEE)):     # low-ell at the shared calibration
         if like is not None:
-            cl_, gl, Hl, hA, hAA = _lowl_gn(like, cl_to_Dl(C, lvec), cl_to_Dl(dC, lvec), nu[I_APL])
+            cal = 1.0 if I_CAL is None else nu[I_CAL]
+            cl_, gl, Hl, hA, hAA = _lowl_gn(like, cl_to_Dl(C, lvec), cl_to_Dl(dC, lvec), cal)
             c, g, Htt = c + cl_, g + gl, Htt + Hl
-            Htn = Htn.at[:, I_APL].add(hA)
-            Hnn = Hnn.at[I_APL, I_APL].add(hAA)
+            if I_CAL is not None:
+                Htn = Htn.at[:, I_CAL].add(hA)
+                Hnn = Hnn.at[I_CAL, I_CAL].add(hAA)
     return c, g, _schur(Htt, Htn, Hnn, free)
 
 
@@ -729,7 +761,7 @@ def _gn_block(BASE, FREE, X):
     (ClTT, ClTE, ClEE), cl_dots = staged_cl_and_grad(
         model, full_ps, params_dots, k_chunk_size=100, shard=DO_SHARD, spec_b_local=GRAD_SPECB)
     dTT, dTE, dEE = (jnp.stack([cd[s] for cd in cl_dots], axis=1) for s in range(3))  # (B,P',n_l)
-    nu = _plf_prof_B(plf.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells),
+    nu = _hil_prof_B(hil.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells),
                      cl_to_Dl(ClTT, model.SS.ells), cl_to_Dl(ClEE, model.SS.ells))[1]
     c, g, H = _gn_B(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu)
     c, g, H = np.array(c, float), np.array(g, float), np.array(H, float)   # copies: written below
@@ -1306,7 +1338,8 @@ def profile_lockstep(pois, outdir):
                  rows_converged=conv[rows], rows_stalled=T["stalled"][rows], rows_floor=T["floor"][rows],
                  rows_dec=decT[rows], rows_at_box=at_box[rows],
                  kinds=np.array(KINDS), ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2]),
-                 gtol=GTOL, dtol=DTOL, use_lowee=USE_LOWEE, lowee=LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
+                 gtol=GTOL, dtol=DTOL, use_lowee=USE_LOWEE, lowee=LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS,
+                 high_ell=HIGH_ELL, **extra)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
         edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
         warn = ""
@@ -1477,7 +1510,8 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None, bnd=(-np.inf, np.inf), 
         if rows is not None and np.isfinite(rows[1]).any():    # show the other rows too, within reason
             top = max(top, min(float(np.nanmax(rows[1])) - c0, 30.0) * 1.05)
         ax.set_ylim(0, top); ax.legend(fontsize=7)
-        like = ["full plik (nuisances profiled)"] + ["lowTT"] * bool(USE_LOWTT) + [f"lowEE ({LOWEE})"] * bool(USE_LOWEE)
+        like = [{"plik_full": "full plik (nuisances profiled)",
+                 "act_lite": "ACT DR6 lite (A_act, P_act profiled)"}[HIGH_ELL]] + ["lowTT"] * bool(USE_LOWTT) + [f"lowEE ({LOWEE})"] * bool(USE_LOWEE)
         if TOY is not None:
             like = ["toy objective " + os.path.basename(CONFIG_ABS)]
         ax.set_title(f"profile of {poi}: {' + '.join(like)}")

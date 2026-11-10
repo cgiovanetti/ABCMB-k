@@ -1,12 +1,12 @@
 """act_lmax_check.py — does ACT DR6 lite (candl) need ABCMB run at the ACT paper's l_max_scalars 9500 /
 delta_l_max 1800, or is l_max ~ 6325 (where the kept bins' windows end) enough?
 
-  python hmc/diag/act_lmax_check.py run <cfg> [<cfg> ...]   # GPU: lensed Cls at 8 fixed cosmologies per cfg
-  python hmc/diag/act_lmax_check.py compare                 # candl chi2 per cfg and cosmology (CPU is fine)
+  python scan/diag/act_lmax_check.py run <cfg> [<cfg> ...]   # GPU: lensed Cls at 8 fixed cosmologies per cfg
+  python scan/diag/act_lmax_check.py compare                 # candl chi2 per cfg and cosmology (CPU is fine)
 
-Value path (Model.call_batched, B sharded over the visible GPUs, 2 batches of 4). LCDM as in hmc/posterior.py
+Value path (Model.call_batched, B sharded over the visible GPUs, 2 batches of 4). LCDM as the Planck-lite HMC (hmc/posterior.py)
 (three massless neutrinos, YHe from the BBN table, recomb lna grid, rtol 1e-5) with computed j_l (the tables stop
-at l = 5000). Outputs hmc/results/act_lmax/<cfg>.npz.
+at l = 5000). Outputs scan/results/act_lmax/<cfg>.npz.
 """
 import os, sys, time
 import numpy as np

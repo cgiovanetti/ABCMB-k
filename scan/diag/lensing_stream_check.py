@@ -1,6 +1,6 @@
-"""lensing_chunk_check.py — lensing_streamed=True gives the same lensed spectra as the matrix path.
+"""lensing_stream_check.py — lensing_streamed=True gives the same lensed spectra as the matrix path.
 
-  python hmc/diag/lensing_chunk_check.py <cfg>    # cfg from act_lmax_check (or "planck": hmc/posterior.py's engine)
+  python scan/diag/lensing_stream_check.py <cfg>   # cfg from act_lmax_check, or "planck" (l_max 2508, tabulated j_l)
 Value path, 4 cosmologies sharded over the visible GPUs; prints max |streamed / matrix - 1| per spectrum, timings, peaks.
 """
 import os, sys, time
@@ -10,7 +10,7 @@ import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
 from abcmb.main import Model
-from hmc.diag.act_lmax_check import COMMON, CFGS, FIXED, cosmologies
+from scan.diag.act_lmax_check import COMMON, CFGS, FIXED, cosmologies
 
 cfg = sys.argv[1]
 if cfg == "planck":
