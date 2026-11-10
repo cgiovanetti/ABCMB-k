@@ -6,14 +6,15 @@ The same sampler and schedule as run_lcdm.py (the Planck-lite run); differences:
   HMC_MODE     sample (default) | echeck (leapfrog energy error at eps 1/2, 1/4, 1/8 over T=1, then exit)
                | probe (two gradient calls of HMC_NCHAINS chains near START: timing and peak memory, then exit)
                | gn (the Gauss-Newton steps and the metric only, then exit)
-  HMC_GN_STEPS 2       Gauss-Newton steps theta += Sigma_GN grad logp from START before the metric is taken
+  HMC_GN_STEPS 1       Gauss-Newton steps theta += Sigma_GN grad logp from START before the metric is taken
   HMC_NCHAINS  32      chains (one batched gradient call per leapfrog step)
   HMC_WARMUP 15, HMC_METRIC_AT 5,10, HMC_NSAMPLES 40, HMC_T 1.0,2.0, HMC_TARGET 0.8, HMC_EPS0 0.8, HMC_SEED 0
   HMC_TAG      ''      output hmc/results/<HMC_DATA><TAG>.npz (checkpoint every trajectory; resumes)
   HMC_AD_CHUNK 64      max cosmologies per staged-AD call
-  HMC_SPECB    4       cosmologies per device per spectrum-stage jvp
+  HMC_SPECB    2       cosmologies per device per spectrum-stage jvp (its LoS / halofit intermediates are
+                       ~3 GB per cosmology at this l under the 6-direction jvp; 8 per device OOMs a 40 GB card)
   HMC_RTOL     1e-5    rtol_large_k_PE
-  HMC_MU_CHUNK 0       lensing_mu_chunk (0: the lensing mu sums in one block)
+  HMC_LENS_STREAM 1    lensing_streamed (0: the matrix form, memory-bound at this l)
   HMC_DELTA_L  5000    delta_l_max
   HMC_STAGE_LOG 0      1: log every staged-AD stage's time and GPU memory
 """
@@ -29,7 +30,7 @@ MODE = env("HMC_MODE", "sample")
 NCH = int(env("HMC_NCHAINS", "32"))
 NW = int(env("HMC_WARMUP", "15"))
 NS = int(env("HMC_NSAMPLES", "40"))
-NGN = int(env("HMC_GN_STEPS", "2"))
+NGN = int(env("HMC_GN_STEPS", "1"))
 METRIC_AT = tuple(int(v) for v in env("HMC_METRIC_AT", "5,10").split(",") if v.strip())
 T_RANGE = tuple(float(v) for v in env("HMC_T", "1.0,2.0").split(","))
 TARGET = float(env("HMC_TARGET", "0.8"))
@@ -51,8 +52,8 @@ def peak_gb():
 
 log(f"[hmc] devices {jax.devices()} + {len(jax.devices('cpu'))} host; data {DATA}, mode {MODE}, {NCH} chains")
 post = ACTPosterior(data=DATA, rtol=float(env("HMC_RTOL", "1e-5")), ad_chunk=int(env("HMC_AD_CHUNK", "64")),
-                    spec_b_local=int(env("HMC_SPECB", "4")), stage_log=log if env("HMC_STAGE_LOG", "0") == "1" else None,
-                    lensing_mu_chunk=int(env("HMC_MU_CHUNK", "0")), delta_l_max=int(env("HMC_DELTA_L", "5000")))
+                    spec_b_local=int(env("HMC_SPECB", "2")), stage_log=log if env("HMC_STAGE_LOG", "0") == "1" else None,
+                    lensing_streamed=env("HMC_LENS_STREAM", "1") == "1", delta_l_max=int(env("HMC_DELTA_L", "5000")))
 
 
 def oracle(th):

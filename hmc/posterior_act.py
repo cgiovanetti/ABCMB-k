@@ -15,8 +15,9 @@ Engine: lensed l_max 6325, the last multipole where any kept ACT bin's window is
 hmc/diag/act_windows.py); D_ell is zero-padded to candl's 8501. delta_l_max 5000: unlensed C_l and C_l^phiphi to
 11325, the range of the ACT paper's CLASS block (l_max_scalars 9500 + delta_l_max 1800), whose chi2 it reproduces
 to 0.006 (hmc/diag/act_lmax_check.py; delta_l_max 1800 here is up to 0.6 off). Photon hierarchy l_max_g 40 /
-l_max_pol_g 60 as that block; HALOFIT lensing; computed j_l (the tables stop at l = 5000); rtol 1e-5 and the
-recomb lna grid as the Planck runs.
+l_max_pol_g 60 as that block; HALOFIT lensing, streamed over l (lensing_streamed: the matrix form's gradient
+needs ~60 GB per cosmology at this l); computed j_l (the tables stop at l = 5000); rtol 1e-5 and the recomb lna
+grid as the Planck runs.
 """
 import os
 _ncpu = os.environ.get("HMC_CPU_DEVICES", "16")
@@ -42,16 +43,18 @@ NC = 6                                              # cosmological parameters (t
 BOX = np.array([(0.005, 0.1), (0.001, 0.99), (0.40, 1.00), (1.61, 3.91), (0.8, 1.2), (0.01, 0.8),
                 (0.5, 1.5), (0.9, 1.1)])
 A_PRIOR = (1.0, 0.003)
-# start: the Planck-lite HMC's start point (hmc/posterior.py; Planck 2018 best fit, h raised for massless
-# neutrinos); run_act.py moves it to the ACT maximum with Gauss-Newton steps before drawing the chains.
-# SIG only scales the AD directions (the tangents are divided back): ACT DR6 posterior sds, roughly.
-START = np.array([0.022383, 0.12011, 0.6789, 3.0448, 0.96605, 0.0543, 1.0, 1.0])
+# start: the ACT maximum, found by two Gauss-Newton steps (chi2 552.893 -> 541.924 -> 541.875, predicted gains
+# 11.03 / 0.05) from the Planck-lite HMC's start point (0.022383, 0.12011, 0.6789, 3.0448, 0.96605, 0.0543, 1, 1);
+# run_act.py takes HMC_GN_STEPS more before the metric. SIG only scales the AD directions (the tangents are
+# divided back): ACT DR6 posterior sds, roughly.
+START = np.array([0.0225812, 0.123208, 0.668114, 3.04991, 0.967315, 0.0552572, 0.999994, 0.999875])
 SIG = np.array([0.00017, 0.0021, 0.008, 0.016, 0.0075, 0.009, 0.003, 0.004])
 FIXED = {"TCMB0": 2.34865418e-4, "N_nu_massive": 0, "Neff": 3.044,
          "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5, "exp_reion": 1.5}
 ENGINE = dict(output_Cl=True, l_max=6325, delta_l_max=5000, lensing=True, output_Pk=False,
               l_max_g=40, l_max_pol_g=60, l_max_ur=17, l_max_ncdm=17, nonlinear="halofit",
-              use_bessel_tables=False, max_steps_PE=16384, lna_grid_mode="recomb", bbn_type="table")
+              use_bessel_tables=False, lensing_streamed=True, max_steps_PE=16384, lna_grid_mode="recomb",
+              bbn_type="table")
 PLIK_CUT = {"tt": 1000, "te": 600, "ee": 600}
 
 
