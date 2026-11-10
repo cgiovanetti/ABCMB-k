@@ -16,8 +16,10 @@ target the posterior exactly; gradient errors only cost acceptance.
 
 Warmup (all adaptation stops after it): eps_max is rescaled after every trajectory with the
 leapfrog energy-error scaling, eps <- eps * ((1 - target) / (1 - mean accept))^(1/2) (clipped to
-a factor 2 either way), and Sigma is replaced at the iterations in `metric_at` by the pooled
-covariance of all chains' draws so far (the first `metric_burn` warmup iterations skipped).
+[2/3, 3/2]), and Sigma is replaced at the iterations in `metric_at` by the pooled covariance of all
+chains' draws so far (the first `metric_burn` warmup iterations skipped). At the end of warmup eps_max
+is set from all warmup trajectories since the last metric update at once: 1 - <a> = c eps^2 fitted
+(c = mean of (1 - <a>_i) / eps_i^2), eps_max = ((1 - target) / c)^(1/2).
 """
 import json
 import numpy as np
@@ -90,7 +92,13 @@ class LockstepHMC:
         """warmup step-size update from the chains' mean acceptance probability (leapfrog energy
         error ~ eps^2)."""
         f = np.sqrt((1.0 - self.target) / max(1.0 - mean_accept, 1e-3))
-        self.eps *= float(np.clip(f, 0.5, 2.0))
+        self.eps *= float(np.clip(f, 2.0 / 3.0, 1.5))
+
+    def final_eps(self, eps_used, mean_accept):
+        """eps_max for sampling from warmup trajectories at a fixed metric: 1 - <a> = c eps^2 fitted."""
+        e = np.asarray(eps_used, float); a = np.asarray(mean_accept, float)
+        c = np.mean((1.0 - a) / e ** 2)
+        self.eps = float(np.sqrt((1.0 - self.target) / max(c, 1e-12)))
 
     # ---------------- checkpointable state ----------------
     def state_dict(self):
@@ -131,6 +139,14 @@ def run(hmc, theta, logp, grad, n_warmup, n_samples, metric_at=(), metric_burn=2
             hmc.set_metric(pooled_cov(draws))
             log(f"[hmc] it {it}: metric <- pooled covariance of {draws.shape[0]} x {draws.shape[1]} draws; "
                 f"sd " + " ".join(f"{s:.4g}" for s in np.sqrt(np.diag(hmc.cov))))
+        if it == n_warmup and n_warmup > 0:
+            m0 = max([0] + [m for m in metric_at if m < n_warmup])
+            sl = slice(m0, n_warmup)
+            ea = [float(e) for e in history["eps"][sl]]
+            aa = [float(np.mean(a)) for a in history["accept_prob"][sl]]
+            hmc.final_eps(ea, aa)
+            log(f"[hmc] end of warmup: eps_max {hmc.eps:.4f} from trajectories {m0}-{n_warmup - 1} "
+                f"(eps " + " ".join(f"{e:.3f}" for e in ea) + ", <a> " + " ".join(f"{a:.3f}" for a in aa) + ")")
         eps_max = hmc.eps
         t0 = time.time()
         theta, logp, grad, st = hmc.step(theta, logp, grad)
