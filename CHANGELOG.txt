@@ -6,6 +6,20 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — SimAll lowE option; _v7simall (LCDM + Neff, the Planck 2018 base_nnu likelihood) submitted
+--------------------------------------------------------------------------------------------------------
+- scan/lowl_like.py: LOWEE_TABLES {"sroll2", "simall"}; the SimAll table is cobaya's native planck_2018_lowl.EE
+  (from simall_100x143_offlike5_EE_Aplanck_B.clik), same 3000 x 28 format and 1e-4 muK^2 step as SRoll2.
+  Driver: config key lowee (default "sroll2", so existing configs and their run signatures are unchanged).
+  pytests/test_lowl_ee_tables.py: LowLEE equals cobaya's EE / EE_sroll2 log_likelihood on the table nodes (<1e-6).
+- configs/lcdm_dneff_linx_simall_plikfull.py = the _v4linx config with lowee "simall"; launcher
+  profile_prod_linx_dneff.slurm now takes PA_CONFIG / PA_MLE_PREPASS from the environment. _v7simall: job
+  61091033 (PA_MLE_PREPASS=1: grids recentred on the SimAll joint fit), current code (recomb lna grid).
+- GN along decoupling nuisances (the _v1emwimp 1D crawl): LINX's m_chi and Delta_Neff_init AD derivatives match
+  central differences (<~1%, 1.8 MeV-1 GeV); the GN curvature along log10_m_chi is 5-20x below the measured profile
+  curvature at 23-40 MeV (J^T J ~ eps^2 while the gradient ~ eps), so LM damps hard. Deferred with the AD
+  second-derivative bug; 61054076 / 61084162 left to converge.
+
 2026-11-10 — _v1emwimp2d: 2D profile of (m_chi, Delta_Neff_init), EM-WIMP model
 ---------------------------------------------------------------------------------
 Job 61054096 (2h53m on 4 nodes), 11 x 10 grid (7-63 MeV x -1.2..2.4): 109/110 converged; the corner (7.1 MeV, -1.2,

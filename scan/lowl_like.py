@@ -4,7 +4,7 @@ Two pieces, both faithful re-implementations of cobaya's native (clik-free) low-
 likelihoods, re-arranged so they are pure-JAX, vmap/jacfwd-able, and consume padded
 D_ell[0..lmax] (muK^2) arrays (cl_to_Dl turns ABCMB output into these):
 
-  * LowLEE  -- SRoll2 / SimAll low-ell EE (ell=2..29). cobaya stores a per-multipole
+  * LowLEE  -- SRoll2 or SimAll low-ell EE (ell=2..29; LOWEE_TABLES). cobaya stores a per-multipole
     log-prob table probEE[3000, 28]: row j is the log-likelihood at
     D_ell^EE = j * 1e-4 muK^2.  cobaya's native code does a floor lookup
     (`(D/step).astype(int)`) -> piecewise-constant, not differentiable.  We
@@ -31,6 +31,11 @@ import jax.numpy as jnp
 from interpax import interp1d, Interpolator1D
 
 _DATA = "/pscratch/sd/c/carag/Neal_ACTDR6/cobaya_packages/data"
+# low-ell EE tables, both in cobaya's native format (3000 steps of 1e-4 muK^2 x ell 2..29): SRoll2
+# (planck_2018_lowl.EE_sroll2) and the Planck 2018 baseline SimAll lowE (planck_2018_lowl.EE, from
+# simall_100x143_offlike5_EE_Aplanck_B.clik)
+LOWEE_TABLES = {"sroll2": os.path.join(_DATA, "planck_sroll2_lowE_native", "sroll2_prob_table.txt"),
+                "simall": os.path.join(_DATA, "planck_2018_lowE_native", "prob_table.txt")}
 
 
 def cl_to_Dl(Cl, l_arr, lmax=2508, T_CMB_uK=2.7255e6):
@@ -53,11 +58,10 @@ def _cubic_fx(x, f, method="cubic"):
 
 
 # ======================================================================
-# low-ell EE (SRoll2)
+# low-ell EE (SRoll2 or SimAll)
 # ======================================================================
 class LowLEE:
-    def __init__(self, table_path=os.path.join(_DATA, "planck_sroll2_lowE_native",
-                                                "sroll2_prob_table.txt"),
+    def __init__(self, table_path=LOWEE_TABLES["sroll2"],
                  lmin=2, lmax=29, step=1.0e-4):
         self.lmin, self.lmax, self.step = lmin, lmax, step
         prob = np.loadtxt(table_path)                       # (nsteps, nell)

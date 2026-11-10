@@ -93,7 +93,7 @@ import jax.numpy as jnp
 import equinox as eqx
 from abcmb.main import Model
 from abcmb import species as _species
-from scan.lowl_like import LowLEE, LowLTT, cl_to_Dl
+from scan.lowl_like import LowLEE, LowLTT, LOWEE_TABLES, cl_to_Dl
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
 from scan.lm_tools import (proj_grad, lm_step, newton_decrement, spread_starts, flag_point,
                            cluster_points, union_regions, is_multimodal)
@@ -379,10 +379,13 @@ NPROC = int(os.environ.get("SLURM_NPROCS", 1))
 TOY = CFG.get("toy", None)
 USE_LOWTT = TOY is None and bool(CFG.get("use_lowtt", True))
 USE_LOWEE = TOY is None and bool(CFG.get("use_lowee", True))
+LOWEE = str(CFG.get("lowee", "sroll2")).lower()     # low-ell EE table: "sroll2" or "simall" (Planck 2018 lowE)
+if LOWEE not in LOWEE_TABLES:
+    raise ValueError(f"{CONFIG_ABS}: lowee must be one of {sorted(LOWEE_TABLES)}, not {LOWEE!r}")
 if TOY is None:
     if str(CFG.get("high_ell", "")).lower() != "plik_full":
         raise ValueError(f"{CONFIG_ABS}: needs high_ell = 'plik_full' (the only high-ell likelihood)")
-    lowee = LowLEE() if USE_LOWEE else None
+    lowee = LowLEE(LOWEE_TABLES[LOWEE]) if USE_LOWEE else None
     lowtt = LowLTT() if USE_LOWTT else None
     # full Planck plik (clipy): its 21 floated foreground/calibration nuisances (of 47; 26 fixed) are profiled per cosmology
     # at fixed ABCMB theory (scan/plik_full.py)
@@ -1303,7 +1306,7 @@ def profile_lockstep(pois, outdir):
                  rows_converged=conv[rows], rows_stalled=T["stalled"][rows], rows_floor=T["floor"][rows],
                  rows_dec=decT[rows], rows_at_box=at_box[rows],
                  kinds=np.array(KINDS), ms=np.array([MS_K, MS_NPTS, MS_SPREAD, MS_DX, MS_DCHI2]),
-                 gtol=GTOL, dtol=DTOL, use_lowee=USE_LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
+                 gtol=GTOL, dtol=DTOL, use_lowee=USE_LOWEE, lowee=LOWEE, use_lowtt=USE_LOWTT, config=CONFIG_ABS, **extra)
         j = int(np.nanargmin(chi2)); nval = int(np.isfinite(chi2).sum())
         edge = (j <= 1 and grid[0] != BLO[i]) or (j >= NPTS - 2 and grid[-1] != BHI[i])
         warn = ""
@@ -1474,7 +1477,7 @@ def _plot(poi, grid, chi2, npz, rows=None, regions=None, bnd=(-np.inf, np.inf), 
         if rows is not None and np.isfinite(rows[1]).any():    # show the other rows too, within reason
             top = max(top, min(float(np.nanmax(rows[1])) - c0, 30.0) * 1.05)
         ax.set_ylim(0, top); ax.legend(fontsize=7)
-        like = ["full plik (nuisances profiled)"] + ["lowTT"] * bool(USE_LOWTT) + ["lowEE"] * bool(USE_LOWEE)
+        like = ["full plik (nuisances profiled)"] + ["lowTT"] * bool(USE_LOWTT) + [f"lowEE ({LOWEE})"] * bool(USE_LOWEE)
         if TOY is not None:
             like = ["toy objective " + os.path.basename(CONFIG_ABS)]
         ax.set_title(f"profile of {poi}: {' + '.join(like)}")
@@ -1509,7 +1512,7 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     print(f"rank {RANK}/{NPROC} devices={jax.devices()} config={CONFIG_ABS} "
           f"POIs={POIS} NPTS={NPTS} NSIG={NSIG} GTOL={GTOL} DTOL={DTOL} rtol={RTOL} shard={DO_SHARD} "
-          f"lowEE={USE_LOWEE} lowTT={USE_LOWTT} multistart={MS_K}x{MS_NPTS}pts "
+          f"lowEE={LOWEE if USE_LOWEE else False} lowTT={USE_LOWTT} multistart={MS_K}x{MS_NPTS}pts "
           f"(spread {MS_SPREAD}, dx {MS_DX}, dchi2 {MS_DCHI2}) poi_slice={POI_SLICE} nproc={NPROC} "
           f"sigtol={SIGTOL} xbox={XBOX} bounds={_BOUNDS or None} box={_BOX or None}", flush=True)
     if POI2D:

@@ -2,7 +2,7 @@
 
 One driver (`profile_prod_ad.py`) profiles every parameter of interest (POI) of a config on a grid,
 with Levenberg-Marquardt on Gauss-Newton curvature from forward-mode AD through the batched engine.
-Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT and SRoll2 EE, one massive neutrino, l_max 2508):
+Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT and SRoll2 EE (SimAll in `_v7simall`), one massive neutrino, l_max 2508):
 
 | tag | data / BBN | Neff best [68%] [95%] | min chi2 | run |
 |---|---|---|---|---|
@@ -10,6 +10,7 @@ Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT a
 | `_v4linx` | CMB, YHe/Neff/T_nu from LINX, POI Delta_Neff_init | 2.850 [2.659, 3.050] [2.484, 3.250] | 2759.10 | job 60057736, 5h24m on 4 nodes |
 | `_v5bbn` (biased) | `_v4linx` + Y_p (Aver 2026) + D/H (Cooke 2018); nuisance priors at the config cen | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
 | `_v6bbn` | `_v5bbn` with the nuisance priors at 1 / 0, recomb lna grid | 2.982 [2.902, 3.064] [2.825, 3.143] | 2763.15 | job 60988361, 4h56m on 4 nodes |
+| `_v7simall` | `_v4linx` with SimAll lowE (the Planck 2018 base_nnu likelihood), recomb lna grid, MLE prepass | running | | job 61091033 |
 
 All seven POIs per run, numbers and convergence counts: `CHANGELOG.txt`. `_v5bbn` is biased: its BBN
 nuisance priors sat at the config cen (the prepass fit) instead of 1 and 0. `_v6bbn` (same config, priors at
@@ -23,11 +24,12 @@ their fixed means, recomb lna grid) replaces it.
 | `lm_tools.py` | pure numpy: projected LM step, Newton decrement, spread starts, clustering/flags, union of regions |
 | `batched_grad.py` | `staged_cl_and_grad`: C_ell and their tangents, one `jax.jvp` per batched engine stage |
 | `plik_full.py` | full plik via clipy; 21 nuisances profiled per cosmology at fixed theory (bounded SPG) |
-| `lowl_like.py` | JAX Planck 2018 low-ell TT (Commander) and EE (SRoll2) likelihoods |
+| `lowl_like.py` | JAX Planck 2018 low-ell TT (Commander) and EE (SRoll2 or SimAll: config `lowee`) likelihoods |
 | `bbn_stage.py` | `LinxStage`: batched LINX values and Jacobians on the host CPU (config `bbn: linx`) |
 | `compare_profile_runs.py` | overlays runs, lower envelope, parabola fit (CPU only) |
 | `profiles.ipynb` | self-contained notebook: loads `results/` and plots 1D / 2D profiles, nuisances, convergence |
 | `configs/lcdm_dneff_linx_plikfull.py` | `_v4linx` config |
+| `configs/lcdm_dneff_linx_simall_plikfull.py` | `_v7simall` config: `_v4linx` with `lowee: "simall"` |
 | `configs/lcdm_dneff_linx_bbnlike_plikfull.py` | `_v6bbn` config (cen/grid_sig = the joint fit of job 60327767) |
 | `configs/lcdm_mchi_dneff_linx_bbnlike_plikfull.py` | EM-coupled WIMP: `_v6bbn` + log10_m_chi (1D `_v1emwimp`, 2D `_v1emwimp2d`) |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
@@ -41,6 +43,8 @@ their fixed means, recomb lna grid) replaces it.
 ```bash
 cd /pscratch/sd/c/carag/ABCMB-k
 sbatch scan/profile_prod_linx_dneff.slurm      # _v4linx -> logs/abcmb_pf_linx_<jobid>.out
+PA_CONFIG=scan/configs/lcdm_dneff_linx_simall_plikfull.py PA_TAG=_v7simall PA_MLE_PREPASS=1 \
+    sbatch scan/profile_prod_linx_dneff.slurm  # _v7simall (SimAll lowE)
 sbatch scan/profile_prod_linx_bbnlike.slurm    # _v6bbn  -> logs/abcmb_pf_bbn_<jobid>.out
 sbatch scan/profile_prod_emwimp.slurm         # _v1emwimp (EM WIMP, 1D) -> logs/abcmb_pf_emwimp_<jobid>.out
 # the 2D profile: set the pair in the environment (sbatch --export would split it at the comma)

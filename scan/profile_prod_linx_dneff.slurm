@@ -14,6 +14,8 @@
 #
 # _v4linx: 7-POI LCDM + Delta_Neff_init profile (full plik + low-ell, YHe/Neff/T_nu from LINX per row), POIs dealt
 # out over 4 nodes by PA_POI_SLICE. Resumable: after a walltime timeout resubmit the same command.
+# _v7simall (SimAll lowE in place of SRoll2, the Planck 2018 base_nnu likelihood): PA_CONFIG=scan/configs/
+# lcdm_dneff_linx_simall_plikfull.py PA_TAG=_v7simall PA_MLE_PREPASS=1 sbatch scan/profile_prod_linx_dneff.slurm
 
 module load conda
 conda activate actdr6
@@ -27,7 +29,8 @@ export EQX_ON_ERROR=nan            # a failed ODE solve is a NaN chi2 the step t
 export PA_TRACE_EVALS=1            # log every evaluated cosmology
 mkdir -p logs scan/results
 
-export PA_CONFIG=scan/configs/lcdm_dneff_linx_plikfull.py   # grid: npts / nsig from the config
+export PA_CONFIG=${PA_CONFIG:-scan/configs/lcdm_dneff_linx_plikfull.py}   # grid: npts / nsig from the config
+export PA_MLE_PREPASS=${PA_MLE_PREPASS:-0}
 export PA_TAG=${PA_TAG:-_v4linx}
 export PA_POIS=${PA_POIS:-h,omega_cdm,Delta_Neff_init,n_s,omega_b,ln10As,tau_reion}
 export PA_POI_SLICE=1
