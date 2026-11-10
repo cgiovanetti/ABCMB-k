@@ -6,6 +6,12 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — _v1emwimp2d_lo: the Delta_Neff_init = -1.6 row of the EM-WIMP 2D profile
+-------------------------------------------------------------------------------------
+Job 61084345 (1h53m, 1 node; PA_GRID2D): 10/11 converged, 1 held by the box; min chi2 2775.25 (Delta chi2 12 above
+the 2D minimum), so the 95% contour closes above -1.6. With _v1emwimp2d: 11 x 11 grid, 119/121 converged;
+m_chi > 10.11 MeV (95%) unchanged. results/emwimp_mchi_neff_checkpoint.png regenerated from profiles.ipynb.
+
 2026-11-10 — ACT DR6 lite (candl) for the HMC: l range, streamed lensing (in progress)
 --------------------------------------------------------------------------------------
 - candl 2.2.0 + candl_data 2.0.0 in the venv /global/common/software/m3166/carag/envs/abcmb-k (layered on actdr6;
