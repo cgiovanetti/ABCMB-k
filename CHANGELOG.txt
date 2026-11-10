@@ -30,7 +30,15 @@ m_chi > 10.11 MeV (95%) unchanged. results/emwimp_mchi_neff_checkpoint.png regen
 - scan/batched_grad.py: staged_cl_and_grad(stage_log=) logs each stage's time and GPU memory (diagnostics).
 - hmc/posterior_act.py + run_act.py + run_act.slurm: the HMC with data act (ACT lite + SRoll2 lowE, A_act prior
   N(1, 0.003), P_act flat) or pact (+ lowl TT + plik-lite cut at 1000/600, A_planck = A_act), Gauss-Newton steps
-  to the ACT maximum before the metric.
+  to the ACT maximum before the metric. GN from the Planck start: chi2 552.893 -> 541.924 -> 541.875 (predicted
+  11.03 / 0.05), so the AD gradient through candl is right; START is now that maximum.
+- Cost (staged 6-direction gradient, 4 x A100, l_max 6325 + 5000, streamed lensing): 32 cosmologies (8 per GPU,
+  spectrum sub-batches of 2) 2119 s per call (perturbations 1708 s, spectrum 303 s), peak 14.7 GB per GPU; 1 per
+  GPU 546 s. ~66 s per cosmology-gradient per node vs ~7.5 s for the Planck-lite HMC (~9x: 3x the k range, the
+  40/60 hierarchy, halofit's k tail). 8 per GPU with the spectrum in one sub-batch OOMs (40 GB, LoS / halofit
+  intermediates), the matrix lensing at 1 per GPU needs 59 GB.
+- _v1 (act, 32 chains, 15 + 40 trajectories): job 61104222 (regular, 24 h, resumable). ~35 min per leapfrog step,
+  ~2.3 h per trajectory, ~5 days / ~125 node-h in total (~6 resubmissions).
 
 2026-11-10 — SimAll lowE option; _v7simall (LCDM + Neff, the Planck 2018 base_nnu likelihood) submitted
 --------------------------------------------------------------------------------------------------------
