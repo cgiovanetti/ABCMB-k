@@ -36,7 +36,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import equinox as eqx
 from abcmb.main import Model
-from scan.lowl_like import LowLEE, LowLTT, cl_to_Dl, _DATA
+from scan.lowl_like import LowLEE, LowLTT, cl_to_Dl, LOWEE_TABLES
 from scan.batched_grad import staged_cl_and_grad, _to_float
 from hmc.plik_lite import PlikLite
 
@@ -52,8 +52,6 @@ START = np.array([0.022383, 0.12011, 0.6732, 3.0448, 0.96605, 0.0543, 1.0])
 SIG = np.array([0.00015, 0.0012, 0.0054, 0.014, 0.0042, 0.0073, 0.0025])
 FIXED = {"TCMB0": 2.34865418e-4, "N_nu_massive": 0, "Neff": 3.044,
          "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5, "exp_reion": 1.5}
-LOWEE_TABLES = {"simall": os.path.join(_DATA, "planck_2018_lowE_native", "prob_table.txt"),
-                "sroll2": os.path.join(_DATA, "planck_sroll2_lowE_native", "sroll2_prob_table.txt")}
 
 
 class LCDMPosterior:
