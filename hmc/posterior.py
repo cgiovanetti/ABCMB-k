@@ -46,9 +46,10 @@ NC = 6                                              # cosmological parameters (t
 BOX = np.array([(0.005, 0.1), (0.001, 0.99), (0.40, 1.00), (1.61, 3.91), (0.8, 1.2), (0.01, 0.8),
                 (0.9, 1.1)])
 A_PRIOR = (1.0, 0.0025)
-# Planck 2018 TTTEEE+lowl+lowE best fit (h from H0 67.32), the start point; SIG = its posterior sds,
-# only used to scale the AD directions (the tangents are divided back)
-START = np.array([0.022383, 0.12011, 0.6732, 3.0448, 0.96605, 0.0543, 1.0])
+# start point: Planck 2018 TTTEEE+lowl+lowE best fit with h raised to keep theta_s with massless neutrinos (the
+# published 0.6732 is for one 0.06 eV neutrino and sits ~5 conditional sigma off along theta_s here, ~30 in chi2);
+# SIG = Planck posterior sds, only used to scale the AD directions (the tangents are divided back)
+START = np.array([0.022383, 0.12011, 0.6789, 3.0448, 0.96605, 0.0543, 1.0])
 SIG = np.array([0.00015, 0.0012, 0.0054, 0.014, 0.0042, 0.0073, 0.0025])
 FIXED = {"TCMB0": 2.34865418e-4, "N_nu_massive": 0, "Neff": 3.044,
          "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5, "exp_reion": 1.5}
