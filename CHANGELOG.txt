@@ -6,6 +6,15 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — _v1emwimp2d: 2D profile of (m_chi, Delta_Neff_init), EM-WIMP model
+---------------------------------------------------------------------------------
+Job 61054096 (2h53m on 4 nodes), 11 x 10 grid (7-63 MeV x -1.2..2.4): 109/110 converged; the corner (7.1 MeV, -1.2,
+Delta chi2 27) is held by the h box. Min chi2 2763.29 at 26 MeV, Delta_Neff_init -0.4 (grid step 0.4; _v6bbn 2763.15
+at -0.24). Minimum over Delta_Neff_init per mass: 11.1 / 6.3 / 2.8 / 1.1 / 0.4 at 7.1 / 8.8 / 11.0 / 13.6 / 17 MeV, flat
+above ~20 MeV (95% near 10-11 MeV; the 1D profile will give it). The 2D 95% contour reaches the -1.2 edge near 20 MeV.
+1D _v1emwimp (61054076) runs ~1h15m per iteration after a 3 h start, so it times out at 12 h; the resume (61084162,
+afterany) is queued.
+
 2026-11-09 — EM-coupled WIMP (from em_dm), 2D profiles, profiles.ipynb
 ---------------------------------------------------------------------
 - abcmb/linx: the EM-coupled thermal relic chi of em_dm and nothing else: thermo.rho_chi / p_chi (FD or BE, g_chi,
