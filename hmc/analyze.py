@@ -114,9 +114,12 @@ try:
         for p_h, p_r in (("ln10As", "logA"), ("tau_reion", "tau_reio")):
             ref.addDerived(ref.getParams().__dict__[p_r], name=p_h, label=lab[pn.index(p_h)])
         ref.label = "MH, CLASS (reference)"
-        g.triangle_plot([ref, hs], pn, filled=[True, False], legend_loc="upper right")
+        # categorical slots 1 and 2 of the dataviz reference palette (a validated adjacent pair): reference filled
+        # blue, HMC orange lines
+        g.triangle_plot([ref, hs], pn, filled=[True, False], contour_colors=["#2a78d6", "#eb6834"],
+                        contour_lws=[1.0, 2.0], legend_loc="upper right")
     else:
-        g.triangle_plot([hs], pn, filled=True)
+        g.triangle_plot([hs], pn, filled=True, contour_colors=["#eb6834"])
     out = os.path.join(HERE, "results", f"lcdm{args.tag}_triangle.png")
     g.export(out)
     print(f"\nwrote {out}")
