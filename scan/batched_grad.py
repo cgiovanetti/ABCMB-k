@@ -132,8 +132,18 @@ def _dir_shardfn_from(sharded_leaf):
 
 
 # ---------- the staged forward-mode push: params_batch -> (Cl, dCl) ----------
+def _stage_log(log, name, tree, t0):
+    """stage_log hook: block on the stage output, report its wall time and the GPUs' memory."""
+    import time
+    jax.block_until_ready(tree)
+    st = [d.memory_stats() or {} for d in jax.devices()]
+    log(f"[stage] {name}: {time.time() - t0:.1f}s, in use {max(m.get('bytes_in_use', 0) for m in st) / 2**30:.1f} GB, "
+        f"peak {max(m.get('peak_bytes_in_use', 0) for m in st) / 2**30:.1f} GB")
+    return time.time()
+
+
 def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None,
-                       spec_b_local=None):
+                       spec_b_local=None, stage_log=None):
     """full_ps: list[B] of derived param dicts (primal).
     params_dots: list[P] of derived-param-tangent dicts, each stacked over B
         (i.e., params_dots[j] is the dB-stacked tangent of params_batch in
@@ -168,7 +178,10 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         direction-stacked tangents (axis 1 = B, via ``_dir_shardfn_from``), and
         to recomb/recomb_dot after the CPU->GPU device_put (mirroring
         _build_bgs_batched). Sharding AFTER the setup would build everything on
-        device 0 and OOM at large B."""
+        device 0 and OOM at large B.
+
+    stage_log : callable(str) or None. Diagnostics: after each stage, block and log its
+        wall time and the GPUs' current / peak memory (serializes the stages)."""
     PE = model.PE; SS = model.SS
     try:
         gpu = jax.devices('gpu')[0]
@@ -206,9 +219,13 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     if do_shard:
         pdot = dir_shardfn(pdot)
 
+    import time
+    t_st = time.time()
+    _lg = (lambda name, tree, t: _stage_log(stage_log, name, tree, t)) if stage_log else (lambda name, tree, t: t)
     # ---- stage 1: pre-recomb (GPU) ----
     pre_BG, pre_BG_dot = jvp_stage(model._pre_recomb_batched, (params_batch,), (pdot,),
                                    n_dirs=Pn)
+    t_st = _lg("pre-recomb", pre_BG_dot, t_st)
     # ---- stage 2: HyRex (CPU mesh): inputs (recomb_inputs, params), tangents
     # (pre_BG_dot.recomb_inputs, pdot). Primal + tangents to the host devices (B axis
     # sharded over them when there are several, see hyrex_cpu_mesh); result to GPU.
@@ -225,14 +242,17 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
     elif gpu is not None:
         recomb = jax.device_put(recomb, gpu)
         recomb_dot = jax.device_put(recomb_dot, gpu)
+    t_st = _lg("hyrex", recomb_dot, t_st)
     # ---- stage 3: get_BG (GPU) ----
     BG, BG_dot = jvp_stage(model._get_BG_batched,
                            (params_batch, pre_BG, recomb), (pdot, pre_BG_dot, recomb_dot),
                            n_dirs=Pn)
+    t_st = _lg("get_BG", BG_dot, t_st)
     # ---- stage 4: perturbations (GPU, k-chunked) ----
     PT, PT_dot = jvp_stage(
         lambda bg, p: PE.full_evolution_batched((bg, p), k_chunk_size=k_chunk_size),
         (BG, params_batch), (BG_dot, pdot), n_dirs=Pn)
+    t_st = _lg("perturbations", PT_dot, t_st)
     # ---- stage 5: spectrum (GPU), in sub-batches of spec_b_local x n_dev ----
     get_cls3 = lambda PT_, BG_, p_: _cls_tt_te_ee(SS, PT_, BG_, p_)
     Brun = len(full_ps_run)
@@ -258,6 +278,7 @@ def staged_cl_and_grad(model, full_ps, params_dots, k_chunk_size=100, shard=None
         cls = tuple(jnp.concatenate([c[i] for c in cls_parts], axis=0) for i in range(3))
         cl_dot = tuple(jnp.concatenate([d[i] for d in dot_parts], axis=1) for i in range(3))
         del cls_parts, dot_parts
+    t_st = _lg("spectrum", cl_dot, t_st)
     del pre_BG_dot, recomb_dot, BG_dot, PT, PT_dot
 
     # cl_dot is the filtered tangent of (ClTT,ClTE,ClEE): a 3-tuple of (P, B, n_l)

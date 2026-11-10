@@ -222,6 +222,7 @@ class SpectrumSolver(eqx.Module):
 
     lensing : bool
     use_bessel_tables : bool = eqx.field(static=True)
+    lensing_streamed : bool = eqx.field(static=True)
     l_top : int = eqx.field(static=True)
     n_k_cmb : int = eqx.field(static=True)
     lna_grid_cfg : tuple = eqx.field(static=True)   # (n, recomb cfg) for a "recomb" lna grid, else None
@@ -252,6 +253,7 @@ class SpectrumSolver(eqx.Module):
                  scale_pol=1,
                  use_bessel_tables=True,
                  delta_l_max=500,
+                 lensing_streamed=False,
                  n_k_cmb=-1,
                  nonlinear="",
                  halofit_prescription="takahashi2012",
@@ -291,6 +293,9 @@ class SpectrumSolver(eqx.Module):
             Extra multipoles computed above ellmax so the lensed spectra are accurate
             up to ellmax. Same role as CLASS's delta_l_max precision parameter.
             Defaults to 500.
+        lensing_streamed : bool, optional
+            False (default): lensing with (n_mu, n_ell) Wigner matrices. True: the same sums streamed
+            over l (_lensed_Cls_streamed), O(n_mu) memory; for l ~ 10^4 under multi-direction AD.
         n_k_cmb : int, optional
             Number of leading nodes of the perturbation k-grid that cover the CMB
             (transfer) range.
@@ -308,6 +313,7 @@ class SpectrumSolver(eqx.Module):
 
         self.lensing = lensing
         self.use_bessel_tables = bool(use_bessel_tables)
+        self.lensing_streamed = bool(lensing_streamed)
         self.n_k_cmb = int(n_k_cmb)
         self.lna_grid_cfg = lna_grid_cfg
 
@@ -671,6 +677,11 @@ class SpectrumSolver(eqx.Module):
         # Compute lensing Cl
         Clpp = self.lensing_Cl(ells, PT, BG, params)
 
+        if self.lensing_streamed:
+            ClTT, ClTE, ClEE, ClBB = self._lensed_Cls_streamed(
+                ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, Clpp)
+            return (ClTT, ClTE, ClEE, Clpp, ClBB)
+
         # Wigner matrices needed in general and for temperature
         # Note that for all wigner matrices, the symmetry relation is dnm = (-1)^(m-n) x dmn
         d00 = tools.d00(mu, ells)
@@ -768,6 +779,107 @@ class SpectrumSolver(eqx.Module):
         ClBB = 1./2. * 2*jnp.pi * jnp.sum((ksip[:, None]*d22 - ksim[:, None]*d2m2)*w, axis=0)
 
         return (ClTT, ClTE, ClEE, Clpp, ClBB)
+
+    # the Wigner d^l_{mn} that lensed_Cls uses, in the order _lensed_Cls_streamed unpacks them
+    _STREAM_PAIRS = ((0, 0), (1, 1), (1, -1), (2, -2), (2, 2), (3, 1), (4, 0), (3, -3), (4, -4), (2, 0), (3, -1), (4, -2))
+
+    def _wigner_stream(self, mu, pairs, l_top, body, init, xs_l):
+        """Run the three-term recursion of ABCMBTools.wigner_d_matrix for every (m, n) in pairs at once
+        over l = 0..l_top (one lax.scan), calling body(carry, l, d, x_l) with d[k] = d^l_{m_k n_k}(mu)
+        (normalized as wigner_d_matrix, zero for l < m_k) and x_l the l-th slice of xs_l. Each d^l is the
+        same arithmetic as wigner_d_matrix's (start value at l = m, then a mu d_l + b d_l + c d_{l-1});
+        nothing of size n_mu x n_l is formed. Returns body's final carry and stacked outputs."""
+        from jax.scipy.special import factorial
+        m = np.array([p[0] for p in pairs]); n = np.array([p[1] for p in pairs])
+        ells = jnp.arange(0, l_top + 1)[:, None]                       # (L+1, 1)
+        normA = jnp.sqrt((2*ells+3)/(2*ells+1))
+        normC = jnp.sqrt((2*ells+3)/(2*ells-1))
+        denom = jnp.sqrt((ells+1)**2-m**2) * jnp.sqrt((ells+1)**2-n**2)
+        A = jnp.nan_to_num(normA * (ells+1)*(2*ells+1) / denom, 0)
+        B = jnp.nan_to_num(-A * m * n / ells / (ells+1), 0)
+        C = jnp.nan_to_num(-normC * jnp.sqrt(ells**2-m**2) * jnp.sqrt(ells**2-n**2) / denom * (ells+1)/ells, 0)
+        live = ells >= m                                               # (L+1, K)
+        A, B, C = (jnp.where(live, X, 0.) for X in (A, B, C))
+        inject = (ells + 1) == m                                       # d_{l+1} = start value
+        beta = jnp.arccos(mu)
+        base = jnp.stack([jnp.sqrt((2*mk+1)/2) * jnp.sqrt(factorial(2*mk)/(factorial(mk+nk)*factorial(mk-nk)))
+                          * jnp.cos(beta/2.)**(mk+nk)*(-jnp.sin(beta/2.))**(mk-nk) for mk, nk in pairs])   # (K, n_mu)
+        dl0 = jnp.where((m == 0)[:, None], base, 0.)
+        norm = jnp.sqrt(2./(2.*ells+1))                                # (L+1, 1)
+
+        def step(carry, xs):
+            (dl, dlm1), acc = carry
+            l, a, b, c, inj, nrm, x_l = xs
+            acc, y = body(acc, l, dl * nrm[:, None], x_l)
+            dlp1 = a[:, None]*mu*dl + b[:, None]*dl + c[:, None]*dlm1
+            dlp1 = jnp.where(inj[:, None], base, dlp1)
+            return ((dlp1, dl), acc), y
+
+        ((_, _), acc), ys = lax.scan(step, ((dl0, jnp.zeros_like(dl0)), init),
+                                     (ells[:, 0], A, B, C, inject, jnp.broadcast_to(norm, A.shape), xs_l))
+        return acc, ys
+
+    def _lensed_Cls_streamed(self, ells, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed, Clpp):
+        """lensed_Cls's correlation-function method without the (n_mu, n_ell) Wigner and X matrices:
+        three scans over l (_wigner_stream) accumulate (1) Cgl, Cgl2 at every mu, (2) the correlation
+        functions ksi, ksi+, ksi-, ksi_x, (3) the lensed C_l up to the output l_max. Memory is
+        O(n_mu) per cosmology and AD direction instead of O(n_mu n_ell); the result equals the full
+        path up to the order of the sums over l and mu."""
+        mu, w = self.lensing_mus, self.lensing_ws                      # incl. the mu = 1 node (weight 0)
+        L = ells.shape[0] + 1                                          # static: ells = lensing_ells = 2..L
+        pad = lambda x: jnp.concatenate((jnp.zeros(2, dtype=x.dtype), x))   # index by l = 0..L
+        Clpp_l, TT_l, TE_l, EE_l = (pad(x) for x in (Clpp, ClTT_unlensed, ClTE_unlensed, ClEE_unlensed))
+        zero = jnp.zeros_like(mu)
+        lf = lambda l: jnp.maximum(l, 2).astype(mu.dtype)              # l < 2 rows carry zero spectra
+
+        # (1) Cgl, Cgl2
+        def body_cgl(acc, l, d, cpp):
+            ll = lf(l)
+            a = (2.*ll+1)*ll*(ll+1)*cpp
+            return (acc[0] + a*d[0], acc[1] + a*d[1]), None
+        (Cgl, Cgl2), _ = self._wigner_stream(mu, ((1, 1), (1, -1)), L, body_cgl, (zero, zero), Clpp_l)
+        Cgl = 1./4./jnp.pi * Cgl
+        Cgl2 = 1./4./jnp.pi * Cgl2
+        sigma2 = Cgl[-1] - Cgl
+
+        # (2) correlation functions
+        def body_ksi(acc, l, d, cl):
+            d00, d11, d1m1, d2m2, d22, d31, d40, d3m3, d4m4, d20, d3m1, d4m2 = d
+            d02, dm24 = d20, d4m2
+            tt, te, ee = cl
+            ll = lf(l); llp1 = ll*(ll+1)
+            X000       = jnp.exp(-llp1*sigma2/4)
+            X000_prime = -llp1/4.*X000
+            X220       = 1./4.*jnp.sqrt((ll+2)*(ll-1)*ll*(ll+1))*jnp.exp(-(llp1-2)*sigma2/4.)
+            X022       = jnp.exp(-(llp1-4)*sigma2/4)
+            X022_prime = -(llp1-4)/4*X022
+            X121       = -1./2.*jnp.sqrt((ll+2)*(ll-1))*jnp.exp(-(llp1-8./3.)*sigma2/4.)
+            X132       = -1./2.*jnp.sqrt((ll+3)*(ll-2))*jnp.exp(-(llp1-20./3.)*sigma2/4.)
+            X242       = 1./4.*jnp.sqrt((ll+4)*(ll+3)*(ll-2)*(ll-3))*jnp.exp(-(llp1-10.)*sigma2/4.)
+            ksi = (2.*ll+1)*tt * (X000**2 * d00 + 8./ll/(ll+1)*Cgl2*X000_prime**2*d1m1
+                                  + Cgl2**2 * (X000_prime**2*d00 + X220**2*d2m2))
+            ksip = (2.*ll+1)*ee * (X022**2 * d22 + 2*Cgl2*X132*X121*d31
+                                   + Cgl2**2 * (X022_prime**2*d22 + X242*X220*d40))
+            ksim = (2.*ll+1)*ee * (X022**2 * d2m2 + Cgl2*(X121**2*d1m1 + X132**2*d3m3)
+                                   + 1./2.*Cgl2**2 * (2*X022_prime**2*d2m2 + X220**2*d00 + X242**2*d4m4))
+            ksix = (2.*ll+1)*te * (X022*X000*d02 + Cgl2 * 2*X000_prime/jnp.sqrt(llp1) * (X121*d11 + X132*d3m1)
+                                   + 1./2.*Cgl2**2 * ((2*X022_prime*X000_prime+X220**2)*d20+X220*X242*dm24))
+            return (acc[0] + ksi, acc[1] + ksip, acc[2] + ksim, acc[3] + ksix), None
+        (ksi, ksip, ksim, ksix), _ = self._wigner_stream(
+            mu, self._STREAM_PAIRS, L, body_ksi, (zero, zero, zero, zero), (TT_l, TE_l, EE_l))
+        ksi, ksip, ksim, ksix = (1./4./jnp.pi * x for x in (ksi, ksip, ksim, ksix))
+
+        # (3) lensed C_l for l <= the output l_max (zero above it: get_Cl reads l <= l_max only)
+        l_out = self.ells.shape[0] + 1                                 # static: self.ells = 2..l_max
+        def body_cl(acc, l, d, _):
+            d00, d20, d22, d2m2 = d
+            return acc, jnp.stack((2*jnp.pi * jnp.sum(ksi*d00*w), 2*jnp.pi * jnp.sum(ksix*d20*w),
+                                   1./2. * 2*jnp.pi * jnp.sum((ksip*d22 + ksim*d2m2)*w),
+                                   1./2. * 2*jnp.pi * jnp.sum((ksip*d22 - ksim*d2m2)*w)))
+        _, out = self._wigner_stream(mu, ((0, 0), (2, 0), (2, 2), (2, -2)), l_out, body_cl, 0.,
+                                     jnp.zeros(l_out + 1))
+        out = jnp.concatenate((out[2:], jnp.zeros((L - l_out, 4), dtype=out.dtype)))   # rows l = 2..L
+        return out[:, 0], out[:, 1], out[:, 2], out[:, 3]
 
     def get_Cl(self, PT, BG, params):
         """

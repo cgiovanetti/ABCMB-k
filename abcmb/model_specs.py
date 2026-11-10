@@ -64,6 +64,9 @@ def load_specs(input_specs):
     # name (precisions.h, default 500), which CLASS folds into l_scalar_max
     # before deriving k_max (input.c: ppt->l_scalar_max += ppr->delta_l_max).
     specs["delta_l_max"]            = input_specs.get("delta_l_max", specs["l_max"]//2)
+    # Lensing correlation-function sums streamed over l (SpectrumSolver._lensed_Cls_streamed): same result,
+    # O(n_mu) memory instead of the (n_mu, n_ell) Wigner / X matrices (tens of GB under AD at l ~ 10^4).
+    specs["lensing_streamed"]       = bool(input_specs.get("lensing_streamed", False))
     # Sampling of the k-grid above the CMB ceiling, used only for the CMB lensing potential and HALOFIT.
     specs["k_per_decade_for_pk"]    = input_specs.get("k_per_decade_for_pk", 20. if specs["nonlinear"] == "halofit" else 10.)
     specs["k_per_decade_for_bao"]   = input_specs.get("k_per_decade_for_bao", 70.)

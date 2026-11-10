@@ -172,6 +172,7 @@ class Model(eqx.Module):
             scale_pol=specs["scale_pol"],
             use_bessel_tables=specs["use_bessel_tables"],
             delta_l_max=specs["delta_l_max"],
+            lensing_streamed=specs["lensing_streamed"],
             n_k_cmb=specs["k_size_cmb"],
             nonlinear=specs["nonlinear"],
             halofit_prescription=specs["halofit_prescription"],

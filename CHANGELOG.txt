@@ -6,6 +6,26 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — ACT DR6 lite (candl) for the HMC: l range, streamed lensing (in progress)
+--------------------------------------------------------------------------------------
+- candl 2.2.0 + candl_data 2.0.0 in the venv /global/common/software/m3166/carag/envs/abcmb-k (layered on actdr6;
+  activate actdr6, then source its bin/activate). ACT DR6 TT/TE/EE CMB-only windows are non-zero for l 576-6325.
+- hmc/diag/act_lmax_check.py (8 cosmologies, START + 7 at ~2 sigma, halofit, l_max_g/pol 40/60, computed j_l),
+  candl chi2 vs the ACT paper's CLASS range (lensed 9500 + delta_l_max 1800, "ref9500"): lensed l_max 6325 is
+  enough, but the unlensed / phiphi top (l_max + delta_l_max) must stay ~11300. delta_l_max 1800 / 3162 / 5000 /
+  6500 at l_max 6325: chi2 - ref up to -0.58 / -0.24 / +0.006 / +0.13 (non-constant part 0.37 / 0.18 / 0.005 /
+  0.09; the top-l ramp is the truncated lensing convolution, 3-5% in TT/EE at 6000-6325 with 1800). D_ell stopped
+  at 6000 instead of 6325: -0.75..-1.18. Photon hierarchy 12/10 instead of 40/60: another -0.5.
+- abcmb: lensing_streamed (default False = unchanged): SpectrumSolver._lensed_Cls_streamed does lensed_Cls's
+  correlation-function sums as three scans over l carrying the 12 Wigner-d recursions as mu vectors, so no
+  (n_mu, n_ell) matrix (1 GB each at l 11325; the matrix path's gradient peaked at 59 GB for ONE cosmology per GPU).
+  = matrix path to 8e-11 / 5e-8 (TT, l_max 2508 / 6325), same value-path time. A mu-chunked variant was exact but
+  4.7x slower (the d recursions re-run per chunk) and was dropped. Snapshot test passes (default path).
+- scan/batched_grad.py: staged_cl_and_grad(stage_log=) logs each stage's time and GPU memory (diagnostics).
+- hmc/posterior_act.py + run_act.py + run_act.slurm: the HMC with data act (ACT lite + SRoll2 lowE, A_act prior
+  N(1, 0.003), P_act flat) or pact (+ lowl TT + plik-lite cut at 1000/600, A_planck = A_act), Gauss-Newton steps
+  to the ACT maximum before the metric.
+
 2026-11-10 — SimAll lowE option; _v7simall (LCDM + Neff, the Planck 2018 base_nnu likelihood) submitted
 --------------------------------------------------------------------------------------------------------
 - scan/lowl_like.py: LOWEE_TABLES {"sroll2", "simall"}; the SimAll table is cobaya's native planck_2018_lowl.EE
