@@ -63,6 +63,25 @@ def save(history, theta, logp, grad, hmc, extra):
     os.replace(tmp, CKPT)
 
 
+def take_ownership(owner_path):
+    """one writer per checkpoint: a still-running job named in the owner file (an earlier dev allocation or batch
+    job) is cancelled before this run resumes, then this job becomes the owner."""
+    import subprocess
+    me = env("SLURM_JOB_ID", "")
+    other = open(owner_path).read().strip() if os.path.exists(owner_path) else ""
+    alive = lambda j: bool(subprocess.run(["squeue", "-h", "-j", j], capture_output=True, text=True).stdout.strip())
+    if other and other != me and alive(other):
+        log(f"[hmc] {CKPT} is owned by running job {other}: cancelling it")
+        subprocess.run(["scancel", other])
+        while alive(other):
+            time.sleep(5)
+    with open(owner_path, "w") as f:
+        f.write(me)
+
+
+if MODE == "sample":
+    take_ownership(CKPT[:-4] + ".owner")
+
 if os.path.exists(CKPT) and MODE == "sample":
     d = np.load(CKPT, allow_pickle=False)
     history = {k[2:]: list(d[k]) for k in d.files if k.startswith("h_")}
