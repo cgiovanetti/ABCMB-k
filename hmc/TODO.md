@@ -13,7 +13,7 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
 2. **Batched parameters** [planned: the -k port]. Many-chain lockstep sampling needs one call per leapfrog step for
    all chains. Upstream `vmap` flattens out past B ~ 16 and B = 64 did not compile in 20 min (2026-10-13 bench). Port
    the staged forward-mode batched gradient (`scan/batched_grad.py`), not only `call_batched`.
-3. **Smooth BBN-table YHe** [open, small]. `bbn_type="table"` interpolates YHe(omega_b, Neff) bilinearly, so
+3. **Smooth BBN-table YHe** [deprioritized 2026-11-10: the sampling will take YHe from LINX, item 14]. `bbn_type="table"` interpolates YHe(omega_b, Neff) bilinearly, so
    dYHe/domega_b is piecewise constant (kinks every ~5e-5 in omega_b). Harmless for HMC correctness, but a non-smooth
    force; bicubic would fix it. Same code in -k.
 4. **Silent spec footguns** [open, small]. Unknown spec keys are kept silently (`load_specs`), so a typo is a no-op:
@@ -50,3 +50,8 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
 12. **Start point** [open]: start at a Gauss-Newton step from the guess, not a fixed point (the Planck massive-nu best
     fit was ~30 chi2 off along theta_s with massless nu). The ACT driver already does this.
 13. **Derived parameters** [open]: theta_s, sigma8 (needs Pk) in the output.
+14. **LINX in the sampling** [next, after `_v1` finishes cleanly; user 2026-11-10]. YHe / Neff / T_nu from LINX
+    instead of the BBN table, as the profile driver does: `scan/bbn_stage.LinxStage` gives the batch's values and
+    exact Jacobians on the host CPU (~145 s per 32 rows without chi, against ~480 s per 64-chain ABCMB gradient
+    call), and the engine takes y + J (theta - theta0) so the jvp carries LINX's tangent. Optional: the BBN
+    likelihood (Y_p, D/H) with tau_n_fac and the rate shifts q as extra HMC parameters (~20 dims in all).
