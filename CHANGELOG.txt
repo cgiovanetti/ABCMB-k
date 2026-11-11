@@ -6,6 +6,22 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — hmc/: lockstep multi-chain HMC on the batched forward-mode gradient; _v1 matches CLASS MH
+------------------------------------------------------------------------------------------------------
+- hmc/sampler.py (numpy): all chains share eps and step count, so one leapfrog step = one staged_cl_and_grad call
+  for every chain; Gauss-Newton start metric, warmup eps rescaling + pooled-covariance metric, eps fitted at the
+  end of warmup, checkpoint every trajectory with an owner file (a resuming job cancels the previous writer).
+  hmc/posterior.py: LCDM, massless nu (Neff 3.044), YHe from the BBN table; plik-lite + Commander lowl TT + SimAll
+  lowE (cubic table); A_planck sampled.
+- Gradient check, no FD: leapfrog |dH| over T = 1 at eps 1/2, 1/4, 1/8 = 1 : 0.251 : 0.062 (eps^2 = 1 : 0.25 : 0.0625).
+- _v1: 64 chains, 12 warmup + 20 sampling trajectories, 73 calls of 64 cosmologies (481 s each, one 4xA100 node),
+  9.8 h wall. Sampling: acceptance 0.89, 2.4 steps per trajectory, no divergences, R-hat 0.99-1.01, ESS 1420-1610
+  of 1280 draws (~32 per call). Against cobaya MH + CLASS 3.3.4 (same data and priors, R-1 0.009): means within
+  0.12 sigma (n_s -0.12, the rest <= 0.06), sds within 4%. At fixed parameters plik-lite chi2 is 3.9 higher with
+  ABCMB-k than CLASS. hmc/results/lcdm_v1_triangle.png.
+- Start point: Planck's massive-nu best fit sits ~30 chi2 off along theta_s with massless nu; START now h 0.6789.
+- Open items for sampling with ABCMB out of the box: hmc/TODO.md (next: LINX in the sampling).
+
 2026-11-10 — ACT DR6 lite in the profile driver (high_ell act_lite); the ACT HMC files removed
 ---------------------------------------------------------------------------------------------
 - The ACT work is for the profiles, not the HMC: hmc/posterior_act.py, run_act.py, run_act.slurm and the README

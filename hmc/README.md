@@ -28,6 +28,13 @@ exactly whatever the gradient's accuracy; a wrong gradient only lowers acceptanc
 finite differences by the energy error over a fixed time T = 1 (`HMC_MODE=echeck`): it falls as eps^2 only if the
 force is the gradient of logp.
 
+## Result (`_v1`, 2026-11-10)
+
+64 chains, 12 warmup + 20 sampling trajectories: 9.8 h on one 4xA100 node (481 s per gradient call of 64
+cosmologies). Acceptance 0.89, no divergences, R-hat 0.99-1.01, ESS 1420-1610 for 1280 draws. Against cobaya MH +
+CLASS on the same posterior (`reference/`): means within 0.12 sigma (n_s -0.12, the rest <= 0.06), sds within 4%.
+`python hmc/analyze.py _v1` reprints the table and writes `results/lcdm_v1_triangle.png`.
+
 ## Running
 
 ```bash

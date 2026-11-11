@@ -34,7 +34,7 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
 7. **JAX likelihoods as a package module** [open]. plik-lite was cut in the 11-06 trim (restored to `hmc/plik_lite.py`);
    low-ell TT/EE live in `scan/lowl_like.py`; clipy's SimAll EE is a floor lookup with zero gradient (keep the
    cubic-interpolated table). Missing for the usual combinations: DESI BAO (needs r_d, D_M, D_H tangents) and the BBN
-   likelihood (LinxStage already gives Jacobians). ACT DR6 lite: in progress in another session (`hmc/posterior_act.py`, candl).
+   likelihood (LinxStage already gives Jacobians). ACT DR6 lite: `scan/act_lite.py` (candl data, in the profile driver since 02a7c9f) can be reused.
 8. **HyRex tangent sharding needs `XLA_FLAGS=--xla_force_host_platform_device_count=N` before JAX starts** [open].
    Without it the HyRex jvp is one serial CPU loop. Set it up in the engine, or warn.
 9. **Compile cost** [document]. 6-14 min per new batch shape; keep shapes fixed (pad) and set
