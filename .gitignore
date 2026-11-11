@@ -15,3 +15,4 @@ scan/results/
 
 # HMC outputs (chains, checkpoints, figures)
 hmc/results/
+hmc/diag/out/
