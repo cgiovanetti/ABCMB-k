@@ -55,3 +55,9 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
     exact Jacobians on the host CPU (~145 s per 32 rows without chi, against ~480 s per 64-chain ABCMB gradient
     call), and the engine takes y + J (theta - theta0) so the jvp carries LINX's tangent. Optional: the BBN
     likelihood (Y_p, D/H) with tau_n_fac and the rate shifts q as extra HMC parameters (~20 dims in all).
+15. **Validate the halofit HMC against the MH reference** [optional]: predicted agreement <= 0.10 sigma (ABCMB-k
+    halofit vs CLASS HMcode, linear response); a full `_v2` run would confirm it directly (~10 node-h; or fold it into
+    the LINX run, item 14, and compare against a LINX-YHe CLASS reference).
+16. **ABCMB-k vs high-precision CLASS residual** [open, small]: <= 0.08 sigma along omega_cdm / h / n_s, consistent
+    with a ~3e-5 relative acoustic-scale offset (TT +-3e-4 oscillation above l 500). Candidates: HyRex vs HyRec,
+    constants, the "recomb" lna grid; needs theta_s from ABCMB.

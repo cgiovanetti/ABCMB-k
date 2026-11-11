@@ -16,6 +16,7 @@
   HMC_SPECB    4       cosmologies per device per spectrum-stage jvp
   HMC_RTOL     1e-5    rtol_large_k_PE
   HMC_LOWEE    simall  | sroll2
+  HMC_NONLINEAR halofit | "" (linear lensing, as `_v1`)
 """
 import os, sys, time
 from hmc.posterior import LCDMPosterior, NAMES, START, BOX     # sets XLA_FLAGS before jax starts
@@ -45,7 +46,8 @@ def log(msg):
 
 log(f"[hmc] devices {jax.devices()} + {len(jax.devices('cpu'))} host; mode {MODE}, {NCH} chains")
 post = LCDMPosterior(rtol=float(env("HMC_RTOL", "1e-5")), ad_chunk=int(env("HMC_AD_CHUNK", "64")),
-                     spec_b_local=int(env("HMC_SPECB", "4")), lowee=env("HMC_LOWEE", "simall"))
+                     spec_b_local=int(env("HMC_SPECB", "4")), lowee=env("HMC_LOWEE", "simall"),
+                     nonlinear=env("HMC_NONLINEAR", "halofit"))
 
 
 def oracle(th):

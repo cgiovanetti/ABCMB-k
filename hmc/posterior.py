@@ -10,7 +10,9 @@ Parameters (NAMES): omega_b, omega_cdm, h, ln10As, n_s, tau_reion, A_planck; fla
 box BOX (cobaya's Planck ranges, H0 in [40, 100]). Three massless neutrinos (Neff 3.044, no
 massive species); YHe from the BBN table (bbn_type "table", CLASS's sBBN file), so it follows
 omega_b in value and tangent. Engine settings = the scan/ production profiles (l_max 2508, lensed,
-rtol 1e-5, "recomb" lna grid).
+rtol 1e-5, "recomb" lna grid), lensing potential from halofit (nonlinear="halofit", the default since 2026-11-10;
+`_v1` lensed with the linear spectrum, which moved n_s by -0.12 sigma against the HMcode CLASS reference:
+hmc/diag/nonlinear_lensing_shift.py).
 
 `logp_and_grad(theta (B, 7))` pushes the 6 cosmological directions through every engine stage in
 one staged jvp (the Cls and their tangents), then contracts the likelihood's reverse-mode gradient
@@ -56,12 +58,12 @@ FIXED = {"TCMB0": 2.34865418e-4, "N_nu_massive": 0, "Neff": 3.044,
 
 
 class LCDMPosterior:
-    def __init__(self, lmax=2508, rtol=1e-5, ad_chunk=64, spec_b_local=4, lowee="simall"):
+    def __init__(self, lmax=2508, rtol=1e-5, ad_chunk=64, spec_b_local=4, lowee="simall", nonlinear="halofit"):
         self.model = Model(output_Cl=True, l_max=lmax, lensing=True, output_Pk=False,
-                           l_max_g=12, l_max_pol_g=10, l_max_ur=17, l_max_ncdm=17,
+                           l_max_g=12, l_max_pol_g=10,
                            rtol_large_k_PE=rtol, atol_large_k_PE=rtol * 1e-2,
                            rtol_small_k_PE=min(1e-5, rtol), max_steps_PE=16384,
-                           lna_grid_mode="recomb", bbn_type="table")
+                           lna_grid_mode="recomb", bbn_type="table", nonlinear=nonlinear)
         self.ells = self.model.SS.ells
         self.ad_chunk = int(ad_chunk)
         self.spec_b_local = spec_b_local

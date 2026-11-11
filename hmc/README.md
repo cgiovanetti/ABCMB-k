@@ -35,6 +35,11 @@ cosmologies). Acceptance 0.89, no divergences, R-hat 0.99-1.01, ESS 1420-1610 fo
 CLASS on the same posterior (`reference/`): means within 0.12 sigma (n_s -0.12, the rest <= 0.06), sds within 4%.
 `python hmc/analyze.py _v1` reprints the table and writes `results/lcdm_v1_triangle.png`.
 
+The n_s offset is lensing physics, not the codes: `_v1` lensed with the linear spectrum, the cobaya CLASS reference
+with HMcode (cobaya's default). The linear response to that difference reproduces every HMC - MH shift within the
+MC error; with the same physics ABCMB-k and high-precision CLASS agree to <= 0.08 sigma (`diag/`, CHANGELOG
+2026-11-11). The HMC now lenses with halofit by default (halofit vs HMcode: <= 0.01 sigma here).
+
 ## Running
 
 ```bash

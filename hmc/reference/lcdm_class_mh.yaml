@@ -2,7 +2,7 @@
 # cobaya's Metropolis-Hastings with CLASS (v3.3.4, pip classy) instead of HMC with ABCMB-k.
 #   plik-lite TTTEEE (native) + Commander low-ell TT (native) + SimAll low-ell EE (native, floor lookup)
 #   Neff 3.044 all massless (N_ur 3.044, no ncdm), YHe from CLASS's default sBBN_2025 (= ABCMB's table)
-#   delta_l_max 1254 = ABCMB-k's l_max/2 (CLASS 3.3.4's default 500 differs by ~1% in lensed TT at l~2500)
+#   non-linear lensing: HMcode (cobaya's default, now explicit); delta_l_max 1254 = ABCMB-k's l_max/2 (CLASS 3.3.4's default 500 differs by ~1% in lensed TT at l~2500)
 # Launcher: hmc/reference/run_class_mh.slurm
 output: /pscratch/sd/c/carag/ABCMB-k/hmc/results/ref/class_mh
 packages_path: /pscratch/sd/c/carag/Neal_ACTDR6/cobaya_packages
@@ -18,6 +18,9 @@ theory:
       N_ur: 3.044
       N_ncdm: 0
       delta_l_max: 1254
+      # cobaya's classy default when unset ("same as CAMB"): the chains in results/ref were made with it. HMcode and
+      # halofit move this posterior by <= 0.01 sigma; linear lensing moves n_s by -0.18 sigma (hmc/diag/)
+      non_linear: hmcode
 params:
   omega_b:
     prior: {min: 0.005, max: 0.1}

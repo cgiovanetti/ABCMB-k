@@ -18,6 +18,20 @@ ln10As 3.0353 [3.0178, 3.0535] vs 3.0365 (3.038 +- 0.018); tau 0.0535 [0.0464, 0
 its own best fit (our 95% [2.478, 3.246] vs Planck's 2.92 +0.36/-0.37). vs _v4linx (SRoll2): Neff unchanged (2.850),
 tau 0.058 -> 0.054. Absolute chi2 is not comparable with Planck's (the native low-ell tables' offsets differ).
 
+2026-11-11 — HMC vs CLASS: the n_s offset was linear vs HMcode lensing; HMC now lenses with halofit
+-------------------------------------------------------------------------------------------------
+- cobaya's classy sets non_linear = hmcode when unset; the MH reference lensed with HMcode, _v1 with the linear
+  spectrum. Linear response (-Sigma_post J^T W delta, ABCMB-k tangents) reproduces every HMC - MH shift within the
+  ~0.04 sigma MC error (n_s -0.15 predicted, -0.12 observed). hmc/diag/{theory_vs_class,nonlinear_lensing_shift,
+  halofit_check,likelihood_port_check,cobaya_class_args}.py; outputs hmc/diag/out/.
+- Same physics, the codes agree: ABCMB-k halofit vs high-precision CLASS halofit (ACT block) <= 0.08 sigma
+  (omega_cdm -0.07, h +0.08, n_s +0.05: a ~3e-5 acoustic-scale-like direction; TT residual +-3e-4 above l 500);
+  default-precision CLASS vs its high-precision run moves omega_b -0.07 sigma. plik-lite chi2 at the posterior mean:
+  ABCMB-k halofit 582.16, CLASS halofit 581.89 (hp 582.46), HMcode 581.84. JAX likelihoods = cobaya native to 1e-4
+  (lowE +0.06: cubic table vs floor).
+- hmc/posterior.py: nonlinear="halofit" by default (HMC_NONLINEAR="" restores linear); dropped the ignored
+  l_max_ur / l_max_ncdm keys. Reference yaml states non_linear: hmcode explicitly.
+
 2026-11-10 — hmc/: lockstep multi-chain HMC on the batched forward-mode gradient; _v1 matches CLASS MH
 ------------------------------------------------------------------------------------------------------
 - hmc/sampler.py (numpy): all chains share eps and step count, so one leapfrog step = one staged_cl_and_grad call
