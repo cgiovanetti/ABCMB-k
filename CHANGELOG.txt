@@ -6,6 +6,18 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-10 — _v7simall done: LCDM + Neff with the Planck 2018 base_nnu likelihood matches Planck's best fit
+-------------------------------------------------------------------------------------------------------------
+Job 61091033 (5h02m, 4 nodes): all 7 POIs converged (21/21 each, no flags, lockstep stop: converged); prepass
+chi2 2765.586. Profile best fit [68%] vs Planck 2018 base_nnu plikHM_TTTEEE_lowl_lowE best fit (mean +- sd),
+PLA full-grid 68% table section 7.7: Neff 2.846 [2.654, 3.046] vs 2.836 (2.92 +- 0.19); H0 65.93 [64.51, 67.45]
+vs 65.82 (66.4 +- 1.4); omega_b 0.02220 [0.02198, 0.02243] vs 0.022194 (0.02225 +- 0.00022); omega_cdm 0.11717
+[0.11419, 0.12039] vs 0.11725 (0.1184 +- 0.0029); n_s 0.95791 [0.94933, 0.96658] vs 0.9579 (0.9597 +- 0.0085);
+ln10As 3.0353 [3.0178, 3.0535] vs 3.0365 (3.038 +- 0.018); tau 0.0535 [0.0464, 0.0612] vs 0.0538 (0.0532 +-
+0.0077). Best fits agree to <= 0.08 sigma, interval widths to ~7%. Planck's posterior mean of Neff sits 0.08 above
+its own best fit (our 95% [2.478, 3.246] vs Planck's 2.92 +0.36/-0.37). vs _v4linx (SRoll2): Neff unchanged (2.850),
+tau 0.058 -> 0.054. Absolute chi2 is not comparable with Planck's (the native low-ell tables' offsets differ).
+
 2026-11-10 — hmc/: lockstep multi-chain HMC on the batched forward-mode gradient; _v1 matches CLASS MH
 ------------------------------------------------------------------------------------------------------
 - hmc/sampler.py (numpy): all chains share eps and step count, so one leapfrog step = one staged_cl_and_grad call
