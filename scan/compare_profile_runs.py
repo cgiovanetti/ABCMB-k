@@ -1,4 +1,4 @@
-"""compare_profile_runs.py — overlay the LCDM+Neff full-plik profile runs (_v3, _v4linx, _v5bbn, _v6bbn).
+"""compare_profile_runs.py — overlay the LCDM+Neff full-plik profile runs (_v3, _v4linx, _v5bbn, _v6bbn, _v7simall).
 
 Each run is offset by its own best chi2 (each has its own chi2 surface); the parabola is fitted to the
 pointwise lower envelope of the newest surface selected. CPU only:
@@ -19,17 +19,20 @@ CEN_V4 = CEN_V3[:6] + [-0.823]      # lcdm_dneff_linx_plikfull.py: the 7th param
 CEN_V5 = [0.6649, 0.022166, 0.1199, 0.96097, 3.0469, 0.056934, -0.23625]   # lcdm_dneff_linx_bbnlike_plikfull.py
 SIG_NEW = [0.0054, 0.00015, 0.0013, 0.0042, 0.014, 0.0073, 0.1]
 SIG_V4 = SIG_NEW[:6] + [0.37]
-RUNS = {"_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4), "_v5bbn": (CEN_V5, SIG_V4), "_v6bbn": (CEN_V5, SIG_V4)}
-STYLE = {"_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X"), "_v5bbn": ("#2ca02c", "D"), "_v6bbn": ("#9467bd", "s")}
-XBOX = {"_v3": 10.0, "_v4linx": 10.0, "_v5bbn": 10.0, "_v6bbn": 10.0}                       # PA_XBOX; 5.0 otherwise
+RUNS = {"_v3": (CEN_V3, SIG_NEW), "_v4linx": (CEN_V4, SIG_V4), "_v5bbn": (CEN_V5, SIG_V4), "_v6bbn": (CEN_V5, SIG_V4),
+        "_v7simall": (CEN_V4, SIG_V4)}      # _v7simall: lcdm_dneff_linx_simall_plikfull.py (cen/sig of _v4linx)
+STYLE = {"_v3": ("#d62728", "h"), "_v4linx": ("#17becf", "X"), "_v5bbn": ("#2ca02c", "D"), "_v6bbn": ("#9467bd", "s"),
+         "_v7simall": ("#ff7f0e", "o")}
+XBOX = {"_v3": 10.0, "_v4linx": 10.0, "_v5bbn": 10.0, "_v6bbn": 10.0, "_v7simall": 10.0}   # PA_XBOX; 5.0 otherwise
 # chi2 surface of each run: "massive-nu" = the massive neutrino evolved; "linx" = YHe/Neff from LINX;
 # "linx-bbn" = plus the BBN likelihood (_v5bbn: its nuisance priors sat at the config cen, a different and biased
-# surface). Runs on different surfaces never share an envelope.
-SURFACE = {"_v3": "massive-nu", "_v4linx": "linx", "_v5bbn": "linx-bbn-cen", "_v6bbn": "linx-bbn"}
-SURF_ORDER = ["massive-nu", "linx", "linx-bbn-cen", "linx-bbn"]
-# runs whose 7th parameter is LINX's Delta_Neff_init: their Neff file is the Delta_Neff_init one and every row is
-# placed at its derived Neff (npz derived_bbn[:, 1]) so it plots on the Neff axis with the others
-LINX_RUNS = {"_v4linx", "_v5bbn", "_v6bbn"}
+# surface; "linx-simall" = "linx" with SimAll lowE in place of SRoll2). Runs on different surfaces never share an
+# envelope.
+SURFACE = {"_v3": "massive-nu", "_v4linx": "linx", "_v5bbn": "linx-bbn-cen", "_v6bbn": "linx-bbn", "_v7simall": "linx-simall"}
+SURF_ORDER = ["massive-nu", "linx", "linx-bbn-cen", "linx-bbn", "linx-simall"]
+# runs whose 7th parameter is LINX's Delta_Neff_init (found by their Delta_Neff_init npz, not by a tag list): their
+# Neff file is the Delta_Neff_init one and every row is placed at its derived Neff (npz derived_bbn[:, 1]) so it
+# plots on the Neff axis with the others
 
 
 META = {}      # (tag, poi) -> (physical bound (lo, hi), 68% interval kind) from the driver's npz
@@ -40,10 +43,14 @@ def load_rows(tags):
     box (the npz at_box; older npz: a nuisance at the +-XBOX face). Fills META."""
     rows = []
     for tag in tags:
+        missing = [t for t, d in (("RUNS", RUNS), ("STYLE", STYLE), ("SURFACE", SURFACE)) if tag not in d]
+        if missing:
+            raise SystemExit(f"{tag}: add it to {missing} at the top of {os.path.basename(__file__)}")
         cen, sig = RUNS[tag]
+        linx = os.path.exists(os.path.join(RES, f"profile_prod_ad_Delta_Neff_init{tag}.npz"))
         cen, sig = np.array(cen), np.array(sig)
         for poi in ORDER:
-            fpoi = "Delta_Neff_init" if (tag in LINX_RUNS and poi == "Neff") else poi
+            fpoi = "Delta_Neff_init" if (linx and poi == "Neff") else poi
             p = os.path.join(RES, f"profile_prod_ad_{fpoi}{tag}.npz")
             if not os.path.exists(p):
                 continue
@@ -57,7 +64,7 @@ def load_rows(tags):
                 th = cen.copy()
                 th[ORDER.index(poi)] = d["poi_grid"][i]
                 th[nuis] = cen[nuis] + sig[nuis] * d["xstar"][i][sel]
-                if tag in LINX_RUNS:
+                if linx:
                     th[6] = d["derived_bbn"][i, 1]
                 pinned = (bool(d["at_box"][i]) if "at_box" in d.files
                           else bool((np.abs(d["xstar"][i]) >= XBOX.get(tag, 5.0) - 1e-3).any()))
