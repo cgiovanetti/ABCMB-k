@@ -6,6 +6,15 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-12 — Y_p label corrected; one open-items list (TODO.md)
+---------------------------------------------------------------
+- Y_p 0.2458 +/- 0.0013 (every BBN-likelihood run: _v5bbn, _v6bbn, _v1emwimp, _v1emwimp2d) is the LBT value (Aver
+  2026). The lcdm_dneff_linx_bbnlike_plikfull.py docstring had called Hsyu+ 2020 (0.2436 +/- 0.0040) "the LBT value";
+  docstring and README corrected (the entries below keep "Aver 2026"). No run used 0.2436. The docstring edit changes
+  that config's run signature: a _v6bbn re-run under the same tag would stop instead of skipping.
+- TODO.md: the single list of open items (profiles, HMC, engine, upstream ABCMB); hmc/TODO.md merged into it (items
+  1-17 keep their numbers) and left as a pointer; CLAUDE.md points to it.
+
 2026-11-10 — _v7simall done: LCDM + Neff with the Planck 2018 base_nnu likelihood matches Planck's best fit
 -------------------------------------------------------------------------------------------------------------
 Job 61091033 (5h02m, 4 nodes): all 7 POIs converged (21/21 each, no flags, lockstep stop: converged); prepass

@@ -8,7 +8,7 @@ Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT a
 |---|---|---|---|---|
 | `_v3` | CMB, YHe fixed, POI Neff | 2.818 [2.596, 3.052] [2.395, 3.287] | 2759.06 | job 60025795, 3h52m on 4 nodes |
 | `_v4linx` | CMB, YHe/Neff/T_nu from LINX, POI Delta_Neff_init | 2.850 [2.659, 3.050] [2.484, 3.250] | 2759.10 | job 60057736, 5h24m on 4 nodes |
-| `_v5bbn` (biased) | `_v4linx` + Y_p (Aver 2026) + D/H (Cooke 2018); nuisance priors at the config cen | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
+| `_v5bbn` (biased) | `_v4linx` + Y_p (LBT, Aver 2026) + D/H (Cooke 2018); nuisance priors at the config cen | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
 | `_v6bbn` | `_v5bbn` with the nuisance priors at 1 / 0, recomb lna grid | 2.982 [2.902, 3.064] [2.825, 3.143] | 2763.15 | job 60988361, 4h56m on 4 nodes |
 | `_v7simall` | `_v4linx` with SimAll lowE (the Planck 2018 base_nnu likelihood), recomb lna grid, MLE prepass | 2.846 [2.654, 3.046] [2.478, 3.246] | 2765.59 | job 61091033, 5h02m on 4 nodes |
 | `_v1act` | LCDM (Neff 3.044), ACT DR6 lite + SRoll2 lowE, YHe from the sBBN table, l_max 6325 + 5000 | queued | | job 61111914, 6 nodes |

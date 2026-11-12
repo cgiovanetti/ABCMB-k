@@ -19,6 +19,8 @@ pip install -r pytest_requirements.txt    # test deps (adds classy)
 - `pytests/test_snapshots.py`: parity against frozen output (`pytests/fixtures/snapshots.npz`) at `rtol=5e-5`, `atol=1e-18`, no classy. Run it on GPU (`JAX_PLATFORM_NAME=gpu` inside srun), the backend the snapshots were made on; regenerate with `python pytests/fixtures/generate_snapshots.py` after a deliberate change (last regenerated 2026-11-07, 4405d4f).
 - `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_recomb_grid.py` (the "recomb" grid and its Jacobian weights, CPU); `pytests/test_lm_tools.py`, `test_profile_toy.py` and `test_profile_bounds.py` (the profile machinery on toys: multimodality, bounds and one-sided intervals; CPU); `test_lowl_ee_tables.py` (LowLEE SRoll2 / SimAll against cobaya, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
 
+Open items for the whole repo (profiles, HMC, engine, upstream ABCMB): `TODO.md`, the one list; add new items there with the next free number.
+
 CI forces CPU; `pytests/conftest.py` enables x64 and `jax_debug_nans`. Run long suites one file at a time. `time_tests.py` is a hand-run timing script. Pins that matter: `jax==0.8.1`, `equinox==0.13.2`, `optimistix==0.0.11` (`setup.cfg`).
 
 ## Architecture
