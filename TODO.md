@@ -6,7 +6,8 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## Runs and decisions
 
-18. **EM-WIMP 1D profile `_v1emwimp`** [stopped; decision: user]. Jobs 61054076 and 61084162 both hit the 12 h limit.
+18. **EM-WIMP 1D profile `_v1emwimp`** [resumed 2026-11-12: job 61174328, PA_MAXIT=60 (the cap counts across resumes;
+    the rows were at it22-24), 4 nodes (rank 3 is done and idles; a different node count would restart from scratch)]. Jobs 61054076 and 61084162 both hit the 12 h limit.
     Done: log10_m_chi (m_chi > 10.29 MeV at 95%, > 14.4 MeV at 68%; the 2D gives 10.1) and n_s. The other six POIs
     are checkpointed (`scan/results/profile_prod_ad_STATE_v1emwimp_r0-2.npz`) with 22-25 of 78 rows per node still
     active, mostly the light-chi spread starts, and 2-5 grid points per profile not yet converged. Resume with the
