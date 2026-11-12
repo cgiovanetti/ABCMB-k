@@ -49,7 +49,7 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
     split over nodes (4 nodes: ~3 h wall instead of ~9).
 12. **Start point** [open]: start at a Gauss-Newton step from the guess, not a fixed point (the Planck massive-nu best
     fit was ~30 chi2 off along theta_s with massless nu). The ACT driver already does this.
-13. **Derived parameters** [open]: theta_s, sigma8 (needs Pk) in the output.
+13. **Derived parameters** [open]: theta_s (item 17), sigma8 (needs Pk) in the output.
 14. **LINX in the sampling** [next, after `_v1` finishes cleanly; user 2026-11-10]. YHe / Neff / T_nu from LINX
     instead of the BBN table, as the profile driver does: `scan/bbn_stage.LinxStage` gives the batch's values and
     exact Jacobians on the host CPU (~145 s per 32 rows without chi, against ~480 s per 64-chain ABCMB gradient
@@ -60,4 +60,8 @@ Collected while building the lockstep HMC (2026-11-10). Status in brackets; newe
     the LINX run, item 14, and compare against a LINX-YHe CLASS reference).
 16. **ABCMB-k vs high-precision CLASS residual** [open, small]: <= 0.08 sigma along omega_cdm / h / n_s, consistent
     with a ~3e-5 relative acoustic-scale offset (TT +-3e-4 oscillation above l 500). Candidates: HyRex vs HyRec,
-    constants, the "recomb" lna grid; needs theta_s from ABCMB.
+    constants, the "recomb" lna grid; needs theta_s from ABCMB (item 17).
+17. **theta_s as an ABCMB derived parameter** [open; user 2026-11-12; upstream ABCMB and -k]. Neither code outputs the
+    acoustic scale. Add 100 theta_s (CLASS convention: r_s / D_A at the visibility peak, `100*theta_s`) and theta_* (at
+    tau = 1), with tangents, from the Background. Needed to chase item 16 (compare to CLASS's 1.04186 at the posterior
+    mean), to report it in HMC/MH chains, and to sample in theta_s instead of h if a run ever needs that.

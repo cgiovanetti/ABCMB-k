@@ -16,6 +16,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("tag", nargs="?", default="")
 ap.add_argument("--ref", default=os.path.join(HERE, "results", "ref", "class_mh"))
 ap.add_argument("--burn", type=int, default=0)
+ap.add_argument("--label", default="HMC, ABCMB-k", help="legend label of the HMC run")
+ap.add_argument("--ref-label", default="MH, CLASS (reference)", help="legend label of the reference")
 args = ap.parse_args()
 
 d = np.load(os.path.join(HERE, "results", f"lcdm{args.tag}.npz"), allow_pickle=False)
@@ -108,12 +110,12 @@ try:
     pn = ["omega_b", "omega_cdm", "H0", "ln10As", "n_s", "tau_reion"]
     lab = [r"\omega_b", r"\omega_{cdm}", "H_0", r"\ln(10^{10}A_s)", "n_s", r"\tau"]
     hs = MCSamples(samples=np.stack([cols[p].ravel() for p in pn], axis=1), names=pn, labels=lab,
-                   label=f"HMC, ABCMB-k ({len(x) * B} draws)")
+                   label=f"{args.label} ({len(x) * B} draws)")
     g = plots.get_subplot_plotter()
     if ref is not None:
         for p_h, p_r in (("ln10As", "logA"), ("tau_reion", "tau_reio")):
             ref.addDerived(ref.getParams().__dict__[p_r], name=p_h, label=lab[pn.index(p_h)])
-        ref.label = "MH, CLASS (reference)"
+        ref.label = args.ref_label
         # categorical slots 1 and 2 of the dataviz reference palette (a validated adjacent pair): reference filled
         # blue, HMC orange lines
         g.triangle_plot([ref, hs], pn, filled=[True, False], contour_colors=["#2a78d6", "#eb6834"],
