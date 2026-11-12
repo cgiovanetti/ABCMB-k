@@ -9,8 +9,8 @@ This file is a condensed record of the current state. The full session log (3173
 2026-11-12 — Y_p label corrected; one open-items list (TODO.md)
 ---------------------------------------------------------------
 - Y_p 0.2458 +/- 0.0013 (every BBN-likelihood run: _v5bbn, _v6bbn, _v1emwimp, _v1emwimp2d) is the LBT value (Aver
-  2026). The lcdm_dneff_linx_bbnlike_plikfull.py docstring had called Hsyu+ 2020 (0.2436 +/- 0.0040) "the LBT value";
-  docstring and README corrected (the entries below keep "Aver 2026"). No run used 0.2436. The docstring edit changes
+  2026); the lcdm_dneff_linx_bbnlike_plikfull.py docstring had misattributed the LBT label to another measurement
+  (no run used it). Docstring and README corrected (the entries below keep "Aver 2026"). The docstring edit changes
   that config's run signature: a _v6bbn re-run under the same tag would stop instead of skipping.
 - TODO.md: the single list of open items (profiles, HMC, engine, upstream ABCMB); hmc/TODO.md merged into it (items
   1-17 keep their numbers) and left as a pointer; CLAUDE.md points to it.

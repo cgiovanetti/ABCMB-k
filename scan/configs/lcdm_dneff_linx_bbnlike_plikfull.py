@@ -5,7 +5,7 @@ lcdm_dneff_linx_plikfull.py plus the primordial abundances as data: Gaussian ter
 and one N(0, 1) log-normal rate shift per reaction (q0 .. q11; the driver appends them to "order" and prints
 which reaction each scales). Network key_recommended = PRIMAT 2023 with the Chen et al. 2025 n(p,g)d rate
 (arXiv:2509.11743) and updated d(p,g)3He / d+d rates. Data: Y_p 0.2458 +/- 0.0013 (LBT, Aver 2026), D/H 2.527
-+/- 0.030 (Cooke 2018); Hsyu+ 2020 (0.2436 +/- 0.0040) is an alternative for "Yp".
++/- 0.030 (Cooke 2018).
 cen (BBN nuisances included) / grid_sig: the PA_MLE_PREPASS=1 joint fit of this likelihood and its Fisher
 sigmas (job 60327767). Launcher: scan/profile_prod_linx_bbnlike.slurm.
 """
