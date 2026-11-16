@@ -17,8 +17,10 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     differently and the checkpoints no longer match.
 19. **`scan/profiles.ipynb`** [user]. The user's working copy has the Delta_Neff_init / Neff fix; the copy on
     Perlmutter has their uncommitted edits. Sync and commit.
-24. **`_v1act`** (ACT DR6 lite LCDM profile, job 61111914) [ACT session; timed out 11-13 at 10 h with 1-2 rows per node
-    still active at it4-7: resubmit its launcher to finish].
+24. **`_v1act`** (ACT DR6 lite LCDM profile) [ACT session]. 61111914 timed out 11-13 at 10 h: omega_b and n_s done
+    (21/21 converged), the other four at 1-2 active rows. Resume 61404156 (11-16) on 4 nodes with
+    PA_POIS=h,omega_cdm,ln10As,tau_reion and the r4 / r5 LM checkpoints copied to r2 / r3 (POIS[rank::4]; originals in
+    logs/act/); the prepass reruns first (not checkpointed). When done: results table + delete STATE_v1act_r4/r5.
 
 ## Profile driver (scan/)
 

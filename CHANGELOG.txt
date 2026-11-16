@@ -6,6 +6,13 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-16 — _v1act resumed on 4 nodes
+--------------------------------------
+61111914 (6 nodes, 10 h, 11-13) timed out: omega_b 0.02257 [0.02241, 0.02274], n_s 0.96595 [0.95847, 0.97348] (68%,
+21/21 converged each, min chi2 541.81); h, omega_cdm, ln10As, tau_reion at 1-2 active rows. Resume 61404156: 4 nodes,
+4 h, PA_POIS=h,omega_cdm,ln10As,tau_reion, LM checkpoints r4 / r5 copied to r2 / r3 (the rank -> POI map is
+POIS[rank::NPROC]; the run signature has no POI list or node count).
+
 2026-11-12 — Y_p label corrected; one open-items list (TODO.md)
 ---------------------------------------------------------------
 - Y_p 0.2458 +/- 0.0013 (every BBN-likelihood run: _v5bbn, _v6bbn, _v1emwimp, _v1emwimp2d) is the LBT value (Aver
