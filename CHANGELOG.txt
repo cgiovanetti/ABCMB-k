@@ -6,6 +6,15 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-16 — FixedKenCarp4: stop_gradient on M^-1 makes its gradients 1.54x faster than Kvaerno5
+-----------------------------------------------------------------------------------------------
+The 686 s gradient (0.81x) was a tangent through the chord matrix's inverse (gdt carries a numerically zero but not
+symbolic tangent): with M^-1 stop_gradient'ed, as diffrax does, B=32 / 4 A100 warm: values 131 s, gradients 360 s
+(Kvaerno5 162 / 553 s; 1.24x / 1.54x), tangents identical to the earlier ones (2e-9). kencarp_fixed now defaults to
+rtol_limber_k_PE = 1e-4 (Clpp 2.6e-3 -> 1.8e-4, Kvaerno5 1.2e-4). A custom stage tangent was tried and dropped
+(unstable below ~6 iterations, 11% at 6). Kvaerno5 stays the default (TODO.md item 31). The diffrax patch
+(ABCMB/.pr_review/kencarp63/fixed_kencarp4_vs_diffrax.diff) carries the stop_gradient and stays bit-identical.
+
 2026-11-16 — FixedKenCarp4 benchmarked in -k; _v1emwimp 1D written; branch cleanup
 -----------------------------------------------------------------------------------
 - FixedKenCarp4 (abcmb/fixed_kencarp4.py, opt-in PE_solver="kencarp_fixed"; minimal patch against diffrax's

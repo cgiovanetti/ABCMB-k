@@ -10,7 +10,7 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 
 ## High priority (user, 2026-11-16)
 
-31. **Fixed-iteration KenCarp4 perturbation solver** [in progress]. diffrax's KenCarp4 with the Newton while loop
+31. **Fixed-iteration KenCarp4 perturbation solver** [-k done 2026-11-16; upstream ABCMB next]. diffrax's KenCarp4 with the Newton while loop
     replaced by `n_iter` unrolled chord iterations (Jacobian and its explicit inverse once per step, no gradient
     through them); valid for nonlinear species, unlike PR #63's single-iteration LinearKenCarp4. ABCMB-k:
     `abcmb/fixed_kencarp4.py`, opt-in `PE_solver="kencarp_fixed"`, `kencarp_n_iter` (default 10);
@@ -18,14 +18,16 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     Minimal patch against diffrax's own file: `/pscratch/sd/c/carag/ABCMB/.pr_review/kencarp63/fixed_kencarp4_vs_diffrax.diff`
     (bit-identical to the ABCMB-k module). The Nov-7 upstream review (same directory, README.md): N=8-10 with the
     inverse, 1.7-1.9x faster than Kvaerno5 for values (with the PR's looser dtmax for KenCarp). 2026-11-16, -k batched
-    at production settings, same step control (`scan/diag/kencarp_bench.py`, B=32 on 4 A100, warm): values Kvaerno5
-    162 s, N=10 125 s, N=8 116 s; gradients (6 directions) Kvaerno5 553 s, N=10 686 s (0.81x: AD through the unrolled
-    iterations costs more than Kvaerno5's implicit-function tangent); compile 1.5-2x longer. TT/TE/EE within 1.3e-4
-    of Kvaerno5, tangents within 1.5e-5 of peak. Against Kvaerno5 at 10-100x tighter tolerances: Kvaerno5 TT/EE
-    <= 8.4e-5, Clpp <= 1.2e-4; KenCarp TT/EE <= 1.4e-4 but Clpp 2.6e-3 (N=10) / 6.7e-3 (N=8) at l 2000-2500 from the
-    rtol-1e-3 lensing-only modes; with rtol_limber_k_PE = 1e-4 N=10 gets Clpp <= 1.8e-4 for 131 s (1.24x). N=8:
-    values 1.40x, gradients 0.89x (619 s). Verdict: Kvaerno5 stays the -k default (gradients dominate the profile
-    driver and HMC); KenCarp is a values-only win and needs the tighter lensing-mode tolerance.
+    at production settings, same step control (`scan/diag/kencarp_bench.py`, B=32 on 4 A100, warm; results in
+    `logs/kencarp_bench/`): with N=10 and rtol_limber_k_PE = 1e-4 (now the default for kencarp_fixed) values 131 s vs
+    Kvaerno5 162 s (1.24x), gradients (6 directions) 360 s vs 553 s (1.54x); TT/EE <= 1.4e-4 and Clpp <= 1.8e-4 against
+    Kvaerno5 at 10-100x tighter tolerances (Kvaerno5 8.4e-5 / 1.2e-4), tangents within 1.5e-5 of peak of Kvaerno5's.
+    The first gradient benchmark (686 s, 0.81x) carried a tangent through M^-1 (gdt has a numerically zero, not
+    symbolic, tangent): stop_gradient on M^-1 alone halved it. Tried and dropped: a custom stage tangent (K chord
+    iterations on the linearised stage equation) is unstable below K~6 (the once-per-step Jacobian is too far from the
+    stage Jacobians for ABCMB's stiff modes) and saves only 11% at K=6 (309 s). Floor of this design ~250 s; lower needs
+    per-stage Jacobians (the PR's cost) or work outside the solver. Kvaerno5 stays the default; kencarp_fixed is a
+    1.24x / 1.54x opt-in.
 22 (see below). **LINX gradient speedup** is the other high-priority item.
 
 ## Runs and decisions

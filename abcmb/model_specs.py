@@ -151,8 +151,10 @@ def load_specs(input_specs):
     # These modes only need phi+psi at late times, which is
     # smooth; resolving their photon oscillations to rtol_large_k_PE costs more
     # solver steps than every CMB mode combined, so we split this solve:
-    specs["rtol_limber_k_PE"] = input_specs.get("rtol_limber_k_PE", 1.e-3)
-    specs["atol_limber_k_PE"] = input_specs.get("atol_limber_k_PE", 1.e-5)
+    # (kencarp_fixed, 4th order, needs 1e-4 here to match Kvaerno5's Clpp at l > 1500: 2.6e-3 -> 1.8e-4, +5% time)
+    _kc = specs["PE_solver"] == "kencarp_fixed"
+    specs["rtol_limber_k_PE"] = input_specs.get("rtol_limber_k_PE", 1.e-4 if _kc else 1.e-3)
+    specs["atol_limber_k_PE"] = input_specs.get("atol_limber_k_PE", 1.e-6 if _kc else 1.e-5)
     specs["pcoeff_PE"]       = input_specs.get("pcoeff_PE", 0.25)
     specs["icoeff_PE"]       = input_specs.get("icoeff_PE", 0.8)
     specs["dcoeff_PE"]       = input_specs.get("dcoeff_PE", 0.)

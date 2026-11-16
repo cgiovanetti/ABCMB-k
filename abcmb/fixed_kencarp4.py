@@ -5,7 +5,8 @@ diffrax.KenCarp4 (diffrax/_solver/kencarp4.py, imported from there). Differences
 explicit half of the IMEX pair is unused; and each implicit stage runs exactly n_iter chord iterations
     f <- f - M^-1 (f - vf(t_i, ypart_i + gamma dt f)),   M = I - gamma dt J,
 with M^-1 formed once per step, unrolled, with no convergence test (no while loop). As in diffrax, the iteration
-matrix carries no gradient: forward-mode AD differentiates the iterations themselves, not J.
+matrix carries no gradient: forward-mode AD differentiates the iterations, not J or M^-1 (a tangent through M^-1
+costs two matrix products per direction per step and doubled the gradient time).
 """
 from typing import ClassVar
 
@@ -40,18 +41,17 @@ class FixedKenCarp4(diffrax.AbstractSolver):
         dt = t1 - t0
         gdt = tab.a_diagonal[1] * dt
         ts = [t0] + [t0 + c * dt for c in tab.c]
-        vf = lambda t, y, a: terms.vf(t, y, a)
-        f = [vf(t0, y0, args)]                                   # explicit first stage
+        f = [terms.vf(t0, y0, args)]                             # explicit first stage
         minv = None
         for i in range(1, 6):
             ypart = y0 + dt * sum(a * fj for a, fj in zip(tab.a_lower[i - 1], f))
             fi = sum(p * fj for p, fj in zip(tab.a_predictor[i - 1], f))
             if minv is None:                                     # second stage: J once per step, no gradient
                 y_jac, a_jac = jax.lax.stop_gradient((ypart + gdt * fi, args))
-                J = jax.jacfwd(lambda y: vf(ts[i], y, a_jac))(y_jac)
-                minv = jnp.linalg.inv(jnp.eye(y0.shape[0]) - gdt * J)
+                J = jax.jacfwd(lambda y: terms.vf(ts[i], y, a_jac))(y_jac)
+                minv = jax.lax.stop_gradient(jnp.linalg.inv(jnp.eye(y0.shape[0]) - gdt * J))
             for _ in range(self.n_iter):
-                fi = fi - minv @ (fi - vf(ts[i], ypart + gdt * fi, args))
+                fi = fi - minv @ (fi - terms.vf(ts[i], ypart + gdt * fi, args))
             f.append(fi)
         y1 = ypart + gdt * fi                                    # stiffly accurate: the last stage is y1
         y_error = dt * sum(b * fj for b, fj in zip(tab.b_error, f))
