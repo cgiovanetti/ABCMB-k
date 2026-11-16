@@ -2,7 +2,11 @@
 
 One list for the whole repo (profile driver, HMC, engine, upstream ABCMB). Add new items here, not in per-directory
 files. Item numbers are stable IDs (other notes cite them), not priorities. Status in brackets; newest notes at the
-end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
+end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12). Closed 2026-11-16 (user): 7 (JAX likelihood
+module: not ours), 10 (config-driven HMC posterior: a collaborator's), 15 (halofit HMC validation: not needed), 18
+(`_v1emwimp` run: folded into 20), 19 (profiles.ipynb: synced), 23 (more 2D profiles: m_chi-Neff was the only
+interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` deleted; `neff_terms.py` kept in
+`scan/diag/`).
 
 ## High priority (user, 2026-11-16)
 
@@ -26,18 +30,6 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## Runs and decisions
 
-18. **EM-WIMP 1D profile `_v1emwimp`** [written 2026-11-16 by job 61404076 (`PA_MS_BRANCH_MAX=0`); open: the 95% ends of
-    omega_cdm (low), h (low) and Delta_Neff_init (both) run off the grids sized for `_v6bbn`: add outer grid points].
-    Jobs 61054076 and 61084162 hit the 12 h limit; log10_m_chi (m_chi > 10.29 MeV at 95%, > 14.4 MeV at 68%; the 2D
-    gives 10.1) and n_s finished. 61174328 (`PA_MAXIT=60`; the cap counts across resumes) finished the LM phase of the
-    other six POIs at the cap (69-75 of 78 rows converged per node, 2-8 stalled; row tables
-    `scan/results/profile_prod_ad_TABLE_v1emwimp_r0-2.npz`, stage "lm"), flagged 10-13 grid points per node, seeded
-    7-8 branches (147-168 rows per node) and timed out in the branch phase (not checkpointed). The flags are mostly
-    the flat-direction artefact of item 20 (distinct minima at Delta chi2 0.000), so 61404076 skips the branches and
-    writes the six profiles from the LM table, flags recorded. Always 4 nodes: another node count deals the POIs out
-    differently and the checkpoints no longer match.
-19. **`scan/profiles.ipynb`** [user]. The user's working copy has the Delta_Neff_init / Neff fix; the copy on
-    Perlmutter has their uncommitted edits. Sync and commit.
 24. **`_v1act`** (ACT DR6 lite LCDM profile) [ACT session]. 61111914 timed out 11-13 at 10 h: omega_b and n_s done
     (21/21 converged), the other four at 1-2 active rows. Resume 61404156 (11-16) on 4 nodes with
     PA_POIS=h,omega_cdm,ln10As,tau_reion and the r4 / r5 LM checkpoints copied to r2 / r3 (POIS[rank::4]; originals in
@@ -45,7 +37,7 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## Profile driver (scan/)
 
-20. **Gauss-Newton crawl along decoupling nuisances** [open, after the 11-11 checkpoint]. With a parameter whose
+20. **Gauss-Newton crawl along decoupling nuisances** [in progress 2026-11-16]. With a parameter whose
     effect fades out (here m_chi -> heavy) free, the residuals change by eps*c_i: the gradient and the true curvature
     go as eps, J^T J as eps^2, so the GN step along it diverges. In `_v1emwimp` the GN curvature along log10_m_chi is
     5-20x below the measured profile curvature at 23-40 MeV, GN asks for +1.6..+50 dex, and LM damps hard (lambda
@@ -57,12 +49,12 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     starts more than MS_DX apart count as distinct minima whatever their chi2, so a flat direction raises false flags
     (in `_v1emwimp` most were "distinct minima (dchi2 0.000)", points differing along heavy m_chi) and seeds useless
     branches (~150 rows per node); flag only where the points differ in chi2 by > MS_DCHI2 or are separated by a
-    barrier. Diagnostics: `/pscratch/sd/c/carag/ABCMB-k_emwimp/v1/look_gn_mass.py`, `look_lam.py`.
+    barrier. Test case: `_v1emwimp` (1D, all eight POIs written 2026-11-16 by 61404076 with the branches off; the
+    LM-stage row tables `scan/results/profile_prod_ad_TABLE_v1emwimp_r0-2.npz` hold the false flags; its 95% ends of
+    omega_cdm (low), h (low) and Delta_Neff_init run off the `_v6bbn` grids). The user does not need that run itself.
 22. **LINX gradient speedup** [open, HIGH PRIORITY (user 2026-11-16)]. The driver pushes all 19 free directions through ABCMB,
     but with LINX the engine sees only 8 effective inputs (the BBN nuisances act through YHe / Neff / T_nu): push 8
     and chain LINX's Jacobian, ~2.4x cheaper gradients for BBN-likelihood runs.
-23. **More 2D joint profiles** [open]. The 2D driver (`PA_POI2D`, `profile_2d`) works (`_v1emwimp2d`). LCDM + Neff
-    candidates: Neff-h, Neff-omega_cdm; ~14 node-h per pair.
 
 ## Upstream ABCMB
 
@@ -99,11 +91,6 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
    including the derived-parameter tangents. Today the caller builds them: the profile driver with a per-row,
    per-direction Python jvp loop; `hmc/posterior.py` with one `jit(vmap(jvp))` of `add_derived_parameters` (works
    with `bbn_type="table"`).
-7. **JAX likelihoods as a package module** [open]. plik-lite was cut in the 11-06 trim (restored to
-   `hmc/plik_lite.py`); low-ell TT/EE live in `scan/lowl_like.py` (SRoll2 or SimAll, config `lowee`); clipy's SimAll
-   EE is a floor lookup with zero gradient (keep the cubic-interpolated table). Missing for the usual combinations:
-   DESI BAO (needs r_d, D_M, D_H tangents) and the BBN likelihood (LinxStage already gives Jacobians). ACT DR6 lite:
-   `scan/act_lite.py` (candl data, in the profile driver since 02a7c9f) can be reused.
 8. **HyRex tangent sharding needs `XLA_FLAGS=--xla_force_host_platform_device_count=N` before JAX starts** [open].
    Without it the HyRex jvp is one serial CPU loop. Set it up in the engine, or warn.
 9. **Compile cost** [document]. 6-14 min per new batch shape; keep shapes fixed (pad) and set
@@ -122,8 +109,6 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## hmc/
 
-10. **Config-driven posterior** [open]: parameters, priors and likelihoods from a config like `scan/configs/`;
-    `LCDMPosterior` is hard-coded to 7 parameters.
 11. **Shorter warmup, multi-node fan-out** [open]: the Gauss-Newton metric was already near-optimal (|dH| 0.10 vs
     0.088 for a perfectly whitened Gaussian), so ~4 warmup trajectories should do; after a shared warmup the chains
     can be split over nodes (4 nodes: ~3 h wall instead of ~9).
@@ -135,9 +120,6 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     exact Jacobians on the host CPU (~145 s per 32 rows without chi, against ~480 s per 64-chain ABCMB gradient
     call), and the engine takes y + J (theta - theta0) so the jvp carries LINX's tangent. Optional: the BBN
     likelihood (Y_p, D/H) with tau_n_fac and the rate shifts q as extra HMC parameters (~20 dims in all).
-15. **Validate the halofit HMC against the MH reference** [optional]: predicted agreement <= 0.10 sigma (ABCMB-k
-    halofit vs CLASS HMcode, linear response); a full `_v2` run would confirm it directly (~10 node-h; or fold it
-    into the LINX run, item 14, and compare against a LINX-YHe CLASS reference).
 16. **ABCMB-k vs high-precision CLASS residual** [open, small]: <= 0.08 sigma along omega_cdm / h / n_s, consistent
     with a ~3e-5 relative acoustic-scale offset (TT +-3e-4 oscillation above l 500). Candidates: HyRex vs HyRec,
     constants, the "recomb" lna grid; needs theta_s from ABCMB (item 17).
@@ -148,14 +130,5 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## Physics notes for the write-up
 
-28. **Delta_Neff_init is inert radiation fixed at LINX's T_start**, so a chi that annihilates after T_start dilutes
-    it: one unit adds 0.21 to the final Neff at m_chi = 21 MeV, 0.26 above 60 MeV. The EM-WIMP results are reported
-    in LINX's final Neff, so they are right; describe the model as extra radiation present at the start of BBN.
 29. **Profiles vs posteriors for Neff**: Planck 2018 base_nnu's posterior mean (2.92) sits 0.08 above its own best
     fit (2.836); `_v7simall` reproduces the best fit (2.846). Expect MCMC means ~0.1 above profile best fits.
-
-## Housekeeping
-
-30. **Scratch workspaces** [after item 18]. `/pscratch/sd/c/carag/ABCMB-k_emwimp/` (one-off LINX / GN / notebook
-    diagnostics): delete, keeping `neff_terms/neff_terms.py` (the `_v6bbn` chi2 split by likelihood). Keep
-    `/pscratch/sd/c/carag/planck2018_tables/` (the PLA 68% table PDF and the extracted base_nnu pages).
