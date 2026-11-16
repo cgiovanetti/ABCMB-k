@@ -22,16 +22,18 @@ ap.add_argument("--n_iter", type=int, default=10)
 ap.add_argument("--B", type=int, default=32)
 ap.add_argument("--what", default="values,grad")
 ap.add_argument("--out", required=True)
+ap.add_argument("--spec", action="append", default=[], help="extra Model spec key=float (repeatable)")
 a = ap.parse_args()
 
 FIXED = {"YHe": 0.2454, "TCMB0": 2.34865418e-4, "N_nu_massive": 1, "T_nu_massive": 0.71611, "m_nu_massive": 0.06,
          "Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5, "exp_reion": 1.5}
 CEN = np.array([0.022383, 0.12011, 0.6732, 3.0448, 0.96605, 0.0543])     # omega_b omega_cdm h ln10As n_s tau
 SIG = np.array([0.00015, 0.0012, 0.0054, 0.014, 0.0042, 0.0073])
-model = Model(user_species=(species.MassiveNeutrino,), output_Cl=True, l_max=2508, lensing=True, output_Pk=False,
-              l_max_ur=17, l_max_ncdm=17, l_max_g=12, l_max_pol_g=10, rtol_large_k_PE=1e-5, atol_large_k_PE=1e-7,
-              rtol_small_k_PE=1e-5, max_steps_PE=16384, lna_grid_mode="recomb",
-              PE_solver=a.solver, kencarp_n_iter=a.n_iter)
+KW = dict(user_species=(species.MassiveNeutrino,), output_Cl=True, l_max=2508, lensing=True, output_Pk=False,
+          l_max_ur=17, l_max_ncdm=17, l_max_g=12, l_max_pol_g=10, rtol_large_k_PE=1e-5, atol_large_k_PE=1e-7,
+          rtol_small_k_PE=1e-5, max_steps_PE=16384, lna_grid_mode="recomb", PE_solver=a.solver, kencarp_n_iter=a.n_iter)
+KW.update({k: float(v) for k, v in (s.split("=") for s in a.spec)})
+model = Model(**KW)
 ndev = len(jax.devices())
 
 

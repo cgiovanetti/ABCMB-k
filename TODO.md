@@ -13,8 +13,13 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     `pytests/test_fixed_kencarp4.py` (stiff toys: value and tangent errors as Kvaerno5's at the same tolerance).
     Minimal patch against diffrax's own file: `/pscratch/sd/c/carag/ABCMB/.pr_review/kencarp63/fixed_kencarp4_vs_diffrax.diff`
     (bit-identical to the ABCMB-k module). The Nov-7 upstream review (same directory, README.md): N=8-10 with the
-    inverse, 1.7-1.9x faster than Kvaerno5 for values (with the PR's looser dtmax for KenCarp). Open: speed of -k's batched
-    values and forward-mode gradients at production settings (`scan/diag/kencarp_bench.py`), then upstream.
+    inverse, 1.7-1.9x faster than Kvaerno5 for values (with the PR's looser dtmax for KenCarp). 2026-11-16, -k batched
+    at production settings, same step control (`scan/diag/kencarp_bench.py`, B=32 on 4 A100, warm): values Kvaerno5
+    162 s, N=10 125 s, N=8 116 s; gradients (6 directions) Kvaerno5 553 s, N=10 686 s (0.81x: AD through the unrolled
+    iterations costs more than Kvaerno5's implicit-function tangent); compile 1.5-2x longer. TT/TE/EE within 1.3e-4
+    of Kvaerno5, tangents within 1.5e-5 of peak; Clpp off by up to 2.5e-3 at l 2000-2500 (the rtol 1e-3 lensing-only
+    modes; tight reference pending). Not a win for -k as is (the profile driver's ~4 value calls per gradient
+    roughly cancel, HMC loses).
 22 (see below). **LINX gradient speedup** is the other high-priority item.
 
 ## Runs and decisions
@@ -105,6 +110,12 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
    value second differences: enough to wreck an exact Hessian (Gauss-Newton matches the value curvature to <1%, so
    the profiles are unaffected). Suspects: C^1 / linear interpolation tables, adaptive step sizes frozen under AD. The
    LINX Delta_Neff_init^2 nested jvp returns NaN. Harness `/pscratch/sd/c/carag/ABCMB-k_lnagrid/hess/`. Blocks item 20.
+32. **diffrax's KenCarp4 (with its Newton while loop) for CPU runs** [open; user 2026-11-16]. On CPU the while
+   loop is cheap (no GPU lockstep or launch overhead), so diffrax.KenCarp4 itself may cut CPU runtime against
+   Kvaerno5 (6 stages vs 7; the Nov-7 GPU review had it at 5.99 / 18.19 s vs Kvaerno5 8.10 / 20.23 s massless /
+   massive, with PR #63's looser dtmax). Wire it as another `PE_solver` option ("kencarp_diffrax":
+   `diffrax.KenCarp4()` with `MultiTerm(zero explicit term, the vector field)`, as in the review's tree), then time it
+   on a CPU node against Kvaerno5 for values and forward-mode gradients at matched accuracy.
 
 ## hmc/
 
