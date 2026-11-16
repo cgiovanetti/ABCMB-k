@@ -79,10 +79,8 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 5. **Streamed lensing for gradients at high l_max** [tracked elsewhere]. The matrix lensing needs ~60 GB per
    cosmology under the gradient at ACT's l_max; ABCMB-k a3af514 `lensing_streamed`. The upstream PR is tracked in
    `/pscratch/sd/c/carag/ABCMB/TODO_streamed_lensing.md`.
-   Related, from a contributor (2026-11-16): upstream's matrix path rebuilds its 12 Wigner d-matrices with 12
-   separate scans on every call (0.6 s of 5.9 s at l_max 2500; 2.6 s of 15.9 s at 6325 + 5000). One fused scan
-   fixes it (spectra unchanged to 1e-15): branch `lensing_wigner` in ../ABCMB, diff + numbers in
-   `ABCMB/.pr_review/lensing_wigner/` (uncommitted).
+   Caveat (2026-11-16): under `jax.grad` the streamed path needs MORE memory than the matrix path (item 34), so
+   don't port it as-is.
 25. **Port the -k engine into ABCMB main as opt-in options** [planned 2026-11-07, not started]. The batched path
    (`call_batched`, tabulated exp(-kappa) with Hermite lookup and exact slope, `visibility_prime`), the "recomb" lna
    grid and the AD fixes, selected by specs rather than replacing upstream's single-cosmology path. Covers item 2.
@@ -90,6 +88,17 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
    parameter-order fix. Candidate diffs in `scan/.upstream_pr/`.
 27. **Upstream test suite** [proposed 2026-10-20, awaiting go-ahead]. Three tiers: CPU CI (accuracy vs CLASS,
    gradients, extensibility null tests, perf proxies), then nightly Perlmutter GPU benchmarks.
+34. **Lensing Wigner matrices: speed + memory** [parked 2026-11-16; user: the contributor may be mistaken, leave it].
+   A contributor said the Wigner calculation is redundant ("a static variable recomputed in a loop") and would save
+   a lot of memory. Found: (a) speed: upstream `lensed_Cls` rebuilds its 12 d-matrices with 12 separate scans on
+   every call (0.6 s of 5.9 s at l_max 2500; 2.6 s of 15.9 s at 6325 + 5000); one fused scan fixes it, spectra
+   unchanged to 1e-15, peak memory unchanged. Ready: branch `lensing_wigner` in ../ABCMB (no commits) +
+   `ABCMB/.pr_review/lensing_wigner/lensing_wigner.diff`. (b) memory: the Wigner matrices are most of the forward
+   peak (1.28 of 1.77 GiB default; 11.5 of 14.6 GiB at the ACT range). Lensing-core temp in (n_mu, n_ell) arrays,
+   matrix path forward / jvp x6 / grad = 21 / 39 / 34; -k streamed = ~0 / ~0 / 56 (its scan over l stores the
+   per-l Wigner rows as residuals). Options if revisited: mirror symmetry (d1-1, d2-2, d3-1 are reflected d11,
+   d22, d31; ~25-40% of the Wigner memory) or a mu-chunked + `jax.checkpoint` matrix path (all three AD modes).
+   Numbers and scripts: `ABCMB/.pr_review/lensing_wigner/NOTES.md`.
 
 ## ABCMB-k engine
 
