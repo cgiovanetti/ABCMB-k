@@ -6,6 +6,20 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-16 — FixedKenCarp4 benchmarked in -k; _v1emwimp 1D written; branch cleanup
+-----------------------------------------------------------------------------------
+- FixedKenCarp4 (abcmb/fixed_kencarp4.py, opt-in PE_solver="kencarp_fixed"; minimal patch against diffrax's
+  kencarp4.py in ABCMB/.pr_review/kencarp63/fixed_kencarp4_vs_diffrax.diff). scan/diag/kencarp_bench.py, _v3 model,
+  B=32 on 4 A100, same step control, warm: values Kvaerno5 162 s, N=10 125 s, N=8 116 s; gradients (6 directions)
+  553 / 686 / 619 s. Against Kvaerno5 at 10-100x tighter tolerances: Kvaerno5 Clpp <= 1.2e-4; KenCarp Clpp 2.6e-3
+  (N=10) / 6.7e-3 (N=8) at l 2000-2500 from the rtol-1e-3 lensing-only modes, 1.8e-4 with rtol_limber_k_PE=1e-4
+  (N=10, 131 s); TT/EE <= 1.4e-4 for all. Kvaerno5 stays the default (TODO.md item 31); diffrax's own KenCarp4 for
+  CPU runs is item 32.
+- _v1emwimp: the six remaining 1D profiles written from the LM row tables with branches off (61404076, 5 min); the
+  95% ends of omega_cdm (low), h (low) and Delta_Neff_init (both) run off the _v6bbn-sized grids (TODO item 18).
+- Branches: local ABCMB-k lna-grid / review-trim and origin lna-grid, review-trim, grid-ad, perk-refactor deleted
+  (all in main); 13 ABCMB local branches fully contained in upstream main deleted (none with unpushed commits).
+
 2026-11-16 — _v1act resumed on 4 nodes
 --------------------------------------
 61111914 (6 nodes, 10 h, 11-13) timed out: omega_b 0.02257 [0.02241, 0.02274], n_s 0.96595 [0.95847, 0.97348] (68%,

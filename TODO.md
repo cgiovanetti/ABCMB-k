@@ -17,14 +17,17 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     at production settings, same step control (`scan/diag/kencarp_bench.py`, B=32 on 4 A100, warm): values Kvaerno5
     162 s, N=10 125 s, N=8 116 s; gradients (6 directions) Kvaerno5 553 s, N=10 686 s (0.81x: AD through the unrolled
     iterations costs more than Kvaerno5's implicit-function tangent); compile 1.5-2x longer. TT/TE/EE within 1.3e-4
-    of Kvaerno5, tangents within 1.5e-5 of peak; Clpp off by up to 2.5e-3 at l 2000-2500 (the rtol 1e-3 lensing-only
-    modes; tight reference pending). Not a win for -k as is (the profile driver's ~4 value calls per gradient
-    roughly cancel, HMC loses).
+    of Kvaerno5, tangents within 1.5e-5 of peak. Against Kvaerno5 at 10-100x tighter tolerances: Kvaerno5 TT/EE
+    <= 8.4e-5, Clpp <= 1.2e-4; KenCarp TT/EE <= 1.4e-4 but Clpp 2.6e-3 (N=10) / 6.7e-3 (N=8) at l 2000-2500 from the
+    rtol-1e-3 lensing-only modes; with rtol_limber_k_PE = 1e-4 N=10 gets Clpp <= 1.8e-4 for 131 s (1.24x). N=8:
+    values 1.40x, gradients 0.89x (619 s). Verdict: Kvaerno5 stays the -k default (gradients dominate the profile
+    driver and HMC); KenCarp is a values-only win and needs the tighter lensing-mode tolerance.
 22 (see below). **LINX gradient speedup** is the other high-priority item.
 
 ## Runs and decisions
 
-18. **EM-WIMP 1D profile `_v1emwimp`** [writing outputs 2026-11-16: job 61404076, `PA_MS_BRANCH_MAX=0`, 2 h].
+18. **EM-WIMP 1D profile `_v1emwimp`** [written 2026-11-16 by job 61404076 (`PA_MS_BRANCH_MAX=0`); open: the 95% ends of
+    omega_cdm (low), h (low) and Delta_Neff_init (both) run off the grids sized for `_v6bbn`: add outer grid points].
     Jobs 61054076 and 61084162 hit the 12 h limit; log10_m_chi (m_chi > 10.29 MeV at 95%, > 14.4 MeV at 68%; the 2D
     gives 10.1) and n_s finished. 61174328 (`PA_MAXIT=60`; the cap counts across resumes) finished the LM phase of the
     other six POIs at the cap (69-75 of 78 rows converged per node, 2-8 stalled; row tables
