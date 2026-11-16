@@ -6,16 +6,19 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
 ## Runs and decisions
 
-18. **EM-WIMP 1D profile `_v1emwimp`** [resumed 2026-11-12: job 61174328, PA_MAXIT=60 (the cap counts across resumes;
-    the rows were at it22-24), 4 nodes (rank 3 is done and idles; a different node count would restart from scratch)]. Jobs 61054076 and 61084162 both hit the 12 h limit.
-    Done: log10_m_chi (m_chi > 10.29 MeV at 95%, > 14.4 MeV at 68%; the 2D gives 10.1) and n_s. The other six POIs
-    are checkpointed (`scan/results/profile_prod_ad_STATE_v1emwimp_r0-2.npz`) with 22-25 of 78 rows per node still
-    active, mostly the light-chi spread starts, and 2-5 grid points per profile not yet converged. Resume with the
-    same command (`sbatch scan/profile_prod_emwimp.slurm`, 4 nodes: another node count deals the POIs out differently
-    and the checkpoints no longer match), ~48 node-h per 12 h; or wait for item 20.
+18. **EM-WIMP 1D profile `_v1emwimp`** [writing outputs 2026-11-16: job 61404076, `PA_MS_BRANCH_MAX=0`, 2 h].
+    Jobs 61054076 and 61084162 hit the 12 h limit; log10_m_chi (m_chi > 10.29 MeV at 95%, > 14.4 MeV at 68%; the 2D
+    gives 10.1) and n_s finished. 61174328 (`PA_MAXIT=60`; the cap counts across resumes) finished the LM phase of the
+    other six POIs at the cap (69-75 of 78 rows converged per node, 2-8 stalled; row tables
+    `scan/results/profile_prod_ad_TABLE_v1emwimp_r0-2.npz`, stage "lm"), flagged 10-13 grid points per node, seeded
+    7-8 branches (147-168 rows per node) and timed out in the branch phase (not checkpointed). The flags are mostly
+    the flat-direction artefact of item 20 (distinct minima at Delta chi2 0.000), so 61404076 skips the branches and
+    writes the six profiles from the LM table, flags recorded. Always 4 nodes: another node count deals the POIs out
+    differently and the checkpoints no longer match.
 19. **`scan/profiles.ipynb`** [user]. The user's working copy has the Delta_Neff_init / Neff fix; the copy on
     Perlmutter has their uncommitted edits. Sync and commit.
-24. **`_v1act`** (ACT DR6 lite LCDM profile, job 61111914) [queued; ACT session].
+24. **`_v1act`** (ACT DR6 lite LCDM profile, job 61111914) [ACT session; timed out 11-13 at 10 h with 1-2 rows per node
+    still active at it4-7: resubmit its launcher to finish].
 
 ## Profile driver (scan/)
 
@@ -27,8 +30,11 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     gradient bug. Generic: log-parametrized couplings, EDE z_c / theta_i as f_EDE -> 0. Fixes: exact curvature along
     the one or two soft directions (AD Hessian-vector products; needs item 21), or a model-side upper box (log10 m_chi
     <= 2: the profile is flat to <1e-3 above 45 MeV). Also: spread starts along a flat direction land on the box
-    faces (a 1.8 MeV start at Delta chi2 up to 1700); cap the spread. Diagnostics:
-    `/pscratch/sd/c/carag/ABCMB-k_emwimp/v1/look_gn_mass.py`, `look_lam.py`.
+    faces (a 1.8 MeV start at Delta chi2 up to 1700); cap the spread. And the multimodality flags: two converged
+    starts more than MS_DX apart count as distinct minima whatever their chi2, so a flat direction raises false flags
+    (in `_v1emwimp` most were "distinct minima (dchi2 0.000)", points differing along heavy m_chi) and seeds useless
+    branches (~150 rows per node); flag only where the points differ in chi2 by > MS_DCHI2 or are separated by a
+    barrier. Diagnostics: `/pscratch/sd/c/carag/ABCMB-k_emwimp/v1/look_gn_mass.py`, `look_lam.py`.
 22. **LINX gradient speedup** [open, after the checkpoint]. The driver pushes all 19 free directions through ABCMB,
     but with LINX the engine sees only 8 effective inputs (the BBN nuisances act through YHe / Neff / T_nu): push 8
     and chain LINX's Jacobian, ~2.4x cheaper gradients for BBN-likelihood runs.
