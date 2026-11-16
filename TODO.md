@@ -4,6 +4,19 @@ One list for the whole repo (profile driver, HMC, engine, upstream ABCMB). Add n
 files. Item numbers are stable IDs (other notes cite them), not priorities. Status in brackets; newest notes at the
 end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
 
+## High priority (user, 2026-11-16)
+
+31. **Fixed-iteration KenCarp4 perturbation solver** [in progress]. diffrax's KenCarp4 with the Newton while loop
+    replaced by `n_iter` unrolled chord iterations (Jacobian and its explicit inverse once per step, no gradient
+    through them); valid for nonlinear species, unlike PR #63's single-iteration LinearKenCarp4. ABCMB-k:
+    `abcmb/fixed_kencarp4.py`, opt-in `PE_solver="kencarp_fixed"`, `kencarp_n_iter` (default 10);
+    `pytests/test_fixed_kencarp4.py` (stiff toys: value and tangent errors as Kvaerno5's at the same tolerance).
+    Minimal patch against diffrax's own file: `/pscratch/sd/c/carag/ABCMB/.pr_review/kencarp63/fixed_kencarp4_vs_diffrax.diff`
+    (bit-identical to the ABCMB-k module). The Nov-7 upstream review (same directory, README.md): N=8-10 with the
+    inverse, 1.7-1.9x faster than Kvaerno5 for values (with the PR's looser dtmax for KenCarp). Open: speed of -k's batched
+    values and forward-mode gradients at production settings (`scan/diag/kencarp_bench.py`), then upstream.
+22 (see below). **LINX gradient speedup** is the other high-priority item.
+
 ## Runs and decisions
 
 18. **EM-WIMP 1D profile `_v1emwimp`** [writing outputs 2026-11-16: job 61404076, `PA_MS_BRANCH_MAX=0`, 2 h].
@@ -37,7 +50,7 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12).
     (in `_v1emwimp` most were "distinct minima (dchi2 0.000)", points differing along heavy m_chi) and seeds useless
     branches (~150 rows per node); flag only where the points differ in chi2 by > MS_DCHI2 or are separated by a
     barrier. Diagnostics: `/pscratch/sd/c/carag/ABCMB-k_emwimp/v1/look_gn_mass.py`, `look_lam.py`.
-22. **LINX gradient speedup** [open, after the checkpoint]. The driver pushes all 19 free directions through ABCMB,
+22. **LINX gradient speedup** [open, HIGH PRIORITY (user 2026-11-16)]. The driver pushes all 19 free directions through ABCMB,
     but with LINX the engine sees only 8 effective inputs (the BBN nuisances act through YHe / Neff / T_nu): push 8
     and chain LINX's Jacobian, ~2.4x cheaper gradients for BBN-likelihood runs.
 23. **More 2D joint profiles** [open]. The 2D driver (`PA_POI2D`, `profile_2d`) works (`_v1emwimp2d`). LCDM + Neff

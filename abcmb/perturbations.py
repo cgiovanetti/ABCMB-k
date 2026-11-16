@@ -7,6 +7,7 @@ import equinox as eqx
 
 from . import constants as cnst
 from . import ABCMBTools as tools
+from .fixed_kencarp4 import FixedKenCarp4
 
 import os
 file_dir = os.path.dirname(__file__)
@@ -645,7 +646,12 @@ class PerturbationEvolver(eqx.Module):
 
         # Settings for post-tight coupling
         term = diffrax.ODETerm(self.get_derivatives)
-        solver = diffrax.Kvaerno5()
+        if self.specs["PE_solver"] == "kencarp_fixed":
+            solver = FixedKenCarp4(n_iter=self.specs["kencarp_n_iter"])
+        elif self.specs["PE_solver"] == "kvaerno5":
+            solver = diffrax.Kvaerno5()
+        else:
+            raise ValueError(f"PE_solver must be 'kvaerno5' or 'kencarp_fixed', not {self.specs['PE_solver']!r}")
 
         # Three tiers: small k, large k, and the lensing-only extension above
         # specs["k_limber_start"] (inf unless the k-grid was extended for the

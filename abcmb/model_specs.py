@@ -97,6 +97,10 @@ def load_specs(input_specs):
 
     ### Perturbation Evolver Diffrax Settings ###
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
+    # Perturbation solver: "kvaerno5" (diffrax.Kvaerno5, Newton in a while loop) or "kencarp_fixed" (KenCarp4 with
+    # kencarp_n_iter chord iterations per implicit stage, no inner loop; abcmb/fixed_kencarp4.py). Same step control.
+    specs["PE_solver"]       = input_specs.get("PE_solver", "kvaerno5")
+    specs["kencarp_n_iter"]  = input_specs.get("kencarp_n_iter", 10)
     # Step ceiling in ln a for the modes with k < k_max_dtmax_PE (Mpc^-1). Unbounded, the controller
     # takes wide steps where those modes look smooth and the saves are read off Kvaerno5's in-step
     # (third-order Hermite) interpolation: 2.6e-3 in ClTT at ell < 10, 4e-4 at ell 100-500. With the
