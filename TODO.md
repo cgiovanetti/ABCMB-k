@@ -79,6 +79,10 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 5. **Streamed lensing for gradients at high l_max** [tracked elsewhere]. The matrix lensing needs ~60 GB per
    cosmology under the gradient at ACT's l_max; ABCMB-k a3af514 `lensing_streamed`. The upstream PR is tracked in
    `/pscratch/sd/c/carag/ABCMB/TODO_streamed_lensing.md`.
+   Related, from a contributor (2026-11-16): upstream's matrix path rebuilds its 12 Wigner d-matrices with 12
+   separate scans on every call (0.6 s of 5.9 s at l_max 2500; 2.6 s of 15.9 s at 6325 + 5000). One fused scan
+   fixes it (spectra unchanged to 1e-15): branch `lensing_wigner` in ../ABCMB, diff + numbers in
+   `ABCMB/.pr_review/lensing_wigner/` (uncommitted).
 25. **Port the -k engine into ABCMB main as opt-in options** [planned 2026-11-07, not started]. The batched path
    (`call_batched`, tabulated exp(-kappa) with Hermite lookup and exact slope, `visibility_prime`), the "recomb" lna
    grid and the AD fixes, selected by specs rather than replacing upstream's single-cosmology path. Covers item 2.
