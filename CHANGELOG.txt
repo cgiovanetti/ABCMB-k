@@ -6,6 +6,17 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-17 — _v1act: five of six POIs done; ln10As resumed (61472393)
+---------------------------------------------------------------------
+ACT DR6 lite + SRoll2, LCDM, min chi2 541.81. Best / 68% / 95% (21 grid points each):
+  h 0.66076 [0.65298, 0.66869] [0.64563, 0.67644]; omega_b 0.02257 [0.02241, 0.02274] [0.02225, 0.02290];
+  omega_cdm 0.12383 [0.12169, 0.12597] [0.11965, 0.12803]; n_s 0.96595 [0.95847, 0.97348] [0.95133, 0.98077];
+  tau_reion 0.05517 [0.04979, 0.06122] [0.04483, 0.06773] (20/21 converged, 1 stalled at ||g|| 0.045).
+Resume 61404156 (4 h) finished h, omega_cdm, tau_reion; ln10As's LM finished (38/39, one spread start stalled at
+3.07, chi2 543.878) and the branch it seeded timed out (branches are not checkpointed). 61472393: 1 node, 12 h,
+PA_POIS=ln10As, TABLE_v1act_r2 copied to r0 (one rank); flags / branches rerun with 8968fb1's flag logic (the run
+signature is unchanged, the LM table is reused).
+
 2026-11-16 — Decoupling nuisances (TODO 20): LINX curvature, u-basis gradients (22), flat-valley flags
 ---------------------------------------------------------------------------------------------------
 - Cause of the _v1emwimp GN crawl confirmed: along log10_m_chi the missing curvature is LINX's own second-order term

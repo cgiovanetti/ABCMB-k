@@ -32,10 +32,11 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 
 ## Runs and decisions
 
-24. **`_v1act`** (ACT DR6 lite LCDM profile) [ACT session]. 61111914 timed out 11-13 at 10 h: omega_b and n_s done
-    (21/21 converged), the other four at 1-2 active rows. Resume 61404156 (11-16) on 4 nodes with
-    PA_POIS=h,omega_cdm,ln10As,tau_reion and the r4 / r5 LM checkpoints copied to r2 / r3 (POIS[rank::4]; originals in
-    logs/act/); the prepass reruns first (not checkpointed). When done: results table + delete STATE_v1act_r4/r5.
+24. **`_v1act`** (ACT DR6 lite LCDM profile) [ACT session]. Five of six POIs done (61111914 on 11-13, resume 61404156
+    on 11-16): see CHANGELOG 2026-11-17. ln10As: LM done (table at stage lm), then a branch seeded by one stalled spread
+    start at 3.07 (chi2 543.878, the point's known minimum) timed out. Resume 61472393 (1 node, 12 h, PA_POIS=ln10As,
+    TABLE_v1act_r2 copied to r0) redoes only flags / branches, under 8968fb1's logic (branch only from a lower or
+    barrier-separated start). When done: README results table, delete TABLE_v1act_r0/r2 (backup in logs/act/).
 
 ## Profile driver (scan/)
 
