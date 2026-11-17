@@ -2,13 +2,12 @@ import os
 
 import numpy as np
 
-import jax
 import jax.numpy as jnp 
 import jax.lax as lax
 from jax import grad, vmap, value_and_grad, device_put, devices
 
 from . import const 
-from .special_funcs import Li, K1, K2, Riemann_zeta
+from .special_funcs import Li, K1, K2
 
 ###########################################
 #                 Cosmology               #
@@ -76,15 +75,6 @@ def nB(a, eta_fac=1.):
 ####################################################################
 
 
-def _Li_BE(n, mu, T):
-    """Li(n, exp(mu/T)), the Bose-Einstein polylog. With mu a concrete 0 it is Li(n, 1) = zeta(n), a constant: Li's
-    series in log(z) has NaN derivatives at z = 1 beyond the first, so nested forward-mode AD (second derivatives)
-    of anything built on it went NaN (inf * 0) although the argument's tangent is 0; the value is the same."""
-    if not isinstance(mu, jax.core.Tracer) and np.ndim(mu) == 0 and float(mu) == 0.:
-        return Riemann_zeta(n)
-    return Li(n, jnp.exp(mu/T))
-
-
 def rho_massless_BE(T, mu, g):
     """
     Energy density of a massless particle with Bose-Einstein statistcs.
@@ -107,7 +97,7 @@ def rho_massless_BE(T, mu, g):
     
     return lax.cond(
         T > 0., 
-        lambda T: g * 3 / jnp.pi**2 * _Li_BE(4, mu, T) * T**4, 
+        lambda T: g * 3 / jnp.pi**2 * Li(4, jnp.exp(mu/T)) * T**4, 
         lambda T: 0.,
         T
     )
@@ -135,7 +125,7 @@ def n_massless_BE(T, mu, g):
 
     return lax.cond(
         T > 0., 
-        lambda T: g / jnp.pi**2 * _Li_BE(3, mu, T) * T**3, 
+        lambda T: g / jnp.pi**2 * Li(3, jnp.exp(mu/T)) * T**3, 
         lambda T: 0., 
         T
     )

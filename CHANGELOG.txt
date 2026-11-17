@@ -6,6 +6,16 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-17 — Vendored LINX polylog: derivatives safe at z = 1 (TODO 35)
+-----------------------------------------------------------------------
+special_funcs.Li is a custom_jvp around the unchanged series: dLi_n/dz = Li_{n-1}/z, closing on Li_1 = -log|1-z| and
+Li_0 = z/(1-z), coefficient 0 at exactly z = 1 for n <= 2 (exact for the zero tangent at mu = 0), linear in the tangent
+so LINX's jax.grad inside dY transposes it. Replaces 8968fb1's concrete-mu=0 stopgap in thermo.py (reverted to the
+upstream lines). Values and LINX Jacobians bit-identical to the series; warm one-cosmology LINX programs: values 4.33 vs
+4.45 s, Jacobian 20.78 vs 21.05 s, compiles within 3%; Hessian rows equal the stopgap's (d2Neff/dlog10m2 -2.1412 etc.).
+Against mpmath the new derivatives are as or more accurate than the series' own AD. pytests/test_linx_polylog.py;
+upstream diff LINX-scratch/polylog_safe_derivative.diff.
+
 2026-11-17 — TODO 20: LM race, GN + LINX term vs GN
 ---------------------------------------------------
 Four `_v1emwimp` starts (h[2], h[6], Delta_Neff_init[4], [7]), 8 LM iterations each (61436899,

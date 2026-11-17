@@ -89,9 +89,9 @@ def Riemann_zeta(n):
     )
 
 @partial(jax.jit, static_argnums=(0,))
-def Li(n, z): 
+def _Li_series(n, z): 
     """
-    Polylogarithm of order n and argument z. 
+    Polylogarithm of order n >= 2 and argument z (real part), by series. 
     """
     def _Li_z_small(z): 
     
@@ -153,6 +153,35 @@ def Li(n, z):
             )
         ) 
     )
+
+@partial(jax.custom_jvp, nondiff_argnums=(0,))
+def Li(n, z): 
+    """
+    Polylogarithm of order n and argument z (real part). Derivatives use
+    dLi_n/dz = Li_{n-1}/z, with Li_1 = -log|1 - z| and Li_0 = z/(1 - z).
+    Li_1 and Li_0 diverge at z = 1; there their coefficient is set to 0, which
+    is exact for the zero tangent of the Bose-Einstein densities at mu = 0 and
+    keeps every derivative order finite.
+    """
+    if n >= 2:
+        return _Li_series(n, z)
+    if n == 1:
+        return -jnp.log(jnp.abs(1. - z))
+    if n == 0:
+        return z / (1. - z)
+    raise ValueError(f"Li: order {n} < 0 is not implemented")
+
+
+@Li.defjvp
+def _Li_jvp(n, primals, tangents):
+    (z,), (tz,) = primals, tangents
+    if n >= 3:
+        dLi = Li(n - 1, z) / z
+    else:
+        one = z == 1.
+        zs = jnp.where(one, 0.5, z)   # keeps the unused branch finite
+        dLi = jnp.where(one, 0., Li(n - 1, zs) / zs if n >= 1 else 1. / (1. - zs)**2)
+    return Li(n, z), dLi * tz
 
 def K0(z): 
     """

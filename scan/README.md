@@ -41,7 +41,7 @@ their fixed means, recomb lna grid) replaces it.
 | `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
 | `profile_prod_emwimp.slurm` | the EM-WIMP launcher (1D; 2D with `PA_POI2D`) |
 | `profile_prod_act.slurm` | the ACT launcher (`_v1act`; candl from the venv `envs/abcmb-k`) |
-| `diag/` | ACT l-range checks (`act_lmax_check.py`: delta_l_max / hierarchy / truncation vs the ACT paper's CLASS range), `act_lite_check.py` (= candl), `lensing_stream_check.py`; `neff_terms.py` (`_v6bbn` chi2 by likelihood); item 20: `gn_curv_check.py` (u-basis A/B, curvature along log10_m_chi vs the profile, LM race), `linx_curv_check.py` / `linx_curv_nan.py` (LINX Hessian rows vs central differences, non-finite lanes), `linx_nan_probe.py` (the polylog NaN) |
+| `diag/` | ACT l-range checks (`act_lmax_check.py`: delta_l_max / hierarchy / truncation vs the ACT paper's CLASS range), `act_lite_check.py` (= candl), `lensing_stream_check.py`; `neff_terms.py` (`_v6bbn` chi2 by likelihood); item 20: `gn_curv_check.py` (u-basis A/B, curvature along log10_m_chi vs the profile, LM race), `linx_curv_check.py` / `linx_curv_nan.py` (LINX Hessian rows vs central differences, non-finite lanes), `linx_nan_probe.py` (the polylog NaN); item 35: `li_series_accuracy.py` (LINX `Li` values vs mpmath), `li_linx_timing.py` (LINX programs, old vs new polylog derivative) |
 | `results/` | outputs (git-ignored) |
 
 ## Reproducing

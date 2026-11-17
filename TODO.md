@@ -68,6 +68,21 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     roughly double for the same memory (not yet shaken out).
 33. **Wilks / coverage calibration of the profile intervals** [deferred; from scan/README.md]: toys only if a second
     mode ever appears within a few Delta chi2.
+35. **LINX polylog: second derivatives through the background were NaN** [fixed in ABCMB-k 2026-11-17; upstream LINX
+    and ../ABCMB: diff ready, the user sends]. thermo's Bose-Einstein densities use Li(n, exp(mu/T)) at mu = 0 (z = 1),
+    and LINX's `Li` is a complex series in log z whose derivatives beyond the first are NaN there; the background's
+    dY already holds grad(rho_EM), so any second derivative through BackgroundModel (any input) got inf * 0 = NaN
+    although z's tangent is 0 (item 21's Delta_Neff_init^2 NaN; it blocked item 20). Fix (special_funcs.py, replacing
+    8968fb1's concrete-mu=0 stopgap): `Li` is a custom_jvp around the unchanged series (`_Li_series`) with
+    dLi_n/dz = Li_{n-1}/z, closing on Li_1 = -log|1-z| and Li_0 = z/(1-z); for n <= 2 the coefficient is 0 at exactly
+    z = 1 (exact for the zero tangent at mu = 0; a nonzero tangent there, a truly divergent derivative, comes out finite).
+    The rule is linear in the tangent, as LINX's jax.grad inside dY needs (a predicate on the tangent cannot transpose).
+    Values and LINX Jacobians bit-identical; warm one-cosmology programs values 4.33 / 4.45 s, Jacobian 20.78 / 21.05 s
+    (new / old), compiles within 3%; LINX Hessian rows equal the stopgap's (checked against central differences).
+    pytests/test_linx_polylog.py. Diff for LINX main: /pscratch/sd/c/carag/LINX-scratch/polylog_safe_derivative.diff
+    (applies to ../ABCMB's vendored abcmb/linx/special_funcs.py too). Side note, pre-existing: the series' values are
+    good to <~1e-11 on the positive axis but only 1e-8..1e-7 for z in (-1.5, -0.5) and ~2e-6 at |z| ~ 2.6 (n = 4);
+    harmless at LINX's z = +-1 (Li_4(-1) 2e-14, Li_3(-1) 3e-8) (scan/diag/li_series_accuracy.py).
 
 ## Upstream ABCMB
 
