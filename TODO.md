@@ -28,6 +28,15 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     stage Jacobians for ABCMB's stiff modes) and saves only 11% at K=6 (309 s). Floor of this design ~250 s; lower needs
     per-stage Jacobians (the PR's cost) or work outside the solver. Kvaerno5 stays the default; kencarp_fixed is a
     1.24x / 1.54x opt-in.
+    2026-11-17: at ACT settings kencarp_fixed is slower than Kvaerno5 (675 vs 610 s warm values: 4th order takes
+    ~1.85x the steps at high k, and the dense inverse dominates the step). **`PE_solver="kvaerno5_fixed"`**
+    (`abcmb/fixed_kvaerno5.py`, CHANGELOG 2026-11-17) fixes both: Kvaerno5's tableau, 6 chord iterations, a structured
+    inverse from the Jacobian's sparsity (`Model.with_pe_structure`), convergence term in the error estimate. Warm:
+    plik engine values 47.8 s / gradients 218 s (Kvaerno5 162 / 553), ACT values 182 s (610), gradients 757 s;
+    accuracy as Kvaerno5's. Open: (a) edge / m_nu gradient checks, snapshot + CLASS accuracy tests; (b) switch in the
+    profile driver (PA_PE_SOLVER, run signature) and the default decision; (c) compile time (gradients ~1150 s per
+    shape vs 403): fori_loop with unroll, or fewer iterations; (d) Kvaerno5 warm ACT gradient time not measured;
+    (e) upstream form (the diffrax-minimal patch is still the KenCarp one).
 22 (see below). **LINX gradient speedup**: done 2026-11-16 with item 20.
 
 ## Runs and decisions

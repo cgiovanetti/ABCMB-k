@@ -6,6 +6,24 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-17 — kvaerno5_fixed: fixed-iteration Kvaerno5 with a structured inverse (TODO 31)
+----------------------------------------------------------------------------------------
+Why kencarp_fixed loses at ACT settings (scan/diag/pe_probe.py): 4th order takes ~1.85x Kvaerno5's steps at high k
+(9475 vs 5130 at k = 1.4), and the dense inverse is the step (12 ms at n_y 178 vs 0.05 ms RHS, 0.13 ms M^-1 v) while
+the Jacobian is 1.8% dense (multipole chains + ~20 hub variables). New opt-in PE_solver="kvaerno5_fixed"
+(abcmb/fixed_kvaerno5.py): Kvaerno5's tableau / predictor / error estimate / dense output (same steps), 6 unrolled
+chord iterations per stage, M^-1 from a hub Schur complement + 8x8 chain blocks (Model.with_pe_structure(params)
+finds the pattern once; dense inverse without it), and the last chord update added to the error estimate at
+weight 100 (= diffrax's Newton tolerance): without it the lensing-only modes (k > 20, ~500 wide steps) are wrong
+even at 10 iterations. Warm times, same cosmologies (logs/kencarp_bench, logs/kencarp_validate):
+  plik engine, B=32 / 4 GPU: values 47.8 s (Kvaerno5 162, kencarp_fixed 131), gradients 218 s (553, 360);
+    vs Kvaerno5 at 10-100x tighter: TT 6.8e-5, EE 7.5e-5, pp 4.3e-5 (Kvaerno5 itself 7.6e-5, 8.4e-5, 1.2e-4).
+  ACT engine, B=8 / 2 GPU: values 182 s (Kvaerno5 610, kencarp_fixed 675), gradients 757 s (Kvaerno5 1980 cold);
+    vs Kvaerno5: TT/EE 1.3e-4, TE 2e-5, pp 1.5e-4, tangents <= 1.1e-6 of peak; peak memory unchanged.
+Compile is the cost: values ~380 s (Kvaerno5 187), gradients ~1150 s (403) per batch shape. Default stays kvaerno5.
+pytests/test_fixed_kvaerno5.py (structured inverse vs dense; stiff nonlinear toys at 4 and 6 iterations). Not done:
+edge / m_nu cosmologies for gradients, snapshot + CLASS accuracy tests, the profile driver switch.
+
 2026-11-17 — Vendored LINX polylog: derivatives safe at z = 1 (TODO 35)
 -----------------------------------------------------------------------
 special_funcs.Li is a custom_jvp around the unchanged series: dLi_n/dz = Li_{n-1}/z, closing on Li_1 = -log|1-z| and

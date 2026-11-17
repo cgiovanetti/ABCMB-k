@@ -399,6 +399,15 @@ class Model(eqx.Module):
                      lna_grid_nodes=jnp.asarray(self.lna_grid(params)))
         return eqx.tree_at(lambda m: (m.specs, m.PE.specs), self, (specs, specs))
 
+    def with_pe_structure(self, params, block=8):
+        """Copy of this model whose perturbation solver uses a structured inverse (PE_solver="kvaerno5_fixed"): the
+        sparsity of the Einstein-Boltzmann Jacobian, found once at the cosmology ``params`` (user-input dict; the
+        pattern is set by the species, not the cosmology), stored in ``specs["pe_structure"]``."""
+        from .fixed_kvaerno5 import jacobian_structure
+        full_params, bg = self._build_one_bg(self.add_derived_parameters(params))
+        specs = dict(self.specs, pe_structure=jacobian_structure(self.PE.jacobian_pattern((bg, full_params)), block))
+        return eqx.tree_at(lambda m: (m.specs, m.PE.specs), self, (specs, specs))
+
     def _build_one_bg(self, full_params):
         """Sequential helper: run the full single-cosmology path through to
         ``Background``. Mirrors ``run_cosmology_abbr`` but stops at the BG

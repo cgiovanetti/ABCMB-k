@@ -8,6 +8,7 @@ import equinox as eqx
 from . import constants as cnst
 from . import ABCMBTools as tools
 from .fixed_kencarp4 import FixedKenCarp4
+from .fixed_kvaerno5 import FixedKvaerno5
 
 import os
 file_dir = os.path.dirname(__file__)
@@ -610,6 +611,17 @@ class PerturbationEvolver(eqx.Module):
 
         return y_prime
 
+    def jacobian_pattern(self, args, n_probe=4):
+        """Boolean (n_y, n_y) sparsity pattern of d get_derivatives / dy for the cosmology args = (BG, params): the
+        union of the nonzeros at random states over a grid of k and ln a (numpy; for fixed_kvaerno5's structure)."""
+        n = 1 + sum(int(s.num_equations) for s in self.species_list)
+        ks = jnp.asarray(np.geomspace(float(self.k_axis_perturbations[0]), float(self.k_axis_perturbations[-1]), 8))
+        lnas = jnp.asarray([-15.0, -11.0, -8.5, -7.2, -6.5, -4.0, -2.2, -1.5, -0.5, 0.0])
+        ys = jax.random.normal(jax.random.PRNGKey(0), (n_probe, n))
+        jac = lambda k, lna, y: jnp.abs(jax.jacfwd(lambda z: self.get_derivatives(lna, z, (k, *args)))(y))
+        f = jax.jit(lambda: vmap(lambda k: vmap(lambda t: vmap(lambda y: jac(k, t, y))(ys))(lnas))(ks).max((0, 1, 2)))
+        return np.asarray(f()) > 0
+
     def evolution_one_k(self, k, lna, args):
         """
         Evolve perturbations for single wavenumber mode.
@@ -648,10 +660,13 @@ class PerturbationEvolver(eqx.Module):
         term = diffrax.ODETerm(self.get_derivatives)
         if self.specs["PE_solver"] == "kencarp_fixed":
             solver = FixedKenCarp4(n_iter=self.specs["kencarp_n_iter"])
+        elif self.specs["PE_solver"] == "kvaerno5_fixed":
+            solver = FixedKvaerno5(n_iter=self.specs["kvaerno5_n_iter"], structure=self.specs["pe_structure"],
+                                   conv_weight=self.specs["kvaerno5_conv_weight"])
         elif self.specs["PE_solver"] == "kvaerno5":
             solver = diffrax.Kvaerno5()
         else:
-            raise ValueError(f"PE_solver must be 'kvaerno5' or 'kencarp_fixed', not {self.specs['PE_solver']!r}")
+            raise ValueError(f"PE_solver must be 'kvaerno5', 'kvaerno5_fixed' or 'kencarp_fixed', not {self.specs['PE_solver']!r}")
 
         # Three tiers: small k, large k, and the lensing-only extension above
         # specs["k_limber_start"] (inf unless the k-grid was extended for the

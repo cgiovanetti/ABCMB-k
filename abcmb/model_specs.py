@@ -101,6 +101,13 @@ def load_specs(input_specs):
     # kencarp_n_iter chord iterations per implicit stage, no inner loop; abcmb/fixed_kencarp4.py). Same step control.
     specs["PE_solver"]       = input_specs.get("PE_solver", "kvaerno5")
     specs["kencarp_n_iter"]  = input_specs.get("kencarp_n_iter", 10)
+    # "kvaerno5_fixed" (abcmb/fixed_kvaerno5.py): Kvaerno5's tableau and steps with kvaerno5_n_iter chord iterations per
+    # stage; the last update enters the error estimate with kvaerno5_conv_weight (100 = diffrax's Newton tolerance,
+    # 1e-2 of the step tolerance). pe_structure (Model.with_pe_structure): the Jacobian's sparsity for a structured
+    # inverse; None = dense inverse.
+    specs["kvaerno5_n_iter"] = input_specs.get("kvaerno5_n_iter", 6)
+    specs["kvaerno5_conv_weight"] = input_specs.get("kvaerno5_conv_weight", 100.0)
+    specs["pe_structure"]    = input_specs.get("pe_structure", None)
     # Step ceiling in ln a for the modes with k < k_max_dtmax_PE (Mpc^-1). Unbounded, the controller
     # takes wide steps where those modes look smooth and the saves are read off Kvaerno5's in-step
     # (third-order Hermite) interpolation: 2.6e-3 in ClTT at ell < 10, 4e-4 at ell 100-500. With the

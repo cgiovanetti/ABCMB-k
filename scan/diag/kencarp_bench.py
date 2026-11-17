@@ -34,6 +34,9 @@ KW = dict(user_species=(species.MassiveNeutrino,), output_Cl=True, l_max=2508, l
           rtol_small_k_PE=1e-5, max_steps_PE=16384, lna_grid_mode="recomb", PE_solver=a.solver, kencarp_n_iter=a.n_iter)
 KW.update({k: float(v) for k, v in (s.split("=") for s in a.spec)})
 model = Model(**KW)
+if a.solver == "kvaerno5_fixed":
+    model = model.with_pe_structure(dict(FIXED, omega_b=CEN[0], omega_cdm=CEN[1], h=CEN[2], A_s=np.exp(CEN[3]) / 1e10,
+                                         n_s=CEN[4], tau_reion=CEN[5]))
 ndev = len(jax.devices())
 
 
