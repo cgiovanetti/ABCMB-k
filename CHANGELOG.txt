@@ -6,6 +6,16 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-17 — TODO 20: LM race, GN + LINX term vs GN
+---------------------------------------------------
+Four `_v1emwimp` starts (h[2], h[6], Delta_Neff_init[4], [7]), 8 LM iterations each (61436899,
+logs/gn_curv_check_race.log). GN + LINX term: chi2 2765.193 / 2763.824 / 2764.479 / 2763.453 (= where the 60-iteration
+GN run ended), |g| 0.086 (floor) / 0.052 / 0.025 / 0.017. GN alone: 2765.193 / 2763.824 / 2773.108 / 2763.453,
+|g| 0.029 / 0.003 / 26.9 / 0.089. 13.0 vs 8.4 min per iteration on 4-row blocks (LINX second-order program 440 s warm
+per 32-row chunk, Jacobian 180 s). No non-finite second-order lane in 32 batched evaluations, at the points where the
+first race had one. Correction to 11-16: LINX's CPU programs do load from the persistent compile cache (the race job
+compiled neither); the earlier misses were code changes and a main- vs worker-thread call of the same program.
+
 2026-11-17 — _v1act: five of six POIs done; ln10As resumed (61472393)
 ---------------------------------------------------------------------
 ACT DR6 lite + SRoll2, LCDM, min chi2 541.81. Best / 68% / 95% (21 grid points each):

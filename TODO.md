@@ -40,27 +40,27 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 
 ## Profile driver (scan/)
 
-20. **Gauss-Newton crawl along decoupling nuisances** [fix on main 2026-11-16; open: a production check and one NaN
-    lane]. With a parameter whose effect fades out (m_chi -> heavy) free, the gradient and the true curvature go as
-    eps', J^T J as eps'^2, so GN overshoots along it (`_v1emwimp`: 60 iterations, 2-8 rows stalled per node). The
-    missing curvature is LINX's own second-order term sum_k (dchi2/dy_k) d2y_k/dx_a dx_b, not ABCMB's: with it the
-    profile curvature along log10_m_chi matches the converged profile's value differences to <= 3% at 11-26 MeV,
-    where GN alone is 0.58x-0.06x (CHANGELOG 2026-11-16). On main: `LinxStage(curv=...)` (forward over forward
-    through LINX; needed the vendored-LINX polylog fix, thermo._Li_BE), config `linx_curv` (default log10_m_chi with
-    chi on), the matrix then |eigenvalues|; the second-order program runs on the host CPU next to the engine.
-    LM race from four `_v1emwimp` starts (scan/diag/gn_curv_check.py lm): in one iteration both Delta_Neff_init rows
-    reached the chi2 the GN run ended at after 60 iterations (2763.456 vs 2763.453; 2764.84 vs 2764.48); the run
-    then aborted (below). Flat directions: converged starts count as distinct minima only when their chi2 differ by
-    > MS_DCHI2 or a barrier separates them (values along the segment), branches only from lower or barrier-separated
-    minima, and spread starts > PA_MS_START_DCHI2 above their row's start are pulled back
-    (pytests/test_profile_decoupling.py). Open: (a) in the race's second iteration the batched second-order program
-    returned a non-finite lane, and the per-lane fallback then compiled the single-row program on 4 host devices at
-    once (LLVM out of host memory, abort); `hessian_rows` now has no per-lane fallback (that row keeps GN) and the
-    cause is being traced (scan/diag/linx_curv_nan.py on the iteration-2 rows, logs/linx_curv_x_it2.txt). (b) LINX's
-    CPU programs never hit the persistent compile cache (a new key per process): each job compiles the Jacobian
-    program (~17 min) and the second-order one (~45 min) afresh. (c) A production re-run (`_v1emwimp` or a 1D
-    log10_m_chi + Delta_Neff_init slice) to measure iterations against the 60 of the GN run. Generic limit: a
-    decoupling inside ABCMB (EDE z_c / theta_i as f_EDE -> 0) needs ABCMB's own second derivatives (item 21).
+20. **Gauss-Newton crawl along decoupling nuisances** [fixed on main 2026-11-16 (8968fb1); open: a production
+    re-run, the user's call]. With a parameter whose effect fades out (m_chi -> heavy) free, the gradient and the
+    true curvature go as eps', J^T J as eps'^2, so GN overshoots along it (`_v1emwimp`: 60 iterations, 2-8 rows
+    stalled per node). The missing curvature is LINX's own second-order term sum_k (dchi2/dy_k) d2y_k/dx_a dx_b,
+    not ABCMB's: with it the profile curvature along log10_m_chi matches the converged profile's value differences to
+    <= 3% at 11-26 MeV, where GN alone is 0.58x-0.06x. On main: `LinxStage(curv=...).hessian_rows` (forward over
+    forward through LINX; needed the vendored-LINX polylog fix, thermo._Li_BE), config `linx_curv` (default
+    log10_m_chi with chi on), the matrix then |eigenvalues|; the second-order program runs on the host CPU next to the
+    engine (~440 s per 32-row chunk warm, ~3.5x the Jacobian's 180 s). LM race, same four `_v1emwimp` starts, 8
+    iterations each (job 61436899, logs/gn_curv_check_race.log): GN + LINX term reaches the chi2 `_v1emwimp` ended at
+    on all four rows and converges the two Delta_Neff_init rows (|g| 0.025, 0.017) that stalled there; GN alone
+    leaves Delta_Neff_init[4] 8.6 above (|g| 27) and [7] unconverged. Per iteration 13.0 vs 8.4 min on these 4-row
+    blocks (the second-order program is longer than a 4-row engine call; at production blocks of 24 it overlaps the
+    engine). Flat directions: converged starts count as distinct minima only when their chi2 differ by > MS_DCHI2
+    or a barrier separates them, branches only from lower or barrier-separated minima, spread starts
+    > PA_MS_START_DCHI2 above their row's start pulled back (pytests/test_profile_decoupling.py). Notes: a batched
+    second-order lane once came back non-finite (first race, iteration 2; the per-lane recompile it triggered ran the
+    host out of memory); it did not recur at the same points (32 batched evaluations finite), and such a row now keeps
+    GN for that iteration. LINX's CPU programs do hit the persistent compile cache when the code and the calling
+    thread match (the race job loaded both). Generic limit: a decoupling inside ABCMB (EDE z_c / theta_i as
+    f_EDE -> 0) needs ABCMB's own second derivatives (item 21).
 22. **LINX gradient speedup** [done 2026-11-16, with item 20]. LINX runs push the engine's 9 inputs (h, omega_b,
     omega_cdm, n_s, ln10As, tau_reion, YHe, Neff, T_nu) and chain LINX's Jacobian (`_gn_block_linx`) instead of ~20
     parameter directions; equal to the per-parameter path to 1e-12 (gradient) / 2e-15 (GN). Warm cost per block:
