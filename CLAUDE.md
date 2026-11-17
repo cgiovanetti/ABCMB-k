@@ -17,7 +17,7 @@ pip install -r pytest_requirements.txt    # test deps (adds classy)
 
 - `pytests/accuracy_test.py`: the 1%-vs-CLASS gate and the contract for theory changes (needs `classy`). classy 3.3.4's default `delta_l_max=500` vs ABCMB's `l_max/2` fails TT by ~1.2% at l~2500; compare with CLASS given ABCMB's `delta_l_max`.
 - `pytests/test_snapshots.py`: parity against frozen output (`pytests/fixtures/snapshots.npz`) at `rtol=5e-5`, `atol=1e-18`, no classy. Run it on GPU (`JAX_PLATFORM_NAME=gpu` inside srun), the backend the snapshots were made on; regenerate with `python pytests/fixtures/generate_snapshots.py` after a deliberate change (last regenerated 2026-11-07, 4405d4f).
-- `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_recomb_grid.py` (the "recomb" grid and its Jacobian weights, CPU); `pytests/test_lm_tools.py`, `test_profile_toy.py` and `test_profile_bounds.py` (the profile machinery on toys: multimodality, bounds and one-sided intervals; CPU); `test_lowl_ee_tables.py` (LowLEE SRoll2 / SimAll against cobaya, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
+- `pytests/test_fixed_grid.py` (`Model.freeze_lna_grid`, GPU in practice); `pytests/test_recomb_grid.py` (the "recomb" grid and its Jacobian weights, CPU); `pytests/test_lm_tools.py`, `test_profile_toy.py`, `test_profile_bounds.py` and `test_profile_decoupling.py` (the profile machinery on toys: multimodality, bounds and one-sided intervals, flat-valley flags; CPU); `test_lowl_ee_tables.py` (LowLEE SRoll2 / SimAll against cobaya, CPU); `halofit_test.py`, `k_tail_test.py` (upstream).
 
 Open items for the whole repo (profiles, HMC, engine, upstream ABCMB): `TODO.md`, the one list; add new items there with the next free number.
 

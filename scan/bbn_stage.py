@@ -70,7 +70,7 @@ class LinxStage:
     passes 1 and 0. With g_chi != 0 an EM-coupled thermal relic chi (abcmb/linx thermo.rho_chi) of mass
     10**log10_m_chi MeV is in the plasma (the EM-WIMP model); log10_m_chi is then the third input."""
 
-    def __init__(self, reaction_net="key_PRIMAT_2023", g_chi=0., chi_is_boson=False):
+    def __init__(self, reaction_net="key_PRIMAT_2023", g_chi=0., chi_is_boson=False, curv=()):
         self.chi = g_chi != 0.
         self.bg = BackgroundModel(g_chi=g_chi, chi_is_boson=chi_is_boson)
         self.bg_max_steps = BG_MAX_STEPS_CHI if self.chi else BG_MAX_STEPS
@@ -88,6 +88,13 @@ class LinxStage:
         self._vj = eqx.filter_jit(jax.vmap(self._one_vj))  # values_and_jac(): the batched Jacobian
         self._vj1 = eqx.filter_jit(self._one_vj)           # per cosmology: the fallback for lanes that fail batched
         self.n_fallback = 0                                # lanes recomputed one at a time so far (trace line)
+        # curv: the background inputs (Delta_Neff_init, log10_m_chi) whose Hessian rows hessian_rows() returns
+        bad = [n for n in curv if n not in ("Delta_Neff_init", "log10_m_chi") or n not in self.in_names]
+        if bad:
+            raise ValueError(f"LinxStage curv: {bad} (only the background inputs Delta_Neff_init, log10_m_chi)")
+        self.curv = tuple(self.in_names.index(n) for n in curv)
+        if self.curv:
+            self._vjk = eqx.filter_jit(jax.vmap(self._one_vjk))
 
     def x_default(self, omega_b, dneff):
         """(N, n_in) inputs with the nuisances at their reference values (tau_n_fac 1, q 0)."""
@@ -142,6 +149,31 @@ class LinxStage:
         Ju = jax.jacfwd(lambda u: self._rest(bg_c, u[0] * self._ETA, u[1], u[2:]))(u0)   # (5, n_net)
         return y, jnp.concatenate([Ju[:, :1]] + cols + [Ju[:, 1:]], axis=1)
 
+    def _vj_nosg(self, x):
+        """_one_vj without the stop_gradient on the background in the network block, so that an outer jvp along a
+        background input reaches the network's derivatives through the background."""
+        u0 = jnp.concatenate([x[:1], x[self.i_tau:]])
+        net = lambda b, u: self._rest(b, u[0] * self._ETA, u[1], u[2:])
+        lm = self._lm(x)
+        bg_out, bg_dn = jax.jvp(lambda d: self._background(d, lm), (x[1],), (jnp.ones_like(x[1]),))
+        y, y_dn = jax.jvp(lambda b: net(b, u0), (bg_out,), (bg_dn,))
+        cols = [y_dn[:, None]]
+        if self.chi:
+            _, bg_dm = jax.jvp(lambda m: self._background(x[1], m), (x[2],), (jnp.ones_like(x[2]),))
+            cols.append(jax.jvp(lambda b: net(b, u0), (bg_out,), (bg_dm,))[1][:, None])
+        Ju = jax.jacfwd(lambda u: net(bg_out, u))(u0)
+        return y, jnp.concatenate([Ju[:, :1]] + cols + [Ju[:, 1:]], axis=1)
+
+    def _one_vjk(self, x):
+        """value (5,), Jacobian (5, n_in) and the Hessian rows K (5, n_curv, n_in), K[:, c] = dJ / dx_a for the
+        background inputs a = self.curv[c]: one outer jvp of _vj_nosg each (forward over forward). The outer tangent
+        reaches the background solve along a, so the zero-tangent solve that sends jax.jacfwd NaN never happens."""
+        Ks = []
+        for a in self.curv:
+            (y, J), (_, Ka) = jax.jvp(self._vj_nosg, (x,), (jnp.zeros_like(x).at[a].set(1.0),))
+            Ks.append(Ka)
+        return y, J, jnp.stack(Ks, axis=1)
+
     # ---- batching: chunks of <= b_chunk, each padded to a multiple of b_pad (shape reuse) ----
     def _chunks(self, x):
         x = np.asarray(x, float).reshape(-1, self.n_in)
@@ -191,3 +223,18 @@ class LinxStage:
                       f"({int((~np.isfinite(J[bad]).all((1, 2))).sum())} still non-finite)", flush=True)
             ys.append(y); Js.append(J)
         return np.concatenate(ys), np.concatenate(Js)
+
+    def hessian_rows(self, x):
+        """(B, 5, n_curv, n_in): the Hessian rows of the outputs along the curv inputs (_one_vjk) for the rows of x,
+        batched in chunks like values_and_jac. No per-lane recomputation (the single-cosmology second-order program
+        takes ~18 min and several GB to compile per host device): a lane that comes back non-finite stays NaN and
+        the driver keeps Gauss-Newton alone for that row."""
+        Ks = []
+        for n, xc in self._chunks(x):
+            K = np.array(self._vjk(xc)[2], dtype=float)[:n]
+            bad = ~np.isfinite(K).reshape(n, -1).all(1)
+            if bad.any():
+                print(f"[bbn] Hessian rows non-finite in {int(bad.sum())} of {n} lanes (Gauss-Newton alone there)",
+                      flush=True)
+            Ks.append(K)
+        return np.concatenate(Ks)

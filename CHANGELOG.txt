@@ -6,6 +6,31 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-16 — Decoupling nuisances (TODO 20): LINX curvature, u-basis gradients (22), flat-valley flags
+---------------------------------------------------------------------------------------------------
+- Cause of the _v1emwimp GN crawl confirmed: along log10_m_chi the missing curvature is LINX's own second-order term
+  sum_k (dchi2/dy_k) d2y_k/dx2 (y = YHe, Neff, T_nu, Y_p, D/H), not ABCMB's. Profile curvature along log10_m_chi
+  (Schur complement, all 21 dims free) at four converged log10_m_chi-profile rows against the profile's own value
+  differences: 11.5 / 15.1 / 20.0 / 26.3 MeV measured 15.08 / 7.33 / 2.30 / 0.593, GN 0.58x / 0.40x / 0.21x / 0.06x,
+  GN + LINX term 1.03x / 1.00x / 1.00x / 1.00x (scan/diag/gn_curv_check.py ab, logs/gn_curv_check_ab.log).
+- LinxStage(curv=...) gives the Hessian rows of LINX's outputs along background inputs (log10_m_chi,
+  Delta_Neff_init) by forward over forward; config linx_curv (default log10_m_chi with chi on; PA_LINX_CURV) adds the
+  term, the matrix then |eigenvalues|. Checked against central differences of the AD Jacobian at four _v1emwimp
+  points (scan/diag/linx_curv_check.py): d2Neff/dlog10m2 -2.1412 / -5.5957 / -0.9529 vs -2.1413 / -5.5993 / -0.9530,
+  converging as h^2; the YHe entries (~1e-3) are noise-limited in the differences.
+- Vendored LINX: nested forward AD of the background was NaN (also item 21's Delta_Neff_init^2 NaN). Li(n, exp(mu/T))
+  at mu = 0 (z = 1) is a complex series in log z whose derivatives beyond the first are NaN, and dY already holds
+  grad(rho_EM): thermo._Li_BE returns zeta(n) for a concrete mu = 0 (value bit-identical, Li(n,1) - zeta(n) = 0).
+  Probe: scan/diag/linx_nan_probe.py. LINX main and ../ABCMB still have it.
+- Item 22: in a LINX run the engine is pushed along its 9 inputs (h, omega_b, omega_cdm, n_s, ln10As, tau_reion,
+  YHe, Neff, T_nu) and chained with LINX's Jacobian (_gn_block_linx), not along the ~20 free parameters. Against the
+  per-parameter path at the same rows: chi2 identical, gradient 1e-12, GN 2e-15 (relative).
+- Multimodality (lm_tools.distinct_minima): converged starts > MS_DX apart are distinct minima only when their chi2
+  differ by > MS_DCHI2 or chi2 rises by > MS_DCHI2 along the segment between them (values at 1/4, 1/2, 3/4); branches
+  only from minima lower than the warm start's or behind a barrier. Spread starts more than PA_MS_START_DCHI2
+  (4 MS_SPREAD^2) above their row's start are pulled back (_cap_spread). Toy: configs/toy_decoupling.py,
+  pytests/test_profile_decoupling.py (no flags, no branches on the plateau; the old rule flagged it).
+
 2026-11-16 — FixedKenCarp4: stop_gradient on M^-1 makes its gradients 1.54x faster than Kvaerno5
 -----------------------------------------------------------------------------------------------
 The 686 s gradient (0.81x) was a tangent through the chord matrix's inverse (gdt carries a numerically zero but not

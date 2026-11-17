@@ -110,12 +110,40 @@ def cluster_points(X, F, dx):
     return labels, reps
 
 
-def flag_point(X, F, conv, stalled, dx, dchi2):
+def distinct_minima(X, F, dx, dchi2, barrier=None):
+    """Group points X (n, P) with chi2 F (n,) into distinct minima: clusters by max-norm distance dx
+    (cluster_points), then, with barrier, clusters merged when their chi2 agree within dchi2 and the straight
+    segment between their lowest points rises no more than dchi2 above the higher of the two (barrier(i, j) ->
+    that rise, i, j indices into X): one flat valley (a direction the data leave open) is one minimum, however
+    far apart its points. Clusters whose chi2 differ by more than dchi2 stay apart (barrier or not). Returns
+    (labels (n,), reps: per group the index of its lowest point, groups in increasing chi2)."""
+    labels, reps = cluster_points(X, F, dx)
+    if barrier is None or len(reps) < 2:
+        return labels, reps
+    root = list(range(len(reps)))
+
+    def find(k):
+        while root[k] != k:
+            k = root[k]
+        return k
+    for a in range(len(reps)):
+        for b in range(a + 1, len(reps)):
+            if abs(F[reps[a]] - F[reps[b]]) <= dchi2 and barrier(reps[a], reps[b]) <= dchi2:
+                ra, rb = find(a), find(b)
+                root[max(ra, rb)] = min(ra, rb)                 # the root stays the group's lowest cluster
+    groups = sorted({find(k) for k in range(len(reps))})       # (cluster reps come in increasing F)
+    new = {g: n for n, g in enumerate(groups)}
+    return np.array([new[find(int(k))] for k in labels]), [reps[g] for g in groups]
+
+
+def flag_point(X, F, conv, stalled, dx, dchi2, barrier=None):
     """The multimodality flags of one grid point from its starts: X (n, P) end points, F (n,) chi2,
     conv (n,) converged, stalled (n,). Flagged when any start stalled, when converged starts sit at
-    distinct points (> dx apart in max-norm: distinct minima, whatever their chi2), or when converged
-    starts at the same point disagree in chi2 by more than dchi2. Returns (flag, reason, reps) with
-    reps the row indices of the distinct converged minima, lowest chi2 first."""
+    distinct minima (distinct_minima: > dx apart and, with barrier, apart in chi2 by more than dchi2 or
+    separated by a barrier), or when converged starts at the same point disagree in chi2 by more than dchi2.
+    barrier(i, j) (indices into X) is the rise of chi2 along the segment between two converged starts above
+    the higher end; without it every pair > dx apart counts as distinct (no values needed). Returns
+    (flag, reason, reps) with reps the row indices of the distinct converged minima, lowest chi2 first."""
     conv = np.asarray(conv, bool); stalled = np.asarray(stalled, bool)
     F = np.asarray(F, float); X = np.asarray(X, float)
     reasons = []
@@ -124,11 +152,17 @@ def flag_point(X, F, conv, stalled, dx, dchi2):
     c = np.where(conv)[0]
     reps = []
     if len(c):
-        labels, r = cluster_points(X[c], F[c], dx)
+        cl, _ = cluster_points(X[c], F[c], dx)
+        bar = None if barrier is None else (lambda a, b: barrier(int(c[a]), int(c[b])))
+        _, r = distinct_minima(X[c], F[c], dx, dchi2, bar)
         reps = [int(c[i]) for i in r]
         if len(reps) > 1:
-            reasons.append(f"{len(reps)} distinct minima (dchi2 {F[reps[-1]] - F[reps[0]]:.3f})")
-        spread = max(float(F[c][labels == k].max() - F[c][labels == k].min()) for k in range(len(reps)))
+            why = f"{len(reps)} distinct minima (dchi2 {F[reps[-1]] - F[reps[0]]:.3f}"
+            if barrier is not None:
+                nb = sum(barrier(reps[0], i) > dchi2 for i in reps[1:])
+                why += f"; {nb} behind a barrier, {len(reps) - 1 - nb} higher with none: a slope or plateau"
+            reasons.append(why + ")")
+        spread = max(float(F[c][cl == k].max() - F[c][cl == k].min()) for k in range(cl.max() + 1))
         if spread > dchi2:
             reasons.append(f"chi2 spread {spread:.3f} at one point")
     return bool(reasons), "; ".join(reasons), reps

@@ -20,6 +20,12 @@ profiled chi2, the best fit, 68/95% intervals and a per-point AD convergence cer
      high_ell: full plik or ACT DR6 lite; its nuisances
      enter through the profiled-likelihood Schur complement; the low-ell
      likelihoods through their exact Hessian in D_ell), at the row's own point.
+     In a LINX run (config bbn: linx) the engine is pushed along its own inputs instead,
+     the direct parameters and YHe, Neff, T_nu (9 directions, not one per free parameter),
+     and the rows' gradients and matrices follow through LINX's Jacobian; config linx_curv
+     (default log10_m_chi with chi on) adds LINX's exact second-order term along those
+     inputs, which Gauss-Newton drops and which leads the curvature of a decoupling
+     nuisance (gradient and true curvature ~ eps, J^T J ~ eps^2).
      Each iteration tries PA_LM_K damping values per active row in one batched
      value call and keeps the best that passes the gain-ratio test. Rows that
      moved get a new gradient; rows that did not keep theirs and raise the
@@ -49,12 +55,16 @@ profiled chi2, the best fit, 68/95% intervals and a per-point AD convergence cer
 
   5. Multimodality (scan/lm_tools.py). By default every POI gets PA_MS_K extra starts at
      PA_MS_NPTS of its grid points, spread +-PA_MS_SPREAD profile sigmas along the softest
-     eigen-directions of the warm Gauss-Newton matrix on the row's free dims; they run in
+     eigen-directions of the warm Gauss-Newton matrix on the row's free dims (a start more
+     than PA_MS_START_DCHI2 above its row's start is pulled back toward it); they run in
      the same lockstep and leave the batch as they converge. A grid point is flagged when
-     a start stalled, when converged starts sit at distinct points (> PA_MS_DX scaled
-     sigma apart) or when they disagree in chi2 by > PA_MS_DCHI2. Each distinct minimum a
-     spread start found at a grid point (not the warm start's) seeds a branch: an ordinary
-     LM run from it at every grid point of that POI. The profile is the lower envelope
+     a start stalled, when converged starts sit at distinct minima (> PA_MS_DX scaled sigma
+     apart and apart in chi2 by > PA_MS_DCHI2 or separated by a chi2 barrier > PA_MS_DCHI2
+     along the segment between them: starts along one flat valley are one minimum) or
+     when starts at one point disagree in chi2 by > PA_MS_DCHI2. Each distinct minimum a
+     spread start found at a grid point that is lower than the warm start's or behind a
+     barrier from it seeds a branch: an ordinary LM run from it at every grid point of that
+     POI. The profile is the lower envelope
      over all starts and branches; the intervals are the union of the regions below
      threshold (one region for a unimodal profile). The per-POI npz keeps every row.
 
@@ -65,8 +75,9 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs (defau
   PA_SIGTOL_PATIENCE(3) PA_RTOL(1e-5) PA_RESUME(1) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
   PA_GRAD_SPECB(4) PA_LM_K(4) PA_STEP_MAX(1.0) PA_STALL_MAX(3) PA_WARM_LR(0) PA_TRACE_EVALS(0)
   PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
-  PA_MS_BRANCH_MAX(4) PA_BR_MAXIT(10) PA_FIT_DEG(4) PA_FIT_DCHI2(9) PA_CPU_DEVICES(16)
-  PA_MLE_PREPASS(0) PA_MLE_MAXITER(40) PA_MLE_SIG_CLIP(3.0) PLF_MAXIT(3000; scan/plik_full.py)
+  PA_MS_BRANCH_MAX(4) PA_MS_START_DCHI2(4 PA_MS_SPREAD^2) PA_BR_MAXIT(10) PA_FIT_DEG(4) PA_FIT_DCHI2(9)
+  PA_CPU_DEVICES(16) PA_MLE_PREPASS(0) PA_MLE_MAXITER(40) PA_MLE_SIG_CLIP(3.0) PA_LINX_CURV(config linx_curv)
+  PLF_MAXIT(3000; scan/plik_full.py)
 """
 # Host devices for the HyRex jvp (scan/batched_grad.hyrex_cpu_mesh): must be set before JAX
 # initialises. PA_CPU_DEVICES=0/1 keeps the single-device path.
@@ -76,7 +87,7 @@ if _ncpu not in ("0", "1") and "xla_force_host_platform_device_count" not in _os
     _os.environ["XLA_FLAGS"] = (_os.environ.get("XLA_FLAGS", "") +
                                 f" --xla_force_host_platform_device_count={_ncpu}").strip()
 
-import os, time, importlib.util
+import os, time, importlib.util, concurrent.futures
 _SCRATCH = os.environ.get("SCRATCH", "/pscratch/sd/c/carag")
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 # equinox runtime errors become NaNs instead of aborting (read by equinox at import): a failed ODE solve is
@@ -96,7 +107,7 @@ from abcmb.main import Model
 from abcmb import species as _species
 from scan.lowl_like import LowLEE, LowLTT, LOWEE_TABLES, cl_to_Dl
 from scan.batched_grad import staged_cl_and_grad, _to_float as _bg_to_float
-from scan.lm_tools import (proj_grad, lm_step, newton_decrement, spread_starts, flag_point,
+from scan.lm_tools import (proj_grad, lm_step, newton_decrement, spread_starts, flag_point, distinct_minima,
                            cluster_points, union_regions, is_multimodal)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -329,6 +340,9 @@ MS_DX = float(os.environ.get("PA_MS_DX", "0.5"))
 MS_DCHI2 = float(os.environ.get("PA_MS_DCHI2", "0.1"))
 MS_WAIT = os.environ.get("PA_MS_WAIT", "1") != "0"
 MS_BRANCH_MAX = int(os.environ.get("PA_MS_BRANCH_MAX", "4"))
+# a spread start more than MS_START_DCHI2 above its row's start (the quadratic puts it at MS_SPREAD^2) is pulled
+# back toward it (_cap_spread)
+MS_START_DCHI2 = float(os.environ.get("PA_MS_START_DCHI2", str(4.0 * MS_SPREAD ** 2)))
 BR_MAXIT = int(os.environ.get("PA_BR_MAXIT", "10"))
 # MLE PRE-PASS: solve the joint D-dim fit first (same optimizer, all parameters free), recenter
 # every POI grid on it with a span from its Gauss-Newton errors, and warm-start there.
@@ -460,8 +474,14 @@ if TOY is None and BBN_TYPE == "linx":
     # config linx_chi = {"g_chi": 4.0, "boson": False}: an EM-coupled thermal relic chi of mass 10**log10_m_chi MeV
     # in the plasma (the EM-WIMP model; abcmb/linx thermo.rho_chi); log10_m_chi is then a parameter of the run
     _chi = CFG.get("linx_chi") or {}
+    # LINX's exact second-order term in the curvature (_gn_block_linx) for the background inputs in config linx_curv
+    # (default: log10_m_chi when chi is on, else none; PA_LINX_CURV=a,b or none overrides): Gauss-Newton drops it,
+    # and along a decoupling input it is the leading curvature (TODO item 20)
+    _lc = os.environ.get("PA_LINX_CURV", None)
+    LINX_CURV = ([] if _lc.strip().lower() in ("", "none") else [s.strip() for s in _lc.split(",")]) if _lc is not None \
+        else list(CFG.get("linx_curv", ["log10_m_chi"] if _chi.get("g_chi", 0.) else []))
     BBN = LinxStage(CFG.get("linx_reaction_net", "key_PRIMAT_2023"), g_chi=float(_chi.get("g_chi", 0.)),
-                    chi_is_boson=bool(_chi.get("boson", False)))
+                    chi_is_boson=bool(_chi.get("boson", False)), curv=LINX_CURV)
     if BBN.chi != ("log10_m_chi" in ORDER):
         raise ValueError(f"{CONFIG_ABS}: log10_m_chi in order needs linx_chi with g_chi != 0, and vice versa")
     LINX_ONLY = set(BBN.in_names) - {"omega_b"}
@@ -476,6 +496,14 @@ if TOY is None and BBN_TYPE == "linx":
               f"{n} = {r}" for n, r in zip(BBN_NUIS[1:], BBN.reaction_names)) + f" and tau_n_fac (sigma "
               f"{BBN_LIKE['tau_n_sig']}); data Yp {BBN_LIKE['Yp']}, DH {BBN_LIKE['DH']}" if BBN_LIKE else ""),
           flush=True)
+    if not set(LINX_CURV) <= set(ORDER):
+        raise ValueError(f"{CONFIG_ABS}: linx_curv {LINX_CURV} must name parameters of the run")
+    # the engine's inputs in a LINX run, pushed by _gn_block_linx instead of the parameters: the direct parameters
+    # (not LINX-only) and the three LINX outputs the engine reads
+    U_DIRECT = [i for i in range(D) if ORDER[i] not in LINX_ONLY]
+    print(f"[bbn] gradients: {len(U_DIRECT) + 3} engine directions ({', '.join(ORDER[i] for i in U_DIRECT)}, YHe, "
+          f"Neff, T_nu) chained with LINX's Jacobian" + (f"; LINX second-order term along {', '.join(LINX_CURV)}"
+                                                         if LINX_CURV else ""), flush=True)
 CEN = jnp.asarray(CENTER); SIG = jnp.asarray(SIGMA)
 try:
     NDEV = len(jax.devices('gpu'))
@@ -732,19 +760,82 @@ def _gn_one(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu):
 _gn_B = jax.jit(jax.vmap(_gn_one))
 
 
+def _engine_gn(full_ps, per):
+    """chi2 (B,), gradient (B, n) and Gauss-Newton matrix (B, n, n) of the high-ell + low-ell likelihoods (high-ell
+    nuisances profiled) along n tangent directions per row: full_ps the rows' derived dicts, per[b][j] the filtered
+    tangent dict of row b along direction j. One staged AD call."""
+    B, n = len(per), len(per[0])
+    params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs), *[per[b][j] for b in range(B)]) for j in range(n)]
+    (ClTT, ClTE, ClEE), cl_dots = staged_cl_and_grad(
+        model, full_ps, params_dots, k_chunk_size=100, shard=DO_SHARD, spec_b_local=GRAD_SPECB)
+    dTT, dTE, dEE = (jnp.stack([cd[s] for cd in cl_dots], axis=1) for s in range(3))  # (B,n,n_l)
+    nu = _hil_prof_B(hil.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells),
+                     cl_to_Dl(ClTT, model.SS.ells), cl_to_Dl(ClEE, model.SS.ells))[1]
+    c, g, H = _gn_B(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu)
+    return np.array(c, float), np.array(g, float), np.array(H, float)   # copies: written by the callers
+
+
+def _bbn_like_gn(c, g, H, th_np, ys, Js, FREE):
+    """add the BBN likelihood (config bbn_like) to the rows' chi2, gradient and curvature (in place): its residuals'
+    Gauss-Newton terms and the nuisance priors, in the rows' scaled coordinates (direction j = SIGMA[i] e_i)."""
+    if BBN_LIKE is None:
+        return c, g, H
+    c = c + _bbn_chi2(th_np, ys)
+    col_of = dict(zip(BBN_IDX, BBN_COLS))
+    sY, sDH = BBN_LIKE["Yp"][1], BBN_LIKE["DH"][1]
+    for b in range(len(c)):
+        r = np.array([(ys[b, 3] - BBN_LIKE["Yp"][0]) / sY, (ys[b, 4] - BBN_LIKE["DH"][0]) / sDH])
+        Jr = np.zeros((2, FREE.shape[1]))
+        for j in range(FREE.shape[1]):
+            i = int(FREE[b, j])
+            if i in col_of:
+                Jr[0, j] = Js[b, 3, col_of[i]] * SIGMA[i] / sY
+                Jr[1, j] = Js[b, 4, col_of[i]] * SIGMA[i] / sDH
+            if ORDER[i] in BBN_NUIS:
+                xj = (th_np[b, i] - BBN_PRIOR_MEAN[ORDER[i]]) / SIGMA[i]
+                g[b, j] += 2.0 * xj; H[b, j, j] += 2.0
+        g[b] += 2.0 * Jr.T @ r; H[b] += 2.0 * Jr.T @ Jr
+    return c, g, H
+
+
+_LINX_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)   # LINX's Hessian rows next to the engine
+
+
+def _bbn_jac(th_np, curv=False):
+    """the LINX stage at the rows: values (B, 5), Jacobians (B, 5, n_in) and, with curv, a future of the Hessian rows
+    (B, 5, n_curv, n_in) of LINX_CURV (else None). The rows' second-order program (~3.5x the Jacobian's cost) runs on
+    the host CPU in a worker thread while the caller runs the engine's GPU stages, which need only y and J."""
+    X = _bbn_X(th_np)
+    n0 = BBN.n_fallback; t0 = time.perf_counter()
+    ys, Js = BBN.values_and_jac(X)
+    if TRACE_EVALS:
+        print(f"[eval] bbn jac {len(th_np)} rows {time.perf_counter() - t0:.0f}s, {BBN.n_fallback - n0} lanes "
+              f"recomputed without vmap", flush=True)
+
+    def hess_rows():
+        t1 = time.perf_counter()
+        K = BBN.hessian_rows(X)
+        if TRACE_EVALS:
+            print(f"[eval] bbn hessian rows ({', '.join(LINX_CURV)}) {len(th_np)} rows {time.perf_counter() - t1:.0f}s",
+                  flush=True)
+        return K
+    return ys, Js, (_LINX_POOL.submit(hess_rows) if curv else None)
+
+
+_LINX_UBASIS = True       # False: the per-parameter path for a LINX run (kept to check _gn_block_linx against it)
+
+
 def _gn_block(BASE, FREE, X):
     """One staged AD call over a block of rows: (chi2 (B,), grad (B,P'), GN (B,P',P')). Direction j
     of row b is SIGMA[i] e_i, i = FREE[b, j] (so gradient and curvature are in scaled coords)."""
+    if BBN is not None and _LINX_UBASIS:
+        return _gn_block_linx(BASE, FREE, X)
     B, Pp = X.shape
     th_np = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(B)])
     thetas = [jnp.asarray(t) for t in th_np]
     bbn = [None] * B
     if BBN is not None:                            # one batched LINX call (values + Jacobians) per block
-        n0 = BBN.n_fallback; t0 = time.perf_counter()
-        ys, Js = BBN.values_and_jac(_bbn_X(th_np))
-        if TRACE_EVALS:
-            print(f"[eval] bbn jac {B} rows {time.perf_counter() - t0:.0f}s, {BBN.n_fallback - n0} lanes "
-                  f"recomputed without vmap", flush=True)
+        ys, Js, _ = _bbn_jac(th_np)
         bbn = [(ys[b], Js[b], th_np[b]) for b in range(B)]
     full_ps = [_phys_to_derived(t, bb) for t, bb in zip(thetas, bbn)]
     per = []                                       # [B][P'] filtered tangent dicts
@@ -756,32 +847,82 @@ def _gn_block(BASE, FREE, X):
                             (jnp.zeros(D).at[i].set(SIG[i]),))
             dots.append(eqx.filter(fd, eqx.is_inexact_array))
         per.append(dots)
-    params_dots = [jax.tree.map(lambda *xs: jnp.stack(xs), *[per[b][j] for b in range(B)])
-                   for j in range(Pp)]
-    (ClTT, ClTE, ClEE), cl_dots = staged_cl_and_grad(
-        model, full_ps, params_dots, k_chunk_size=100, shard=DO_SHARD, spec_b_local=GRAD_SPECB)
-    dTT, dTE, dEE = (jnp.stack([cd[s] for cd in cl_dots], axis=1) for s in range(3))  # (B,P',n_l)
-    nu = _hil_prof_B(hil.abcmb_cls_to_clik(ClTT, ClTE, ClEE, model.SS.ells),
-                     cl_to_Dl(ClTT, model.SS.ells), cl_to_Dl(ClEE, model.SS.ells))[1]
-    c, g, H = _gn_B(ClTT, ClTE, ClEE, dTT, dTE, dEE, nu)
-    c, g, H = np.array(c, float), np.array(g, float), np.array(H, float)   # copies: written below
-    if BBN_LIKE is not None:                       # the BBN likelihood: its residuals' Gauss-Newton terms
-        # and the nuisance priors, in the rows' scaled coordinates (direction j = SIGMA[i] e_i)
-        c = c + _bbn_chi2(th_np, ys)
-        col_of = dict(zip(BBN_IDX, BBN_COLS))
-        sY, sDH = BBN_LIKE["Yp"][1], BBN_LIKE["DH"][1]
+    c, g, H = _engine_gn(full_ps, per)
+    if BBN is not None:
+        c, g, H = _bbn_like_gn(c, g, H, th_np, ys, Js, FREE)
+    return c, g, H
+
+
+def _u_to_derived(u):
+    """derived param dict of a LINX run from the engine's inputs u = (the U_DIRECT parameters, YHe, Neff,
+    T_nu_massless), _to_float'd like _phys_to_derived."""
+    p = dict(FIXED)
+    for k, i in enumerate(U_DIRECT):
+        if ORDER[i] == "ln10As":
+            p["A_s"] = jnp.exp(u[k]) / 1e10
+        else:
+            p[ORDER[i]] = u[k]
+    p["YHe"], p["Neff"], p["T_nu_massless"] = u[-3], u[-2], u[-1]
+    return _bg_to_float(model.add_derived_parameters(p))
+
+
+def _gn_block_linx(BASE, FREE, X):
+    """_gn_block for a LINX run. The engine is differentiated along its own inputs u: the direct parameters U_DIRECT
+    (direction SIGMA[i] e_i) and YHe, Neff, T_nu_massless (unit directions), len(U_DIRECT) + 3 directions per row
+    whatever the row's free parameters (the BBN nuisances, Delta_Neff_init and log10_m_chi act only through the
+    three). The rows' gradients and Gauss-Newton matrices follow by the chain rule through LINX's Jacobian,
+    g = M^T g_u, H = M^T H_u M with M = du/dx in scaled coordinates (the high-ell nuisances' Schur complement is a
+    congruence too). With LINX_CURV, LINX's second-order term sum_k (dchi2/dy_k) d2y_k/dx_a dx_b (a a curvature
+    input, b any LINX input; y = YHe, Neff, T_nu through the engine and Y_p, D/H through the BBN likelihood) is
+    added: Gauss-Newton drops it, and along a decoupling input (log10_m_chi: effect ~ eps, gradient and true
+    curvature ~ eps, J^T J ~ eps^2) it is the leading curvature. It can make the matrix indefinite, so the matrix
+    is then replaced by its absolute value (eigenvalues |lambda|): a descent step whose length along a direction of
+    negative curvature is set by that curvature."""
+    B, Pp = X.shape
+    th_np = np.array([theta_of(BASE[b], FREE[b], X[b]) for b in range(B)])
+    ys, Js, Kf = _bbn_jac(th_np, curv=bool(BBN.curv))
+    nu_ = len(U_DIRECT) + 3
+    U0 = np.concatenate([th_np[:, U_DIRECT], ys[:, :3]], axis=1)
+    dirs = np.concatenate([SIGMA[U_DIRECT], np.ones(3)])
+    full_ps = [_u_to_derived(jnp.asarray(U0[b])) for b in range(B)]
+    per = [[eqx.filter(jax.jvp(_u_to_derived, (jnp.asarray(U0[b]),), (jnp.zeros(nu_).at[k].set(dirs[k]),))[1],
+                       eqx.is_inexact_array) for k in range(nu_)] for b in range(B)]
+    c, gu, Hu = _engine_gn(full_ps, per)
+    upos = {i: k for k, i in enumerate(U_DIRECT)}
+    col_of = dict(zip(BBN_IDX, BBN_COLS))
+    M = np.zeros((B, nu_, Pp))
+    for b in range(B):
+        for j in range(Pp):
+            i = int(FREE[b, j])
+            if i in upos:
+                M[b, upos[i], j] = 1.0
+            if i in col_of:
+                M[b, -3:, j] += Js[b, :3, col_of[i]] * SIGMA[i]
+    g = np.einsum("bu,buj->bj", gu, M)
+    H = np.einsum("buj,buv,bvk->bjk", M, Hu, M)
+    c, g, H = _bbn_like_gn(c, g, H, th_np, ys, Js, FREE)
+    if Kf is not None:
+        Ks = Kf.result()
+        w = np.zeros((B, 5))                       # dchi2/dy: the engine's (per unit y) and the BBN likelihood's
+        w[:, :3] = gu[:, -3:]
+        if BBN_LIKE is not None:
+            w[:, 3] = 2.0 * (ys[:, 3] - BBN_LIKE["Yp"][0]) / BBN_LIKE["Yp"][1] ** 2
+            w[:, 4] = 2.0 * (ys[:, 4] - BBN_LIKE["DH"][0]) / BBN_LIKE["DH"][1] ** 2
         for b in range(B):
-            r = np.array([(ys[b, 3] - BBN_LIKE["Yp"][0]) / sY, (ys[b, 4] - BBN_LIKE["DH"][0]) / sDH])
-            Jr = np.zeros((2, Pp))
-            for j in range(Pp):
-                i = int(FREE[b, j])
-                if i in col_of:
-                    Jr[0, j] = Js[b, 3, col_of[i]] * SIGMA[i] / sY
-                    Jr[1, j] = Js[b, 4, col_of[i]] * SIGMA[i] / sDH
-                if ORDER[i] in BBN_NUIS:
-                    xj = (th_np[b, i] - BBN_PRIOR_MEAN[ORDER[i]]) / SIGMA[i]
-                    g[b, j] += 2.0 * xj; H[b, j, j] += 2.0
-            g[b] += 2.0 * Jr.T @ r; H[b] += 2.0 * Jr.T @ Jr
+            if not np.isfinite(Ks[b]).all():          # LINX's second-order program failed for this row
+                continue
+            Sx = np.zeros((BBN.n_in, BBN.n_in))
+            for cc, a in enumerate(BBN.curv):
+                row = w[b] @ Ks[b, :, cc, :]
+                Sx[a, :] = row
+                Sx[:, a] = row
+            jj = [j for j in range(Pp) if int(FREE[b, j]) in col_of]
+            cols = [col_of[int(FREE[b, j])] for j in jj]
+            s = SIGMA[FREE[b, jj]]
+            Hb = H[b]
+            Hb[np.ix_(jj, jj)] += Sx[np.ix_(cols, cols)] * s[:, None] * s[None, :]
+            ev, V = np.linalg.eigh(0.5 * (Hb + Hb.T))
+            H[b] = (V * np.abs(ev)) @ V.T
     return c, g, H
 
 
@@ -1088,15 +1229,69 @@ def _row_conv(T):
     return ((T["gnorm"] < GTOL) | T["floor"]) & ~at_box & ~T["stalled"], at_box
 
 
-def _flags(T, pois_idx):
-    """{(poi index, j): (flag, reason, reps, rows)} over the grid points: lm_tools.flag_point on the
-    point's rows; reps = row indices of its distinct converged minima, lowest chi2 first."""
+_BARRIER = {}             # (row i, row j), i < j, of the row table -> chi2 rise along their segment (_barriers)
+BAR_T = (0.25, 0.5, 0.75)
+
+
+def _barriers(T, pois_idx):
+    """For every pair of distinct converged points at one grid point (cluster representatives > MS_DX apart), the
+    rise of chi2 along the straight segment between them above the higher end, from values at BAR_T (one batched
+    value call for the pairs not yet in _BARRIER). It tells a flat valley (no rise: one minimum, whatever the
+    distance; _v1emwimp's starts along a heavy m_chi) from minima a barrier separates. Returns barrier(i, j)."""
     conv, _ = _row_conv(T)
+    need = set()
+    for p in pois_idx:
+        for j in range(NPTS):
+            r = np.where((T["POI"] == p) & (T["J"] == j) & conv)[0]
+            if len(r) > 1:
+                _, reps = cluster_points(T["X"][r], T["F"][r], MS_DX)
+                need |= {(int(min(r[a], r[b])), int(max(r[a], r[b]))) for k, a in enumerate(reps) for b in reps[k + 1:]}
+    need = sorted(need - set(_BARRIER))
+    if need:
+        X = np.array([(1 - t) * T["X"][i] + t * T["X"][k] for i, k in need for t in BAR_T])
+        rr = np.repeat([i for i, _ in need], len(BAR_T))
+        f = values_rows(T["BASE"][rr], T["FREE"][rr], X).reshape(len(need), len(BAR_T))
+        for (i, k), fk in zip(need, f):
+            _BARRIER[(i, k)] = float(fk.max() - max(T["F"][i], T["F"][k]))
+        nb = sum(_BARRIER[q] > MS_DCHI2 for q in need)
+        print(f"[flags] barrier test on {len(need)} pairs of distinct converged points: {nb} with a rise > "
+              f"MS_DCHI2 {MS_DCHI2} between them", flush=True)
+    return lambda i, k: _BARRIER[(min(i, k), max(i, k))]
+
+
+def _cap_spread(BASE, FREE, X0, Xe, f0=None):
+    """Spread starts Xe whose chi2 lies more than MS_START_DCHI2 above their row's start X0 (chi2 f0; computed if
+    None) are pulled back toward it, halving the displacement up to 8 times (values only). Gauss-Newton's quadratic
+    puts a start MS_SPREAD^2 above; along a direction where it underestimates the curvature by orders of magnitude
+    the start otherwise lands on the box face far up the likelihood (_v1emwimp: m_chi 1.8 MeV, chi2 +1700)."""
+    f0 = values_rows(BASE, FREE, X0) if f0 is None else f0
+    X = Xe.copy(); f = values_rows(BASE, FREE, X); t = np.ones(len(X))
+    for _ in range(8):
+        bad = np.where(f - f0 > MS_START_DCHI2)[0]
+        if not len(bad):
+            break
+        t[bad] *= 0.5
+        X[bad] = X0[bad] + t[bad, None] * (Xe[bad] - X0[bad])
+        f[bad] = values_rows(BASE[bad], FREE[bad], X[bad])
+    if (t < 1).any():
+        print(f"[multistart] {int((t < 1).sum())} of {len(X)} spread starts more than {MS_START_DCHI2:g} above their "
+              f"row's start pulled back toward it (to {t.min():.3g} of the spread at most); now at most "
+              f"{np.max(f - f0):.1f} above", flush=True)
+    return X
+
+
+def _flags(T, pois_idx, barrier=None):
+    """{(poi index, j): (flag, reason, reps, rows)} over the grid points: lm_tools.flag_point on the
+    point's rows, with the barrier test (_barriers); reps = row indices of its distinct converged minima,
+    lowest chi2 first."""
+    conv, _ = _row_conv(T)
+    barrier = barrier or _barriers(T, pois_idx)
     out = {}
     for p in pois_idx:
         for j in range(NPTS):
             r = np.where((T["POI"] == p) & (T["J"] == j))[0]
-            f, why, reps = flag_point(T["X"][r], T["F"][r], conv[r], T["stalled"][r], MS_DX, MS_DCHI2)
+            f, why, reps = flag_point(T["X"][r], T["F"][r], conv[r], T["stalled"][r], MS_DX, MS_DCHI2,
+                                      barrier=lambda a, b: barrier(int(r[a]), int(r[b])))
             out[(p, j)] = (f, why, [int(r[i]) for i in reps], r)
     return out
 
@@ -1106,6 +1301,7 @@ def profile_lockstep(pois, outdir):
     warm-start, run LM in lockstep, then flags -> branches, and write one npz/png per POI from the
     lower envelope over every row. Each phase checkpoints the row table (resumable)."""
     global GRID_CEN, GRID_SIG
+    _BARRIER.clear()                                   # keyed by this row table's indices
     theta_warm = CENTER.copy(); Hwarm = [None]
     if MLE_PREPASS:
         theta_warm, chi2_mle, Hw = joint_fit(CENTER, MLE_MAXITER); Hwarm[0] = Hw
@@ -1193,12 +1389,15 @@ def profile_lockstep(pois, outdir):
                 print(f"[warm-lr] linear-response start kept for {int(use.sum())}/{N} rows; chi2 median "
                       f"{np.median(fk[:N]):.1f} -> {np.median(np.minimum(fk[:N], fk[N:])):.1f}", flush=True)
             # ---- multistart: MS_K spread starts around each selected row's start, +-MS_SPREAD profile
-            # sigmas along the softest eigen-directions of the warm GN matrix on the row's free dims ----
+            # sigmas along the softest eigen-directions of the warm GN matrix on the row's free dims, pulled
+            # back where their chi2 says the quadratic was wrong (_cap_spread) ----
             X0_f = X0
             if len(ext):
                 Hw = _hwarm()
                 Xe = np.concatenate([spread_starts(X0[b], Hw[np.ix_(FREE[b], FREE[b])], XLO[b], XHI[b],
                                                    MS_K, MS_SPREAD) for b in ext])
+                Xe = _cap_spread(BASE[rep], FREE[rep], X0[rep], Xe,
+                                 np.minimum(fk[:N], fk[N:])[rep] if WARM_LR else None)
                 X0_f = np.concatenate([X0, Xe])
                 print(f"[multistart] {len(rep)} spread starts: {MS_K} per row at {len(jsel)} grid points per "
                       f"POI (indices {jsel}), +-{MS_SPREAD} profile sigma along the softest warm GN "
@@ -1227,21 +1426,32 @@ def profile_lockstep(pois, outdir):
             if f:
                 print(f"  [{ORDER[p]}@{grid_of[p][j]:.5g}] {why}; known minima: "
                       + (", ".join(f"chi2={T['F'][i]:.3f}" for i in reps) or "none"), flush=True)
-        # ---- branches: every distinct minimum a spread start found at a grid point that is not the
-        # one the warm start reached there, clustered across the POI's grid points by MS_DX so each
-        # branch is seeded once, at most MS_BRANCH_MAX per POI (lowest chi2 first); each seed is an
-        # ordinary LM run from its point at every grid point of its POI ----
+        # ---- branches: at each grid point every distinct minimum (lm_tools.distinct_minima with the barrier
+        # test) other than the warm start's that is lower than it by more than MS_DCHI2 or separated from it by a
+        # barrier (a higher point with no barrier lies on the warm minimum's slope or plateau: nothing to follow),
+        # clustered across the POI's grid points by MS_DX so each branch is seeded once, at most MS_BRANCH_MAX per
+        # POI (lowest chi2 first); each seed is an ordinary LM run from its point at every grid point of its POI ----
         conv, _ = _row_conv(T)
+        barrier = _barriers(T, pois_idx)               # cached by _flags above
         seeds = []
         for p in pois_idx:
             cand = []
             for j in range(NPTS):
                 r = np.where((T["POI"] == p) & (T["J"] == j))[0]
-                w = r[T["KIND"][r] == 0]
-                xw = T["X"][w[0]] if len(w) and conv[w[0]] else None
-                for i in r[T["KIND"][r] == 1]:
-                    if conv[i] and (xw is None or np.abs(T["X"][i] - xw).max() > MS_DX):
-                        cand.append(int(i))
+                c = r[conv[r]]
+                if not len(c):
+                    continue
+                labels, reps = distinct_minima(T["X"][c], T["F"][c], MS_DX, MS_DCHI2,
+                                               lambda a, b: barrier(int(c[a]), int(c[b])))
+                w = np.where(T["KIND"][c] == 0)[0]
+                wg = labels[w[0]] if len(w) else None          # the warm start's minimum (None: not converged)
+                for g, k in enumerate(reps):
+                    i = int(c[k])
+                    if g == wg:
+                        continue
+                    iw = None if wg is None else int(c[reps[wg]])
+                    if iw is None or T["F"][i] < T["F"][iw] - MS_DCHI2 or barrier(i, iw) > MS_DCHI2:
+                        cand.append(i)
             if cand:
                 cand = np.array(cand, int)
                 _, reps = cluster_points(T["X"][cand], T["F"][cand], MS_DX)

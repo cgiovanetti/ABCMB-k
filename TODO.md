@@ -28,7 +28,7 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     stage Jacobians for ABCMB's stiff modes) and saves only 11% at K=6 (309 s). Floor of this design ~250 s; lower needs
     per-stage Jacobians (the PR's cost) or work outside the solver. Kvaerno5 stays the default; kencarp_fixed is a
     1.24x / 1.54x opt-in.
-22 (see below). **LINX gradient speedup** is the other high-priority item.
+22 (see below). **LINX gradient speedup**: done 2026-11-16 with item 20.
 
 ## Runs and decisions
 
@@ -39,24 +39,34 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 
 ## Profile driver (scan/)
 
-20. **Gauss-Newton crawl along decoupling nuisances** [in progress 2026-11-16]. With a parameter whose
-    effect fades out (here m_chi -> heavy) free, the residuals change by eps*c_i: the gradient and the true curvature
-    go as eps, J^T J as eps^2, so the GN step along it diverges. In `_v1emwimp` the GN curvature along log10_m_chi is
-    5-20x below the measured profile curvature at 23-40 MeV, GN asks for +1.6..+50 dex, and LM damps hard (lambda
-    1-1e3). LINX's m_chi / Delta_Neff_init AD derivatives match central differences (<~1%, 1.8 MeV-1 GeV): not a
-    gradient bug. Generic: log-parametrized couplings, EDE z_c / theta_i as f_EDE -> 0. Fixes: exact curvature along
-    the one or two soft directions (AD Hessian-vector products; needs item 21), or a model-side upper box (log10 m_chi
-    <= 2: the profile is flat to <1e-3 above 45 MeV). Also: spread starts along a flat direction land on the box
-    faces (a 1.8 MeV start at Delta chi2 up to 1700); cap the spread. And the multimodality flags: two converged
-    starts more than MS_DX apart count as distinct minima whatever their chi2, so a flat direction raises false flags
-    (in `_v1emwimp` most were "distinct minima (dchi2 0.000)", points differing along heavy m_chi) and seeds useless
-    branches (~150 rows per node); flag only where the points differ in chi2 by > MS_DCHI2 or are separated by a
-    barrier. Test case: `_v1emwimp` (1D, all eight POIs written 2026-11-16 by 61404076 with the branches off; the
-    LM-stage row tables `scan/results/profile_prod_ad_TABLE_v1emwimp_r0-2.npz` hold the false flags; its 95% ends of
-    omega_cdm (low), h (low) and Delta_Neff_init run off the `_v6bbn` grids). The user does not need that run itself.
-22. **LINX gradient speedup** [open, HIGH PRIORITY (user 2026-11-16)]. The driver pushes all 19 free directions through ABCMB,
-    but with LINX the engine sees only 8 effective inputs (the BBN nuisances act through YHe / Neff / T_nu): push 8
-    and chain LINX's Jacobian, ~2.4x cheaper gradients for BBN-likelihood runs.
+20. **Gauss-Newton crawl along decoupling nuisances** [fix on main 2026-11-16; open: a production check and one NaN
+    lane]. With a parameter whose effect fades out (m_chi -> heavy) free, the gradient and the true curvature go as
+    eps', J^T J as eps'^2, so GN overshoots along it (`_v1emwimp`: 60 iterations, 2-8 rows stalled per node). The
+    missing curvature is LINX's own second-order term sum_k (dchi2/dy_k) d2y_k/dx_a dx_b, not ABCMB's: with it the
+    profile curvature along log10_m_chi matches the converged profile's value differences to <= 3% at 11-26 MeV,
+    where GN alone is 0.58x-0.06x (CHANGELOG 2026-11-16). On main: `LinxStage(curv=...)` (forward over forward
+    through LINX; needed the vendored-LINX polylog fix, thermo._Li_BE), config `linx_curv` (default log10_m_chi with
+    chi on), the matrix then |eigenvalues|; the second-order program runs on the host CPU next to the engine.
+    LM race from four `_v1emwimp` starts (scan/diag/gn_curv_check.py lm): in one iteration both Delta_Neff_init rows
+    reached the chi2 the GN run ended at after 60 iterations (2763.456 vs 2763.453; 2764.84 vs 2764.48); the run
+    then aborted (below). Flat directions: converged starts count as distinct minima only when their chi2 differ by
+    > MS_DCHI2 or a barrier separates them (values along the segment), branches only from lower or barrier-separated
+    minima, and spread starts > PA_MS_START_DCHI2 above their row's start are pulled back
+    (pytests/test_profile_decoupling.py). Open: (a) in the race's second iteration the batched second-order program
+    returned a non-finite lane, and the per-lane fallback then compiled the single-row program on 4 host devices at
+    once (LLVM out of host memory, abort); `hessian_rows` now has no per-lane fallback (that row keeps GN) and the
+    cause is being traced (scan/diag/linx_curv_nan.py on the iteration-2 rows, logs/linx_curv_x_it2.txt). (b) LINX's
+    CPU programs never hit the persistent compile cache (a new key per process): each job compiles the Jacobian
+    program (~17 min) and the second-order one (~45 min) afresh. (c) A production re-run (`_v1emwimp` or a 1D
+    log10_m_chi + Delta_Neff_init slice) to measure iterations against the 60 of the GN run. Generic limit: a
+    decoupling inside ABCMB (EDE z_c / theta_i as f_EDE -> 0) needs ABCMB's own second derivatives (item 21).
+22. **LINX gradient speedup** [done 2026-11-16, with item 20]. LINX runs push the engine's 9 inputs (h, omega_b,
+    omega_cdm, n_s, ln10As, tau_reion, YHe, Neff, T_nu) and chain LINX's Jacobian (`_gn_block_linx`) instead of ~20
+    parameter directions; equal to the per-parameter path to 1e-12 (gradient) / 2e-15 (GN). Warm cost per block:
+    ABCMB with 9 directions vs 20, plus the LINX Jacobian (~190 s per 32-row chunk) as before. `PA_AD_BCHUNK` can
+    roughly double for the same memory (not yet shaken out).
+33. **Wilks / coverage calibration of the profile intervals** [deferred; from scan/README.md]: toys only if a second
+    mode ever appears within a few Delta chi2.
 
 ## Upstream ABCMB
 
@@ -114,7 +124,8 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
    fixed"]. Per-ell d2C_l by jvp-of-jvp is off 2e-5..7e-4 (TT, l > 500), 0.5-3% (TE/EE) and 85% (l < 30) against
    value second differences: enough to wreck an exact Hessian (Gauss-Newton matches the value curvature to <1%, so
    the profiles are unaffected). Suspects: C^1 / linear interpolation tables, adaptive step sizes frozen under AD. The
-   LINX Delta_Neff_init^2 nested jvp returns NaN. Harness `/pscratch/sd/c/carag/ABCMB-k_lnagrid/hess/`. Blocks item 20.
+   LINX Delta_Neff_init^2 nested jvp NaN is fixed (vendored-LINX polylog at z = 1, 2026-11-16). Harness
+   `/pscratch/sd/c/carag/ABCMB-k_lnagrid/hess/`. No longer blocks item 20 (its curvature is LINX's).
 32. **diffrax's KenCarp4 (with its Newton while loop) for CPU runs** [open; user 2026-11-16]. On CPU the while
    loop is cheap (no GPU lockstep or launch overhead), so diffrax.KenCarp4 itself may cut CPU runtime against
    Kvaerno5 (6 stages vs 7; the Nov-7 GPU review had it at 5.99 / 18.19 s vs Kvaerno5 8.10 / 20.23 s massless /

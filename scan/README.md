@@ -37,10 +37,11 @@ their fixed means, recomb lna grid) replaces it.
 | `configs/lcdm_actlite.py` | LCDM with ACT DR6 lite + SRoll2 lowE (`_v1act`), one 0.06 eV neutrino, YHe from the sBBN table |
 | `configs/toy_bimodal.py` | toy objective for `pytests/test_profile_toy.py` |
 | `configs/toy_bounded.py` | toy objective for `pytests/test_profile_bounds.py` (bounds, one-sided limits, the box) |
+| `configs/toy_decoupling.py` | toy with a decoupling nuisance for `pytests/test_profile_decoupling.py` (flat-valley flags, spread cap) |
 | `profile_prod_linx_dneff.slurm`, `profile_prod_linx_bbnlike.slurm` | the `_v4linx` / `_v6bbn` launchers |
 | `profile_prod_emwimp.slurm` | the EM-WIMP launcher (1D; 2D with `PA_POI2D`) |
 | `profile_prod_act.slurm` | the ACT launcher (`_v1act`; candl from the venv `envs/abcmb-k`) |
-| `diag/` | ACT l-range checks (`act_lmax_check.py`: delta_l_max / hierarchy / truncation vs the ACT paper's CLASS range), `act_lite_check.py` (= candl), `lensing_stream_check.py` |
+| `diag/` | ACT l-range checks (`act_lmax_check.py`: delta_l_max / hierarchy / truncation vs the ACT paper's CLASS range), `act_lite_check.py` (= candl), `lensing_stream_check.py`; `neff_terms.py` (`_v6bbn` chi2 by likelihood); item 20: `gn_curv_check.py` (u-basis A/B, curvature along log10_m_chi vs the profile, LM race), `linx_curv_check.py` / `linx_curv_nan.py` (LINX Hessian rows vs central differences, non-finite lanes), `linx_nan_probe.py` (the polylog NaN) |
 | `results/` | outputs (git-ignored) |
 
 ## Reproducing
@@ -79,7 +80,8 @@ CPU tests of the machinery (no ABCMB, seconds), on an allocation, never the logi
 salloc --no-shell --nodes=1 --qos=interactive --constraint=cpu --time=00:30:00 --account=m5403
 srun --jobid=<id> --ntasks=1 --cpus-per-task=16 bash -c 'module load conda && conda activate actdr6 &&
   cd /pscratch/sd/c/carag/ABCMB-k && export PYTHONPATH=$(pwd):$PYTHONPATH JAX_PLATFORM_NAME=cpu &&
-  python -m pytest -q pytests/test_lm_tools.py pytests/test_profile_toy.py pytests/test_profile_bounds.py'
+  python -m pytest -q pytests/test_lm_tools.py pytests/test_profile_toy.py pytests/test_profile_bounds.py \
+    pytests/test_profile_decoupling.py'
 ```
 
 ## Method
@@ -99,6 +101,16 @@ chi2 gradient and the Gauss-Newton matrix J^T W J at the row's own point:
   calibration A_planck (as in cobaya), so A_planck is profiled over plik + low-ell together and their
   A_planck curvature and cross terms enter the Schur complement;
 - BBN data (config `bbn_like`): the Y_p and D/H residual Jacobians from the LINX stage, plus the priors.
+
+With LINX (config `bbn: linx`) the engine is pushed along its own 9 inputs (the direct parameters h, omega_b,
+omega_cdm, n_s, ln10As, tau_reion and YHe, Neff, T_nu), not along the ~20 free parameters, and each row's gradient
+and matrix follow through LINX's Jacobian (g = M^T g_u, H = M^T H_u M; the nuisance Schur complement is a
+congruence too). Config `linx_curv` (default `["log10_m_chi"]` when chi is on, else none; `PA_LINX_CURV` overrides)
+adds LINX's exact second-order term sum_k (dchi2/dy_k) d2y_k/dx_a dx_b along those inputs (forward over forward
+through LINX, `LinxStage(curv=...)`; the matrix is then replaced by its absolute value, since the term can make it
+indefinite). Gauss-Newton drops this term, and along a decoupling nuisance it is the leading one: with m_chi free the
+residuals change by eps(m) c, so the gradient and the true curvature go as eps' while J^T J goes as eps'^2, and GN
+overshot along log10_m_chi by 5-20x (`_v1emwimp`'s 60-iteration crawl).
 
 `PA_LM_K` damping values a decade apart are tried in one batched value call (steps projected onto the
 +-`PA_XBOX` box, capped at `PA_STEP_MAX`); a row takes the best step whose chi2 drop is at
@@ -143,9 +155,15 @@ starts or branches. With `PA_POI_SLICE` each rank takes every NPROC-th a value a
 theta / derived_bbn on its rows); `profiles.ipynb` stitches the parts. Contours at the 2-parameter thresholds.
 
 Multimodality: `PA_MS_K` spread starts at `PA_MS_NPTS` grid points per POI, +-`PA_MS_SPREAD` profile sigmas
-along the softest GN eigendirections. A point is flagged for a stalled start, converged starts more than
-`PA_MS_DX` apart, or starts disagreeing by more than `PA_MS_DCHI2`. Each distinct spread-start minimum
-seeds a branch (an LM run at every grid point of its POI). The profile is the lower envelope of all rows.
+along the softest GN eigendirections; a start more than `PA_MS_START_DCHI2` above its row's start (the quadratic
+puts it at `PA_MS_SPREAD`^2) is pulled back toward it by halving (values only). A point is flagged for a stalled
+start, for distinct minima, or for starts at one point disagreeing by more than `PA_MS_DCHI2`. Converged starts
+more than `PA_MS_DX` apart are distinct minima when their chi2 differ by more than `PA_MS_DCHI2` or when chi2 rises
+by more than `PA_MS_DCHI2` along the straight segment between them (values at 1/4, 1/2, 3/4); starts spread along
+one flat valley (a decoupling nuisance on its plateau) are one minimum. A distinct minimum seeds a branch (an LM run
+at every grid point of its POI) when it is lower than the warm start's by more than `PA_MS_DCHI2` or a barrier
+separates them; a higher one with no barrier is a slope or plateau of the warm minimum. The profile is the lower
+envelope of all rows.
 
 Stopping: a row converges at max|g| < `PA_GTOL`, or when it stalls with Newton decrement 0.5 g'H^-1 g
 below `PA_DTOL` ("floor": the likelihood's jitter, e.g. D/H at ~5e-5, is above what GTOL demands along a
@@ -211,6 +229,8 @@ BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 | `PA_WARM_LR` | 0 | start rows at the warm point's linear response (launchers 1) |
 | `PA_TRACE_EVALS` | 0 | log every batch before evaluating it (launchers 1) |
 | `PA_MS_K` / `NPTS` / `SPREAD` / `DX` / `DCHI2` / `WAIT` / `BRANCH_MAX` | 3 / 6 / 2.0 / 0.5 / 0.1 / 1 / 4 | multistart (above) |
+| `PA_MS_START_DCHI2` | 4 `PA_MS_SPREAD`^2 | spread starts further above their row's start are pulled back |
+| `PA_LINX_CURV` | config `linx_curv` | LINX inputs with the exact second-order term (`a,b` or `none`) |
 | `PA_BR_MAXIT` | 10 | LM iterations of a branch |
 | `PA_FIT_DEG` | 4 | interval polynomial degree |
 | `PA_FIT_DCHI2` | 9 | fit window above the minimum; also the two-minima test's range |
@@ -241,12 +261,10 @@ BBN nuisance priors have fixed means, 1 and 0, whatever cen holds).
 - GPU memory scales with rows per GPU x AD directions: shake out a launcher in `--qos=debug` with one
   production-size gradient block (the first `_v5bbn` job, 60327767, OOMed at 16 rows x 19 directions).
 
-## Open items
-
-- Wilks / coverage calibration deferred (only needed if a second mode appears within a few Delta chi2).
-- 2D joint profiles for a few parameter pairs.
 - Vendored LINX (`abcmb/linx`) and LINX main have diverged: the inert-radiation normalization fix and the
   dense-grid / log-log output are not in LINX main yet (`/pscratch/sd/c/carag/LINX/rho_extra_norm.diff`,
   `dense_grid_loglog.diff`), and main's finite t0 / `SaveAt(t0, t1, dense)` is not in the vendored copy.
-- The EM-coupled WIMP is not implemented (needs a LINX thermodynamics extension exposed as a stage input).
-- `pytests/fixtures/snapshots.npz` predates the vendored-LINX changes: regenerate it on GPU.
+
+## Open items
+
+In `TODO.md` at the repo root, the one list for the whole repo.

@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from scan.lm_tools import (proj_grad, lm_step, newton_decrement, fit_in_box,
-                           spread_starts, cluster_points, flag_point, union_regions, is_multimodal)
+                           spread_starts, cluster_points, flag_point, distinct_minima, union_regions, is_multimodal)
 
 LO, HI = -np.full(2, 5.0), np.full(2, 5.0)
 
@@ -119,6 +119,34 @@ def test_cluster_and_flags():
     # a stalled start flags, even with nothing converged
     flag, why, r = flag_point(X[:1], F[:1], np.zeros(1, bool), np.ones(1, bool), 0.1, 0.1)
     assert flag and why == "1 stalled" and r == []
+
+
+def _segment_rise(fun, X):
+    """barrier(i, j) for points X: the rise of fun along the segment between X[i] and X[j] above the higher end"""
+    return lambda i, j: max(fun((1 - t) * X[i] + t * X[j]) for t in (0.25, 0.5, 0.75)) - max(fun(X[i]), fun(X[j]))
+
+
+def test_flat_valley_is_one_minimum():
+    """Converged starts far apart along a flat direction (a decoupling nuisance) at the same chi2 are one minimum
+    with the barrier test, two without it; minima behind a barrier, or apart in chi2, stay distinct."""
+    flat = lambda x: x[0] ** 2                                  # x1 open: chi2 flat along it
+    X = np.array([[0.0, -3.0], [0.0, 0.5], [0.001, 4.0]])
+    F = np.array([flat(x) for x in X]); conv = np.ones(3, bool); st = np.zeros(3, bool)
+    assert flag_point(X, F, conv, st, 0.5, 0.1)[0]             # old rule: 3 "distinct minima"
+    flag, why, r = flag_point(X, F, conv, st, 0.5, 0.1, barrier=_segment_rise(flat, X))
+    assert not flag and why == "" and len(r) == 1
+    labels, reps = distinct_minima(X, F, 0.5, 0.1, _segment_rise(flat, X))
+    assert labels.tolist() == [0, 0, 0] and reps == [0]
+    # the double well f of this file: two minima 0.6 apart in chi2 with a 0.7 barrier between them
+    Xw = np.array([X_RIGHT, X_LEFT]); Fw = np.array([f(x) for x in Xw])
+    flag, why, r = flag_point(Xw, Fw, np.ones(2, bool), np.zeros(2, bool), 0.1, 0.1, barrier=_segment_rise(f, Xw))
+    assert flag and "2 distinct minima" in why and "1 behind a barrier" in why and r == [1, 0]
+    # a start stuck on a plateau above the minimum (no barrier, chi2 higher by > dchi2): kept apart and flagged
+    # as a slope or plateau, not a barrier
+    plateau = lambda x: 1.0 - np.exp(-x[1] ** 2)               # minimum at x1 = 0, flat as |x1| grows
+    Xp = np.array([[0.0, 0.0], [0.0, 6.0]]); Fp = np.array([plateau(x) for x in Xp])
+    flag, why, r = flag_point(Xp, Fp, np.ones(2, bool), np.zeros(2, bool), 0.5, 0.1, barrier=_segment_rise(plateau, Xp))
+    assert flag and "0 behind a barrier, 1 higher with none" in why and r == [0, 1]
 
 
 def test_union_regions_and_multimodality():
