@@ -80,6 +80,7 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     Values and LINX Jacobians bit-identical; warm one-cosmology programs values 4.33 / 4.45 s, Jacobian 20.78 / 21.05 s
     (new / old), compiles within 3%; LINX Hessian rows equal the stopgap's (checked against central differences).
     pytests/test_linx_polylog.py. Diff for LINX main: /pscratch/sd/c/carag/LINX-scratch/polylog_safe_derivative.diff
+    (applies to bfba07c; checked there under jax_debug_nans with env linx312: values unchanged, derivatives at mu = 0 exact)
     (applies to ../ABCMB's vendored abcmb/linx/special_funcs.py too). Side note, pre-existing: the series' values are
     good to <~1e-11 on the positive axis but only 1e-8..1e-7 for z in (-1.5, -0.5) and ~2e-6 at |z| ~ 2.6 (n = 4);
     harmless at LINX's z = +-1 (Li_4(-1) 2e-14, Li_3(-1) 3e-8) (scan/diag/li_series_accuracy.py).
