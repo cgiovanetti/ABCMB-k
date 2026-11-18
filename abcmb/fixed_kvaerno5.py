@@ -125,7 +125,7 @@ class FixedKvaerno5(diffrax.AbstractSolver):
     conv_weight: float = eqx.field(static=True, default=100.0)
     factored: bool = eqx.field(static=True, default=False)      # apply M^-1 as structured_factors (needs structure)
     unroll: Optional[int] = eqx.field(static=True, default=None)  # None: iterations unrolled; k: fori_loop(unroll=k)
-    jit_vf: bool = eqx.field(static=True, default=False)        # trace the vector field once (nested jit) per step
+    jit_vf: bool = eqx.field(static=True, default=True)         # trace the vector field once (nested jit) per step
 
     term_structure: ClassVar = diffrax.AbstractTerm
     interpolation_cls: ClassVar = ThirdOrderHermitePolynomialInterpolation.from_k

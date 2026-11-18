@@ -113,7 +113,8 @@ def load_specs(input_specs):
     # kvaerno5_unroll: None = iterations unrolled, k = lax.fori_loop(unroll=k) (shorter compile, slower warm).
     specs["kvaerno5_factored"] = input_specs.get("kvaerno5_factored", False)
     specs["kvaerno5_unroll"]   = input_specs.get("kvaerno5_unroll", None)
-    specs["kvaerno5_jit_vf"]   = input_specs.get("kvaerno5_jit_vf", False)   # trace the RHS once per step (nested jit)
+    specs["kvaerno5_jit_vf"]   = input_specs.get("kvaerno5_jit_vf", True)    # trace the RHS once per step (nested jit):
+    # same output, compile about halved (the unrolled iterations otherwise re-trace the species code 37x per step)
     # Step ceiling in ln a for the modes with k < k_max_dtmax_PE (Mpc^-1). Unbounded, the controller
     # takes wide steps where those modes look smooth and the saves are read off Kvaerno5's in-step
     # (third-order Hermite) interpolation: 2.6e-3 in ClTT at ell < 10, 4e-4 at ell 100-500. With the
