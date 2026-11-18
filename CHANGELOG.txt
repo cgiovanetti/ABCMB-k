@@ -15,6 +15,21 @@ Its branch (seeded by one stalled spread start at 3.07 whose chi2, 543.878, is t
 n_s 0.96595 [0.95847, 0.97348]; ln10As 3.05133 [3.03909, 3.06413]; tau_reion 0.05517 [0.04979, 0.06122] (68%; 95% in
 the 11-17 entry and the npz). Total ~83 node-h over three jobs.
 
+2026-11-18 — kvaerno5_fixed on branch fixed-solver: compile time and structured solves (TODO 31)
+-----------------------------------------------------------------------------------------------
+Compile: with a warm persistent cache the unrolled solver's cold call only fell 164 -> 120 s on one k chunk; the rest
+is JAX re-tracing the species code once per unrolled RHS call (37 per step, more under jvp). kvaerno5_jit_vf (default
+True here): the RHS under a nested filter_jit, traced once; output unchanged (1e-13). kvaerno5_unroll=k: iterations in
+lax.fori_loop(unroll=k). kvaerno5_factored: M^-1 applied as L (R r) + blocks instead of a dense matrix.
+plik engine, B=8 on 1 GPU, compile (cold - warm) / warm, values | gradients (scan/diag/kencarp_bench.py, logs/solver):
+  as on main            327 / 50.0 s | 874 / 194 s
+  jit_vf                177 / 50.0 s | 362 / 193 s
+  jit_vf + unroll=3     111 / 52.5 s | 202 / 212 s
+  factored              301 / 46.6 s | 872 / 264 s      (tangent directions batch better through one dense product)
+  factored + unroll=1   197 / 55.8 s | 390 / 305 s
+ACT engine, B=8 on 1 GPU with jit_vf: values 237 / 353 s, gradients 408 / 1503 s (compile was ~360 / ~985 s on 2 GPU).
+jit_vf is the default; unroll and factored stay options (off). pytests/test_fixed_kvaerno5.py: 13 pass.
+
 2026-11-18 — kvaerno5_fixed: remaining checks, IMEX test, upstream-main test (TODO 31)
 -------------------------------------------------------------------------------------
 ACT engine gradients, warm, side by side (B=8, 2 GPU each, 6 directions): Kvaerno5 1849 s, kvaerno5_fixed 814 s
