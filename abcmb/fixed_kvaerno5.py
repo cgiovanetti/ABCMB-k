@@ -83,11 +83,49 @@ def structured_inverse(M, structure):
     return jnp.block([[A, -AZ], [-W @ A, D]])[pos[:, None], pos[None, :]]
 
 
+def structured_factors(M, structure):
+    """(R, L, Ti) with M^-1 r = L (R r) + blocks(Ti, r): R = S^-1 [I_H, -U T^-1] (h, n), L = [I_H; -T^-1 V] (n, h), Ti the
+    block inverses (nb, b, b). The same M^-1 as structured_inverse without forming it: an application costs two thin
+    products and the small blocks (about 2 h n + nb b^2 multiplications instead of n^2)."""
+    hub, blk = (np.asarray(s, dtype=int) for s in structure)
+    n = M.shape[0]
+    nb, b = blk.shape
+    h = len(hub)
+    pad = blk == n
+    Mx = jnp.zeros((n + 1, n + 1), M.dtype).at[:n, :n].set(M)
+    T = jnp.where(pad[:, :, None] | pad[:, None, :], jnp.eye(b, dtype=M.dtype), Mx[blk[:, :, None], blk[:, None, :]])
+    Ti = jnp.linalg.inv(T)
+    U = Mx[hub[:, None, None], blk[None]]                             # (h, nb, b)
+    V = Mx[blk[:, :, None], hub[None, None, :]]                       # (nb, b, h)
+    W = jnp.einsum("nij,njg->nig", Ti, V)                             # T^-1 V  (nb, b, h)
+    Z = jnp.einsum("hni,nij->hnj", U, Ti)                             # U T^-1  (h, nb, b)
+    A = jnp.linalg.inv(M[hub[:, None], hub[None, :]] - jnp.einsum("hnj,njg->hg", U, W))
+    R = jnp.zeros((h, n + 1), M.dtype).at[:, hub].set(A).at[:, blk].set(-jnp.einsum("hg,gnj->hnj", A, Z))[:, :n]
+    L = jnp.zeros((n + 1, h), M.dtype).at[hub, np.arange(h)].set(1.0).at[blk].set(-W)[:n]
+    return R, L, Ti
+
+
+def apply_factors(factors, structure, r):
+    """M^-1 r from structured_factors."""
+    R, L, Ti = factors
+    blk = np.asarray(structure[1], dtype=int)
+    n = r.shape[0]
+    nb, b = blk.shape
+    where = np.full(n, nb * b, dtype=int)                             # position of each variable in the blocks
+    flat = blk.reshape(-1)
+    where[flat[flat < n]] = np.nonzero(flat < n)[0]
+    t = jnp.einsum("nij,nj->ni", Ti, jnp.concatenate([r, jnp.zeros(1, r.dtype)])[blk]).reshape(-1)
+    return L @ (R @ r) + jnp.concatenate([t, jnp.zeros(1, r.dtype)])[where]
+
+
 class FixedKvaerno5(diffrax.AbstractSolver):
     """Kvaerno5 with a static number n_iter of chord iterations per implicit stage. y: 1-D array."""
     n_iter: int = eqx.field(static=True, default=6)
     structure: Optional[tuple] = eqx.field(static=True, default=None)
     conv_weight: float = eqx.field(static=True, default=100.0)
+    factored: bool = eqx.field(static=True, default=False)      # apply M^-1 as structured_factors (needs structure)
+    unroll: Optional[int] = eqx.field(static=True, default=None)  # None: iterations unrolled; k: fori_loop(unroll=k)
+    jit_vf: bool = eqx.field(static=True, default=False)        # trace the vector field once (nested jit) per step
 
     term_structure: ClassVar = diffrax.AbstractTerm
     interpolation_cls: ClassVar = ThirdOrderHermitePolynomialInterpolation.from_k
@@ -104,9 +142,10 @@ class FixedKvaerno5(diffrax.AbstractSolver):
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         tab = _kvaerno5_tableau
         dt = t1 - t0
+        vf = eqx.filter_jit(terms.vf) if self.jit_vf else terms.vf
         gdt = tab.a_diagonal[1] * dt
         ts = [t0] + [t0 + c * dt for c in tab.c]
-        f = [terms.vf(t0, y0, args)]
+        f = [vf(t0, y0, args)]
         minv = None
         conv = 0.0
         for i in range(1, len(tab.c) + 1):
@@ -114,12 +153,26 @@ class FixedKvaerno5(diffrax.AbstractSolver):
             fi = sum(p * fj for p, fj in zip(tab.a_predictor[i - 1], f))
             if minv is None:
                 y_jac, a_jac = jax.lax.stop_gradient((ypart + gdt * fi, args))
-                M = jnp.eye(y0.shape[0]) - gdt * jax.jacfwd(lambda y: terms.vf(ts[i], y, a_jac))(y_jac)
-                minv = jax.lax.stop_gradient(jnp.linalg.inv(M) if self.structure is None
-                                             else structured_inverse(M, self.structure))
-            for _ in range(self.n_iter):
-                dfi = minv @ (fi - terms.vf(ts[i], ypart + gdt * fi, args))
-                fi = fi - dfi
+                M = jnp.eye(y0.shape[0]) - gdt * jax.jacfwd(lambda y: vf(ts[i], y, a_jac))(y_jac)
+                if self.factored and self.structure is not None and len(self.structure[1]):
+                    fac = jax.lax.stop_gradient(structured_factors(M, self.structure))
+                    minv = lambda r: apply_factors(fac, self.structure, r)
+                else:
+                    mat = jax.lax.stop_gradient(jnp.linalg.inv(M) if self.structure is None
+                                                else structured_inverse(M, self.structure))
+                    minv = lambda r: mat @ r
+
+            def chord(_, c, ti=ts[i], ypart=ypart):
+                d = minv(c[0] - vf(ti, ypart + gdt * c[0], args))
+                return c[0] - d, d
+
+            c = (fi, jnp.zeros_like(fi))
+            if self.unroll is None or self.unroll >= self.n_iter:
+                for _ in range(self.n_iter):
+                    c = chord(0, c)
+            else:
+                c = jax.lax.fori_loop(0, self.n_iter, chord, c, unroll=self.unroll)
+            fi, dfi = c
             conv = conv + jnp.abs(gdt * dfi)
             f.append(fi)
         y1 = ypart + gdt * fi

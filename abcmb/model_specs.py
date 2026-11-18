@@ -109,6 +109,11 @@ def load_specs(input_specs):
     specs["kvaerno5_n_iter"] = input_specs.get("kvaerno5_n_iter", 6)
     specs["kvaerno5_conv_weight"] = input_specs.get("kvaerno5_conv_weight", 100.0)
     specs["pe_structure"]    = input_specs.get("pe_structure", None)
+    # kvaerno5_factored: apply M^-1 as two thin products + the blocks instead of a dense matrix (needs pe_structure);
+    # kvaerno5_unroll: None = iterations unrolled, k = lax.fori_loop(unroll=k) (shorter compile, slower warm).
+    specs["kvaerno5_factored"] = input_specs.get("kvaerno5_factored", False)
+    specs["kvaerno5_unroll"]   = input_specs.get("kvaerno5_unroll", None)
+    specs["kvaerno5_jit_vf"]   = input_specs.get("kvaerno5_jit_vf", False)   # trace the RHS once per step (nested jit)
     # Step ceiling in ln a for the modes with k < k_max_dtmax_PE (Mpc^-1). Unbounded, the controller
     # takes wide steps where those modes look smooth and the saves are read off Kvaerno5's in-step
     # (third-order Hermite) interpolation: 2.6e-3 in ClTT at ell < 10, 4e-4 at ell 100-500. With the

@@ -28,6 +28,7 @@ ap.add_argument("--solver", default="kvaerno5")
 ap.add_argument("--reps", type=int, default=1)
 ap.add_argument("--what", default="values,grad")
 ap.add_argument("--out", required=True)
+ap.add_argument("--spec", action="append", default=[], help="extra Model spec key=value (repeatable)")
 a = ap.parse_args()
 
 REION = {"Delta_z_reion": 0.5, "z_reion_He": 3.5, "Delta_z_reion_He": 0.5, "exp_reion": 1.5, "TCMB0": 2.34865418e-4}
@@ -70,7 +71,8 @@ elif a.setup == "memory":
     extra = {}
 else:
     raise SystemExit(f"unknown setup {a.setup}")
-kw.update(PE_solver=a.solver)
+import ast
+kw.update(PE_solver=a.solver, **{k: ast.literal_eval(v) for k, v in (s.split("=") for s in a.spec)})
 model = Model(**kw)
 if a.solver == "kvaerno5_fixed":            # structured inverse: the Jacobian's sparsity, found once
     model = model.with_pe_structure(dict(fixed, omega_b=th[0, 0], omega_cdm=th[0, 1], h=th[0, 2],

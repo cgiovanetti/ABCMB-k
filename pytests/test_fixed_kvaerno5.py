@@ -61,3 +61,24 @@ def test_as_accurate_as_kvaerno5(f, y0, a, t1, n_iter):
     ey, et = err(y, y_ref), err(t, t_ref)
     print(f"{f.__name__} N={n_iter}: value err {ey:.2e} (Kvaerno5 {ey_kv:.2e}), tangent err {et:.2e} (Kvaerno5 {et_kv:.2e})")
     assert ey < 5 * ey_kv + 1e-6 and et < 5 * et_kv + 1e-5
+
+
+@pytest.mark.parametrize("block", [3, 8, 16])
+def test_factored_application(block):
+    """structured_factors + apply_factors give M^-1 r without forming M^-1."""
+    from abcmb.fixed_kvaerno5 import apply_factors, structured_factors
+    J = chain_matrix()
+    M = jnp.eye(len(J)) - 0.3 * jnp.asarray(J)
+    s = jacobian_structure(J != 0, block)
+    r = jnp.asarray(np.random.default_rng(1).normal(size=len(J)))
+    x = apply_factors(structured_factors(M, s), s, r)
+    assert jnp.abs(M @ x - r).max() < 1e-10
+
+
+@pytest.mark.parametrize("kw", [dict(unroll=2), dict(unroll=1)])
+def test_rolled_loop_same_solution(kw):
+    """the fori_loop form of the iterations gives the unrolled result."""
+    f, y0, a, t1 = CASES[0]
+    ya = solve(FixedKvaerno5(n_iter=6), f, y0, a, t1, 1e-7)
+    yb = solve(FixedKvaerno5(n_iter=6, **kw), f, y0, a, t1, 1e-7)
+    assert jnp.abs(ya - yb).max() < 1e-12

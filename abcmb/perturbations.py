@@ -662,7 +662,9 @@ class PerturbationEvolver(eqx.Module):
             solver = FixedKenCarp4(n_iter=self.specs["kencarp_n_iter"])
         elif self.specs["PE_solver"] == "kvaerno5_fixed":
             solver = FixedKvaerno5(n_iter=self.specs["kvaerno5_n_iter"], structure=self.specs["pe_structure"],
-                                   conv_weight=self.specs["kvaerno5_conv_weight"])
+                                   conv_weight=self.specs["kvaerno5_conv_weight"],
+                                   factored=self.specs["kvaerno5_factored"], unroll=self.specs["kvaerno5_unroll"],
+                                   jit_vf=self.specs["kvaerno5_jit_vf"])
         elif self.specs["PE_solver"] == "kvaerno5":
             solver = diffrax.Kvaerno5()
         else:
