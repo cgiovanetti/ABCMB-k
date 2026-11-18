@@ -6,7 +6,7 @@ end of an item. Items 1-17 came from `hmc/TODO.md` (merged 2026-11-12). Closed 2
 module: not ours), 10 (config-driven HMC posterior: a collaborator's), 15 (halofit HMC validation: not needed), 18
 (`_v1emwimp` run: folded into 20), 19 (profiles.ipynb: synced), 23 (more 2D profiles: m_chi-Neff was the only
 interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` deleted; `neff_terms.py` kept in
-`scan/diag/`).
+`scan/diag/`). Closed 2026-11-18: 24 (`_v1act` done: `scan/README.md`, CHANGELOG 2026-11-18).
 
 ## High priority (user, 2026-11-16)
 
@@ -41,12 +41,6 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
 
 ## Runs and decisions
 
-24. **`_v1act`** (ACT DR6 lite LCDM profile) [ACT session]. Five of six POIs done (61111914 on 11-13, resume 61404156
-    on 11-16): see CHANGELOG 2026-11-17. ln10As: LM done (table at stage lm), then a branch seeded by one stalled spread
-    start at 3.07 (chi2 543.878, the point's known minimum) timed out. Resume 61472393 (1 node, 12 h, PA_POIS=ln10As,
-    TABLE_v1act_r2 copied to r0) redoes only flags / branches, under 8968fb1's logic (branch only from a lower or
-    barrier-separated start). When done: README results table, delete TABLE_v1act_r0/r2 (backup in logs/act/).
-
 ## Profile driver (scan/)
 
 20. **Gauss-Newton crawl along decoupling nuisances** [fixed on main 2026-11-16 (8968fb1); open: a production
@@ -70,6 +64,9 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     GN for that iteration. LINX's CPU programs do hit the persistent compile cache when the code and the calling
     thread match (the race job loaded both). Generic limit: a decoupling inside ABCMB (EDE z_c / theta_i as
     f_EDE -> 0) needs ABCMB's own second derivatives (item 21).
+    Gap seen in `_v1act` (2026-11-18): a STALLED start still seeds a branch whatever its chi2. ln10As@3.07's stalled
+    spread start sat at the point's known minimum (543.878) and its 21-row branch (~6 node-h at the ACT range) found
+    nothing below the envelope. Candidate: a stalled start seeds a branch only when it is lower by > MS_DCHI2.
 22. **LINX gradient speedup** [done 2026-11-16, with item 20]. LINX runs push the engine's 9 inputs (h, omega_b,
     omega_cdm, n_s, ln10As, tau_reion, YHe, Neff, T_nu) and chain LINX's Jacobian (`_gn_block_linx`) instead of ~20
     parameter directions; equal to the per-parameter path to 1e-12 (gradient) / 2e-15 (GN). Warm cost per block:

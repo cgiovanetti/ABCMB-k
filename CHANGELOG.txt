@@ -6,6 +6,15 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-18 — _v1act done (ACT DR6 lite + SRoll2, LCDM)
+------------------------------------------------------
+ln10As (61472393, 1 node, 7h20m, from the LM table): 3.05133 [3.03909, 3.06413] [3.02757, 3.07715], 21/21 converged.
+Its branch (seeded by one stalled spread start at 3.07 whose chi2, 543.878, is that point's known minimum) converged
+21/21 and is below the envelope at 0 grid points: unimodal, the flag was spurious (TODO 20). All six POIs, min chi2
+541.81: h 0.66076 [0.65298, 0.66869]; omega_b 0.02257 [0.02241, 0.02274]; omega_cdm 0.12383 [0.12169, 0.12597];
+n_s 0.96595 [0.95847, 0.97348]; ln10As 3.05133 [3.03909, 3.06413]; tau_reion 0.05517 [0.04979, 0.06122] (68%; 95% in
+the 11-17 entry and the npz). Total ~83 node-h over three jobs.
+
 2026-11-17 — kvaerno5_fixed: fixed-iteration Kvaerno5 with a structured inverse (TODO 31)
 ----------------------------------------------------------------------------------------
 Why kencarp_fixed loses at ACT settings (scan/diag/pe_probe.py): 4th order takes ~1.85x Kvaerno5's steps at high k

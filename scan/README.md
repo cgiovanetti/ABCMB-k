@@ -11,7 +11,7 @@ Deliverables (LCDM + Neff, Planck 2018 full plik TTTEEE + low-ell Commander TT a
 | `_v5bbn` (biased) | `_v4linx` + Y_p (LBT, Aver 2026) + D/H (Cooke 2018); nuisance priors at the config cen | 2.966 [2.886, 3.047] [2.809, 3.126] | 2761.09 | job 60388582, 6h46m on 4 nodes |
 | `_v6bbn` | `_v5bbn` with the nuisance priors at 1 / 0, recomb lna grid | 2.982 [2.902, 3.064] [2.825, 3.143] | 2763.15 | job 60988361, 4h56m on 4 nodes |
 | `_v7simall` | `_v4linx` with SimAll lowE (the Planck 2018 base_nnu likelihood), recomb lna grid, MLE prepass | 2.846 [2.654, 3.046] [2.478, 3.246] | 2765.59 | job 61091033, 5h02m on 4 nodes |
-| `_v1act` | LCDM (Neff 3.044), ACT DR6 lite + SRoll2 lowE, YHe from the sBBN table, l_max 6325 + 5000 | queued | | job 61111914, 6 nodes |
+| `_v1act` | LCDM (Neff 3.044, no Neff POI), ACT DR6 lite + SRoll2 lowE, YHe from the sBBN table, l_max 6325 + 5000 | (LCDM) h 0.6608 [0.6530, 0.6687] [0.6456, 0.6764] | 541.81 | jobs 61111914 / 61404156 / 61472393: 10 h on 6 nodes + 4 h on 4 + 7h20m on 1 (resumes), ~83 node-h |
 
 All seven POIs per run, numbers and convergence counts: `CHANGELOG.txt`. `_v5bbn` is biased: its BBN
 nuisance priors sat at the config cen (the prepass fit) instead of 1 and 0. `_v6bbn` (same config, priors at
