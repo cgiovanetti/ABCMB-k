@@ -40,6 +40,10 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     unroll; (c) apply the structured inverse as hub + block solves instead of a dense M^-1 (the dense M^-1 v now
     dominates the step); (d) upstream form (the diffrax-minimal patch is still the KenCarp one); (e) PA knob for
     kvaerno5_n_iter (config engine block works today).
+    Branch `fixed-solver` (worktree ../ABCMB-k-solver; main carries the solver as of b920b05 and is not touched by
+    this work): (b) done there, kvaerno5_jit_vf (RHS traced once under a nested jit) cuts compile ~2x for values and
+    ~2.4x for gradients at no warm cost (ACT gradients ~985 -> ~410 s); (c) tried, kvaerno5_factored is +7% for values
+    and -36% for gradients, left off. To merge when the solver is folded in.
 22 (see below). **LINX gradient speedup**: done 2026-11-16 with item 20.
 
 ## Runs and decisions
