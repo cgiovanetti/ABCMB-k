@@ -72,7 +72,7 @@ Run via srun, PYTHONPATH=$(pwd), JAX_COMPILATION_CACHE_DIR set. Env knobs (defau
   PA_CONFIG(required) PA_TAG('') PA_POIS(csv; the config order without the BBN nuisances)
   PA_POI_SLICE(0) PA_LMAX(2508) PA_NPTS(config npts, else 25) PA_NSIG(config nsig, else 3.0)
   PA_XBOX(5) PA_MAXIT(40) PA_GTOL(3e-2) PA_DTOL(1e-3; 0 = off) PA_SIGTOL(0 = off)
-  PA_SIGTOL_PATIENCE(3) PA_RTOL(1e-5) PA_RESUME(1) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64)
+  PA_SIGTOL_PATIENCE(3) PA_RTOL(1e-5) PA_RESUME(1) PA_VAL_CHUNK(256) PA_AD_BCHUNK(64) PA_PE_SOLVER(kvaerno5)
   PA_GRAD_SPECB(4) PA_LM_K(4) PA_STEP_MAX(1.0) PA_STALL_MAX(3) PA_WARM_LR(0) PA_TRACE_EVALS(0)
   PA_MS_K(3) PA_MS_NPTS(6) PA_MS_SPREAD(2.0) PA_MS_DX(0.5) PA_MS_DCHI2(0.1) PA_MS_WAIT(1)
   PA_MS_BRANCH_MAX(4) PA_MS_START_DCHI2(4 PA_MS_SPREAD^2) PA_BR_MAXIT(10) PA_FIT_DEG(4) PA_FIT_DCHI2(9)
@@ -321,6 +321,9 @@ RTOL = float(os.environ.get("PA_RTOL", 1e-5))
 # "fixed" (the visibility grid frozen at the config centre: the setup of every result before 2026-11-07).
 LNA_GRID = os.environ.get("PA_LNA_GRID", "recomb")
 assert LNA_GRID in ("recomb", "fixed"), LNA_GRID
+# Perturbation solver: "kvaerno5" (diffrax), "kvaerno5_fixed" (fixed chord iterations + structured inverse, abcmb/
+# fixed_kvaerno5.py: same steps, ~3x faster warm, longer compile) or "kencarp_fixed". Config key pe_solver.
+PE_SOLVER = os.environ.get("PA_PE_SOLVER", CFG.get("pe_solver", "kvaerno5"))
 TAG =os.environ.get("PA_TAG", "")
 RESUME = os.environ.get("PA_RESUME", "1") != "0"
 VAL_CHUNK = int(os.environ.get("PA_VAL_CHUNK", "256"))      # max cosmologies per call_batched value call
@@ -431,6 +434,7 @@ if TOY is None:
         ENGINE = dict(l_max_g=40, l_max_pol_g=60, delta_l_max=5000, nonlinear="halofit",
                       use_bessel_tables=False, lensing_streamed=True)
     ENGINE.update(CFG.get("engine", {}) or {})          # config overrides
+    ENGINE.setdefault("PE_solver", PE_SOLVER)
 
     def _lowl_chi2(nu, Dtt, Dee):
         """the low-ell likelihoods at the high-ell likelihood's calibration nu[I_CAL] (plik: A_planck, which Planck
@@ -591,6 +595,10 @@ def _bbn_chi2(thetas, ys):
 
 # PA_LNA_GRID=fixed: the visibility grid built once at the config centre and used for every row
 # (Model.freeze_lna_grid); rebuilt per cosmology, its nodes would move jaggedly with theta.
+if TOY is None and model.specs["PE_solver"] == "kvaerno5_fixed":      # the Jacobian's sparsity, found once
+    model = model.with_pe_structure(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
+    print(f"[engine] kvaerno5_fixed: structured inverse, {len(model.specs['pe_structure'][0])} hubs, "
+          f"{len(model.specs['pe_structure'][1])} blocks", flush=True)
 if TOY is None and LNA_GRID == "fixed":
     model = model.freeze_lna_grid(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
     print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "
@@ -1171,6 +1179,8 @@ def _run_signature():
                  MS_NPTS=MS_NPTS, MS_SPREAD=MS_SPREAD, PLF_MAXIT=os.environ.get("PLF_MAXIT", "3000"))
     if LNA_GRID != "fixed":                 # results made before PA_LNA_GRID keep their signature
         knobs["LNA_GRID"] = LNA_GRID
+    if PE_SOLVER != "kvaerno5":             # results made before PA_PE_SOLVER keep their signature
+        knobs["PE_SOLVER"] = PE_SOLVER
     if POI2D:
         knobs["NPTS2D"] = NPTS2D
         if GRID2D_ENV:

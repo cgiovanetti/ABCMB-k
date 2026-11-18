@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
@@ -99,12 +100,12 @@ def load_specs(input_specs):
     specs["max_steps_PE"]    = input_specs.get("max_steps_PE", 2048)
     # Perturbation solver: "kvaerno5" (diffrax.Kvaerno5, Newton in a while loop) or "kencarp_fixed" (KenCarp4 with
     # kencarp_n_iter chord iterations per implicit stage, no inner loop; abcmb/fixed_kencarp4.py). Same step control.
-    specs["PE_solver"]       = input_specs.get("PE_solver", "kvaerno5")
+    specs["PE_solver"]       = input_specs.get("PE_solver", os.environ.get("ABCMB_PE_SOLVER", "kvaerno5"))
     specs["kencarp_n_iter"]  = input_specs.get("kencarp_n_iter", 10)
     # "kvaerno5_fixed" (abcmb/fixed_kvaerno5.py): Kvaerno5's tableau and steps with kvaerno5_n_iter chord iterations per
     # stage; the last update enters the error estimate with kvaerno5_conv_weight (100 = diffrax's Newton tolerance,
     # 1e-2 of the step tolerance). pe_structure (Model.with_pe_structure): the Jacobian's sparsity for a structured
-    # inverse; None = dense inverse.
+    # inverse; None = dense inverse. The PE_solver default can be set with the env var ABCMB_PE_SOLVER (tests).
     specs["kvaerno5_n_iter"] = input_specs.get("kvaerno5_n_iter", 6)
     specs["kvaerno5_conv_weight"] = input_specs.get("kvaerno5_conv_weight", 100.0)
     specs["pe_structure"]    = input_specs.get("pe_structure", None)
