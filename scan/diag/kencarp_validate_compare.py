@@ -10,7 +10,7 @@ import numpy as np
 
 D = sys.argv[1]
 NEW = sys.argv[2] if len(sys.argv) > 2 else "kencarp_fixed"
-for setup in ("massless", "edges", "mnu", "act", "memory"):
+for setup in ("massless", "edges", "mnu", "act", "actg", "memory"):
     fk, fc = (os.path.join(D, f"{setup}_{s}.npz") for s in ("kvaerno5", NEW))
     if not (os.path.exists(fk) and os.path.exists(fc)):
         continue

@@ -33,10 +33,13 @@ interesting pair), 28 (Delta_Neff_init dilution note), 30 (`ABCMB-k_emwimp/` del
     (`abcmb/fixed_kvaerno5.py`, CHANGELOG 2026-11-17) fixes both: Kvaerno5's tableau, 6 chord iterations, a structured
     inverse from the Jacobian's sparsity (`Model.with_pe_structure`), convergence term in the error estimate. Warm:
     plik engine values 47.8 s / gradients 218 s (Kvaerno5 162 / 553), ACT values 182 s (610), gradients 757 s;
-    accuracy as Kvaerno5's. Open: (a) edge / m_nu gradient checks, snapshot + CLASS accuracy tests; (b) switch in the
-    profile driver (PA_PE_SOLVER, run signature) and the default decision; (c) compile time (gradients ~1150 s per
-    shape vs 403): fori_loop with unroll, or fewer iterations; (d) Kvaerno5 warm ACT gradient time not measured;
-    (e) upstream form (the diffrax-minimal patch is still the KenCarp one).
+    accuracy as Kvaerno5's. 2026-11-18 (CHANGELOG): checks done (ACT warm gradients 1849 -> 814 s; edge / m_nu gradients; snapshot Pk
+    difference is Kvaerno5's own error; CLASS test unchanged); driver switch PA_PE_SOLVER in (default kvaerno5);
+    IMEX KenCarp4 tested and not pursued; upstream main serial 1.9x / 2.8x. Open: (a) the default decision (user)
+    + regenerate snapshots with it; (b) compile time (gradients ~1000-1150 s per shape vs 180-400): fori_loop with
+    unroll; (c) apply the structured inverse as hub + block solves instead of a dense M^-1 (the dense M^-1 v now
+    dominates the step); (d) upstream form (the diffrax-minimal patch is still the KenCarp one); (e) PA knob for
+    kvaerno5_n_iter (config engine block works today).
 22 (see below). **LINX gradient speedup**: done 2026-11-16 with item 20.
 
 ## Runs and decisions

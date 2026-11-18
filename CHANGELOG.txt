@@ -15,6 +15,23 @@ Its branch (seeded by one stalled spread start at 3.07 whose chi2, 543.878, is t
 n_s 0.96595 [0.95847, 0.97348]; ln10As 3.05133 [3.03909, 3.06413]; tau_reion 0.05517 [0.04979, 0.06122] (68%; 95% in
 the 11-17 entry and the npz). Total ~83 node-h over three jobs.
 
+2026-11-18 — kvaerno5_fixed: remaining checks, IMEX test, upstream-main test (TODO 31)
+-------------------------------------------------------------------------------------
+ACT engine gradients, warm, side by side (B=8, 2 GPU each, 6 directions): Kvaerno5 1849 s, kvaerno5_fixed 814 s
+(2.3x; values 610 -> 182 s); gradient compile ~180 s vs ~985 s; tangents within 1.1e-6 of peak. Edge-of-grid and
+m_nu 0.02 / 0.3 eV (plik engine): Cl <= 1.7e-5, Clpp 1.2e-4, tangents <= 8e-7 against Kvaerno5, no non-finite rows.
+pytests with ABCMB_PE_SOLVER=kvaerno5_fixed (single-call path, dense inverse): accuracy_test fails as with Kvaerno5
+(TT 1.19% vs 1.17%, the classy delta_l_max mismatch); test_snapshots fails on Pk only (1.2e-4 vs rtol 5e-5): against
+100x tighter tolerances Kvaerno5's Pk is off by 1.0e-4 at k ~ 0.23 and kvaerno5_fixed's by 3.2e-5 (without the
+convergence term 4.6e-4), so the snapshots carry Kvaerno5's own error; they need regenerating if the default changes.
+Profile driver: PA_PE_SOLVER / config pe_solver (default kvaerno5), in the run signature (6cea962).
+IMEX KenCarp4 (logs/kencarp_bench/imex.py: scattering implicit = everything proportional to 1/tau_c, diagonal + 5x5
+solve; streaming and gravity explicit): stable, step ~3x cheaper, but 13.4k steps on the top CMB chunk (Kvaerno5 5.1k)
+and ~10x larger error at recombination at equal tolerance; at matched accuracy (10x tighter, 28k steps) 24.7 s vs
+kvaerno5_fixed 9.3 s (diffrax Kvaerno5 43.8 s). Not pursued; lensing-only modes (k to 100) not run.
+Upstream main 8b88678, single serial calls (ABCMB/.pr_review/kvaerno5_fixed/README.md): massless 8.06 -> 4.22 s,
+one massive nu 20.23 -> 7.18 s, same accuracy against a 1000x tighter reference.
+
 2026-11-17 — kvaerno5_fixed: fixed-iteration Kvaerno5 with a structured inverse (TODO 31)
 ----------------------------------------------------------------------------------------
 Why kencarp_fixed loses at ACT settings (scan/diag/pe_probe.py): 4th order takes ~1.85x Kvaerno5's steps at high k
