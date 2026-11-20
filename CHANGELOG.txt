@@ -6,6 +6,21 @@ frequentist profile-likelihood analysis in scan/ (how to run it: scan/README.md)
 This file is a condensed record of the current state. The full session log (3173 lines, 2026-05-28 to
 2026-10-29) is in the tag pre-trim-2026-11-06 (= e2609d2): git show pre-trim-2026-11-06:CHANGELOG.txt.
 
+2026-11-20 — kvaerno5_fixed: structure found per call, guard, no dense inverse (branch fixed-solver)
+-------------------------------------------------------------------------------------------------
+The structure came from Model.with_pe_structure at one cosmology (10 fixed ln a x 8 k), assuming the Jacobian's
+pattern does not depend on the cosmology; a new Fluid coupling that is zero there, or gated between probe times, was
+dropped silently. Now PerturbationEvolver.with_structure_for builds it from the cosmologies being solved (union over
+them, 12 k x 64 ln a spanning each mode's [lna_start, 0] x 2 states; NaN counts as nonzero), in full_evolution_batched
+(call_batched, staged AD) and run_cosmology_abbr (primal values: works under jacfwd; under an outer jax.jit an error
+says to use kvaerno5). Each distinct structure compiles once. The solver state carries the largest dropped entry of M
+(gamma dt |J_ij|, gathered); evolution_one_k raises above 1e-10 ("use PE_solver='kvaerno5'"). with_pe_structure, the
+dense inverse and the pe_structure input removed. Checks (logs/kv5struct; plik engine, B=32 / 4 GPU vs branch head):
+pattern = old probe's (n_y 100: 26 hubs, 12 blocks), no NaN; probe 5 s compile, 0.008 s warm; Cls 4e-15, tangents
+2e-13; warm values 48.9 s (48.0), gradients 243 s (246), compile unchanged (a masked max over M per step cost +4.8%,
+the gathered one +1.8%); guard fires on a real-model structure with one hub demoted; single path vs kvaerno5 TT 3e-9,
+EE 8e-8 (16.8 vs 48.7 s warm), jacfwd dClTT/domega_b 4.7e-7. pytests/test_fixed_kvaerno5.py: + guard tests (17 pass).
+
 2026-11-18 — _v1act done (ACT DR6 lite + SRoll2, LCDM)
 ------------------------------------------------------
 ln10As (61472393, 1 node, 7h20m, from the LM table): 3.05133 [3.03909, 3.06413] [3.02757, 3.07715], 21/21 converged.

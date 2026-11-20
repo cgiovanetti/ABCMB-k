@@ -104,12 +104,13 @@ def load_specs(input_specs):
     specs["kencarp_n_iter"]  = input_specs.get("kencarp_n_iter", 10)
     # "kvaerno5_fixed" (abcmb/fixed_kvaerno5.py): Kvaerno5's tableau and steps with kvaerno5_n_iter chord iterations per
     # stage; the last update enters the error estimate with kvaerno5_conv_weight (100 = diffrax's Newton tolerance,
-    # 1e-2 of the step tolerance). pe_structure (Model.with_pe_structure): the Jacobian's sparsity for a structured
-    # inverse; None = dense inverse. The PE_solver default can be set with the env var ABCMB_PE_SOLVER (tests).
+    # 1e-2 of the step tolerance), and M^-1 is a structured inverse for the Jacobian's sparsity, found from the
+    # cosmologies being solved (pe_structure, set internally per call; not an input). The PE_solver default can be set
+    # with the env var ABCMB_PE_SOLVER (tests).
     specs["kvaerno5_n_iter"] = input_specs.get("kvaerno5_n_iter", 6)
     specs["kvaerno5_conv_weight"] = input_specs.get("kvaerno5_conv_weight", 100.0)
-    specs["pe_structure"]    = input_specs.get("pe_structure", None)
-    # kvaerno5_factored: apply M^-1 as two thin products + the blocks instead of a dense matrix (needs pe_structure);
+    specs["pe_structure"]    = None
+    # kvaerno5_factored: apply M^-1 as two thin products + the blocks instead of a dense matrix;
     # kvaerno5_unroll: None = iterations unrolled, k = lax.fori_loop(unroll=k) (shorter compile, slower warm).
     specs["kvaerno5_factored"] = input_specs.get("kvaerno5_factored", False)
     specs["kvaerno5_unroll"]   = input_specs.get("kvaerno5_unroll", None)

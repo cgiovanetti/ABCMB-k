@@ -399,14 +399,10 @@ class Model(eqx.Module):
                      lna_grid_nodes=jnp.asarray(self.lna_grid(params)))
         return eqx.tree_at(lambda m: (m.specs, m.PE.specs), self, (specs, specs))
 
-    def with_pe_structure(self, params, block=8):
-        """Copy of this model whose perturbation solver uses a structured inverse (PE_solver="kvaerno5_fixed"): the
-        sparsity of the Einstein-Boltzmann Jacobian, found once at the cosmology ``params`` (user-input dict; the
-        pattern is set by the species, not the cosmology), stored in ``specs["pe_structure"]``."""
-        from .fixed_kvaerno5 import jacobian_structure
-        full_params, bg = self._build_one_bg(self.add_derived_parameters(params))
-        specs = dict(self.specs, pe_structure=jacobian_structure(self.PE.jacobian_pattern((bg, full_params)), block))
-        return eqx.tree_at(lambda m: (m.specs, m.PE.specs), self, (specs, specs))
+    @eqx.filter_jit
+    def _get_BG_jit(self, params, pre_BG, recomb_output):
+        """[-k] get_BG under jit, for kvaerno5_fixed's structure probe on the single-cosmology path."""
+        return self.get_BG(params, pre_BG, recomb_output)
 
     def _build_one_bg(self, full_params):
         """Sequential helper: run the full single-cosmology path through to
@@ -555,7 +551,12 @@ class Model(eqx.Module):
         # AD; convert to float to avoid.
         recomb_output = jax.tree_util.tree_map(_to_float, recomb_output)
 
-        return self._run_post_recomb(params, pre_BG, recomb_output)
+        model = self
+        if self.specs["PE_solver"] == "kvaerno5_fixed":     # [-k] structure from this cosmology's Jacobian
+            sg = lambda t: jax.tree_util.tree_map(lambda x: lax.stop_gradient(x) if eqx.is_array(x) else x, t)
+            bg = self._get_BG_jit(*sg((params, pre_BG, recomb_output)))
+            model = eqx.tree_at(lambda m: m.PE, self, self.PE.with_structure_for((bg, sg(params)), batched=False))
+        return model._run_post_recomb(params, pre_BG, recomb_output)
 
     @eqx.filter_jit
     def get_BG_pre_recomb(self, params : dict):

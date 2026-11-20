@@ -8,7 +8,7 @@ import equinox as eqx
 from . import constants as cnst
 from . import ABCMBTools as tools
 from .fixed_kencarp4 import FixedKenCarp4
-from .fixed_kvaerno5 import FixedKvaerno5
+from .fixed_kvaerno5 import FixedKvaerno5, check_structure, jacobian_structure
 
 import os
 file_dir = os.path.dirname(__file__)
@@ -365,6 +365,8 @@ class PerturbationEvolver(eqx.Module):
         modes : jnp.array, shape (B, Ny, Nlna, N_k)
         lna_batch : jnp.array, shape (B, Nlna)
         """
+        if self.specs["PE_solver"] == "kvaerno5_fixed":          # [-k] structure from these cosmologies
+            self = self.with_structure_for(args, batched=True)
         BG_batch, params_batch = args
         lna_batch = vmap(
             lambda bg, p: make_lna_grid(bg, p, self.specs["n_lna_PE"], self.specs)
@@ -421,6 +423,8 @@ class PerturbationEvolver(eqx.Module):
             Each field carries a leading B axis (``k`` is ``(B, N_k)``, as
             before: the vmap broadcasts the shared k axis).
         """
+        if self.specs["PE_solver"] == "kvaerno5_fixed":          # [-k] structure from these cosmologies
+            self = self.with_structure_for(args, batched=True)
         BG_batch, params_batch = args
         lna_batch = vmap(
             lambda bg, p: make_lna_grid(bg, p, self.specs["n_lna_PE"], self.specs)
@@ -611,16 +615,36 @@ class PerturbationEvolver(eqx.Module):
 
         return y_prime
 
-    def jacobian_pattern(self, args, n_probe=4):
-        """Boolean (n_y, n_y) sparsity pattern of d get_derivatives / dy for the cosmology args = (BG, params): the
-        union of the nonzeros at random states over a grid of k and ln a (numpy; for fixed_kvaerno5's structure)."""
+    @eqx.filter_jit
+    def jacobian_pattern(self, args, batched, n_k=12, n_lna=64, n_probe=2):
+        """[-k] Boolean (n_y, n_y) sparsity pattern of d get_derivatives / dy for args = (BG, params), with a leading
+        cosmology axis if batched: the union over the cosmologies, n_k wavenumbers spanning the k axis, n_lna times
+        spanning each mode's solve range [lna_start, 0] (as evolution_one_k) and n_probe random states. NaN entries
+        count as nonzero."""
         n = 1 + sum(int(s.num_equations) for s in self.species_list)
-        ks = jnp.asarray(np.geomspace(float(self.k_axis_perturbations[0]), float(self.k_axis_perturbations[-1]), 8))
-        lnas = jnp.asarray([-15.0, -11.0, -8.5, -7.2, -6.5, -4.0, -2.2, -1.5, -0.5, 0.0])
+        ks = jnp.geomspace(self.k_axis_perturbations[0], self.k_axis_perturbations[-1], n_k)
         ys = jax.random.normal(jax.random.PRNGKey(0), (n_probe, n))
-        jac = lambda k, lna, y: jnp.abs(jax.jacfwd(lambda z: self.get_derivatives(lna, z, (k, *args)))(y))
-        f = jax.jit(lambda: vmap(lambda k: vmap(lambda t: vmap(lambda y: jac(k, t, y))(ys))(lnas))(ks).max((0, 1, 2)))
-        return np.asarray(f()) > 0
+
+        def one(args):
+            def at_k(k):
+                lna_start = jnp.minimum(self.get_starting_time(k, args), -10.)
+                def probe(acc, s):
+                    jac = lambda y: jax.jacfwd(lambda z: self.get_derivatives(lna_start * (1. - s), z, (k, *args)))(y)
+                    return acc | (vmap(jac)(ys) != 0).any(0), None
+                return lax.scan(probe, jnp.zeros((n, n), bool), jnp.linspace(0., 1., n_lna))[0]
+            return vmap(at_k)(ks).any(0)
+
+        return vmap(one)(args).any(0) if batched else one(args)
+
+    def with_structure_for(self, args, batched):
+        """[-k] PE_solver="kvaerno5_fixed": this evolver with the structured inverse for the Jacobian of the
+        cosmologies args = (BG, params) (leading cosmology axis if batched), found from their primal values."""
+        primal = jax.tree_util.tree_map(lambda x: lax.stop_gradient(x) if eqx.is_array(x) else x, args)
+        pattern = jax.core.concrete_or_error(
+            np.asarray, self.jacobian_pattern(primal, batched),
+            "kvaerno5_fixed finds its Jacobian structure from concrete cosmologies, so it does not run under an outer "
+            "jax.jit; use PE_solver='kvaerno5' there.")
+        return eqx.tree_at(lambda pe: pe.specs, self, dict(self.specs, pe_structure=jacobian_structure(pattern)))
 
     def evolution_one_k(self, k, lna, args):
         """
@@ -661,6 +685,9 @@ class PerturbationEvolver(eqx.Module):
         if self.specs["PE_solver"] == "kencarp_fixed":
             solver = FixedKenCarp4(n_iter=self.specs["kencarp_n_iter"])
         elif self.specs["PE_solver"] == "kvaerno5_fixed":
+            if self.specs["pe_structure"] is None:
+                raise ValueError("kvaerno5_fixed: no Jacobian structure. Model.__call__ and call_batched (or "
+                                 "PerturbationEvolver.with_structure_for) set it from the cosmologies they solve.")
             solver = FixedKvaerno5(n_iter=self.specs["kvaerno5_n_iter"], structure=self.specs["pe_structure"],
                                    conv_weight=self.specs["kvaerno5_conv_weight"],
                                    factored=self.specs["kvaerno5_factored"], unroll=self.specs["kvaerno5_unroll"],
@@ -698,7 +725,8 @@ class PerturbationEvolver(eqx.Module):
             pcoeff=self.specs["pcoeff_PE"], icoeff=self.specs["icoeff_PE"], dcoeff=self.specs["dcoeff_PE"],
             rtol=rtol, atol=atol,
             dtmax=jnp.where(k < self.specs["k_max_dtmax_PE"], self.specs["dtmax_PE"], jnp.inf))
-        saveat = diffrax.SaveAt(ts=lna)
+        fixed = self.specs["PE_solver"] == "kvaerno5_fixed"
+        saveat = diffrax.SaveAt(ts=lna, solver_state=fixed)
         adjoint=self.adjoint()
 
         sol = diffrax.diffeqsolve(
@@ -713,7 +741,7 @@ class PerturbationEvolver(eqx.Module):
 
         ### END OF DIFFRAX INTEGRATION ###
 
-        return sol.ys
+        return check_structure(sol.ys, sol.solver_state) if fixed else sol.ys
 
     def make_output_table(self, lna, modes, args, k=None):
         """

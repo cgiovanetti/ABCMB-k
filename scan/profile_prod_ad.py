@@ -595,10 +595,6 @@ def _bbn_chi2(thetas, ys):
 
 # PA_LNA_GRID=fixed: the visibility grid built once at the config centre and used for every row
 # (Model.freeze_lna_grid); rebuilt per cosmology, its nodes would move jaggedly with theta.
-if TOY is None and model.specs["PE_solver"] == "kvaerno5_fixed":      # the Jacobian's sparsity, found once
-    model = model.with_pe_structure(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
-    print(f"[engine] kvaerno5_fixed: structured inverse, {len(model.specs['pe_structure'][0])} hubs, "
-          f"{len(model.specs['pe_structure'][1])} blocks", flush=True)
 if TOY is None and LNA_GRID == "fixed":
     model = model.freeze_lna_grid(build_dict(CENTER, None if BBN is None else _bbn_values([CENTER])[0]))
     print(f"[grid] lna grid frozen at the config centre: {model.specs['n_lna_PE']} nodes from "

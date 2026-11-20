@@ -74,12 +74,6 @@ else:
 import ast
 kw.update(PE_solver=a.solver, **{k: ast.literal_eval(v) for k, v in (s.split("=") for s in a.spec)})
 model = Model(**kw)
-if a.solver == "kvaerno5_fixed":            # structured inverse: the Jacobian's sparsity, found once
-    model = model.with_pe_structure(dict(fixed, omega_b=th[0, 0], omega_cdm=th[0, 1], h=th[0, 2],
-                                         A_s=np.exp(th[0, 3]) / 1e10, n_s=th[0, 4], tau_reion=th[0, 5],
-                                         **{k: float(v[0]) for k, v in extra.items()}))
-    print(f"[validate] pe_structure: {len(model.specs['pe_structure'][0])} hubs, "
-          f"{len(model.specs['pe_structure'][1])} blocks", flush=True)
 ndev = len(jax.devices())
 DIRS = np.diag(SIG) if ndir == 6 else (rng.normal(size=(ndir, 6)) * SIG)    # tangent directions in theta space
 xkeys = sorted(extra)

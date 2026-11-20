@@ -1,5 +1,5 @@
-"""FixedKvaerno5: diffrax's Kvaerno5 with a fixed number of chord iterations per implicit stage and, optionally, a
-structured inverse of the iteration matrix.
+"""FixedKvaerno5: diffrax's Kvaerno5 with a fixed number of chord iterations per implicit stage and a structured
+inverse of the iteration matrix.
 
 Same tableau, stage predictor, Jacobian timing (once per step, at the second stage), error estimate and dense output
 as diffrax.Kvaerno5 (diffrax/_solver/kvaerno5.py, imported from there), so it takes the same steps. As in
@@ -13,9 +13,11 @@ Structured inverse (structure=jacobian_structure(pattern)): the Einstein-Boltzma
 chains (tridiagonal) tied together by a few "hub" variables (metric, the lowest moments). With the hubs and a
 separator every `block` variables along the chains ordered first, M = [[H, U], [V, T]] with T block diagonal, and
     M^-1 = [[S^-1, -S^-1 U T^-1], [-T^-1 V S^-1, T^-1 + T^-1 V S^-1 U T^-1]],   S = H - U T^-1 V,
-which needs one inverse of the hub block and one of each small block in place of an n x n inverse. The pattern only
-has to contain the true one: a structure that misses a coupling gives an approximate M^-1, slower iterations and
-(through conv_weight) rejected steps, not a wrong solution.
+which needs one inverse of the hub block and one of each small block in place of an n x n inverse. It is exact when
+the pattern contains every nonzero of J. The solver state carries the largest entry of M that the structure drops
+(couples two different blocks); check_structure turns one above GUARD_TOL into an error, so a
+pattern that misses a coupling stops the solve instead of slowing or biasing it. PerturbationEvolver finds the pattern
+from the cosmologies it solves (perturbations.py, with_structure_for).
 """
 from typing import ClassVar, Optional
 
@@ -28,6 +30,12 @@ from diffrax._local_interpolation import ThirdOrderHermitePolynomialInterpolatio
 from diffrax._solver.kvaerno5 import _kvaerno5_tableau
 
 jax.config.update("jax_enable_x64", True)
+
+# A dropped entry of M (gamma dt J_ij, against M's identity diagonal) below GUARD_TOL changes M^-1 by about as little,
+# far below the chord iterations' own convergence test; above it the solve stops (check_structure).
+GUARD_TOL = 1e-10
+GUARD_MSG = ("kvaerno5_fixed: the Jacobian couples variables that the structured inverse treats as independent (its "
+             "sparsity probes missed a coupling). Use PE_solver='kvaerno5'.")
 
 
 def jacobian_structure(pattern, block=8):
@@ -56,6 +64,20 @@ def jacobian_structure(pattern, block=8):
     i, j = np.nonzero(off)
     assert not ((which[i] >= 0) & (which[j] >= 0) & (which[i] != which[j])).any(), "blocks couple to each other"
     return tuple(sorted(hub)), tuple(tuple(v) + (n,) * (block - len(v)) for v in blocks)
+
+
+def dropped_mask(structure, n):
+    """Boolean (n, n): the entries of M that structured_inverse never reads (row and column in different blocks)."""
+    which = np.full(n + 1, -1)
+    for b, v in enumerate(structure[1]):
+        which[list(v)] = b                                            # the padding index n is sliced off below
+    w = which[:n]
+    return (w[:, None] >= 0) & (w[None, :] >= 0) & (w[:, None] != w[None, :])
+
+
+def check_structure(x, violation):
+    """x, or an error if the solve met a coupling its structure drops (violation: the FixedKvaerno5 solver state)."""
+    return eqx.error_if(x, violation > GUARD_TOL, GUARD_MSG)
 
 
 def structured_inverse(M, structure):
@@ -119,11 +141,12 @@ def apply_factors(factors, structure, r):
 
 
 class FixedKvaerno5(diffrax.AbstractSolver):
-    """Kvaerno5 with a static number n_iter of chord iterations per implicit stage. y: 1-D array."""
+    """Kvaerno5 with a static number n_iter of chord iterations per implicit stage. y: 1-D array. The solver state is
+    the largest dropped entry of M so far, for check_structure."""
+    structure: tuple = eqx.field(static=True)                   # jacobian_structure(pattern)
     n_iter: int = eqx.field(static=True, default=6)
-    structure: Optional[tuple] = eqx.field(static=True, default=None)
     conv_weight: float = eqx.field(static=True, default=100.0)
-    factored: bool = eqx.field(static=True, default=False)      # apply M^-1 as structured_factors (needs structure)
+    factored: bool = eqx.field(static=True, default=False)      # apply M^-1 as structured_factors
     unroll: Optional[int] = eqx.field(static=True, default=None)  # None: iterations unrolled; k: fori_loop(unroll=k)
     jit_vf: bool = eqx.field(static=True, default=True)         # trace the vector field once (nested jit) per step
 
@@ -137,7 +160,7 @@ class FixedKvaerno5(diffrax.AbstractSolver):
         return 5
 
     def init(self, terms, t0, t1, y0, args):
-        return None
+        return jnp.zeros((), jnp.result_type(y0))
 
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         tab = _kvaerno5_tableau
@@ -153,13 +176,17 @@ class FixedKvaerno5(diffrax.AbstractSolver):
             fi = sum(p * fj for p, fj in zip(tab.a_predictor[i - 1], f))
             if minv is None:
                 y_jac, a_jac = jax.lax.stop_gradient((ypart + gdt * fi, args))
-                M = jnp.eye(y0.shape[0]) - gdt * jax.jacfwd(lambda y: vf(ts[i], y, a_jac))(y_jac)
-                if self.factored and self.structure is not None and len(self.structure[1]):
+                J = jax.jacfwd(lambda y: vf(ts[i], y, a_jac))(y_jac)
+                M = jnp.eye(y0.shape[0]) - gdt * J
+                idx = np.flatnonzero(dropped_mask(self.structure, y0.shape[0]))   # gathered: ~3x cheaper than a mask
+                if idx.size:
+                    dropped = jnp.abs(gdt) * jnp.max(jnp.abs(J.reshape(-1)[idx]))
+                    solver_state = jax.lax.stop_gradient(jnp.maximum(solver_state, dropped))
+                if self.factored and len(self.structure[1]):
                     fac = jax.lax.stop_gradient(structured_factors(M, self.structure))
                     minv = lambda r: apply_factors(fac, self.structure, r)
                 else:
-                    mat = jax.lax.stop_gradient(jnp.linalg.inv(M) if self.structure is None
-                                                else structured_inverse(M, self.structure))
+                    mat = jax.lax.stop_gradient(structured_inverse(M, self.structure))
                     minv = lambda r: mat @ r
 
             def chord(_, c, ti=ts[i], ypart=ypart):
@@ -178,7 +205,7 @@ class FixedKvaerno5(diffrax.AbstractSolver):
         y1 = ypart + gdt * fi
         y_error = jnp.abs(dt * sum(b * fj for b, fj in zip(tab.b_error, f))) + self.conv_weight * conv
         dense_info = dict(y0=y0, y1=y1, k=jnp.stack([dt * fj for fj in f]))
-        return y1, y_error, dense_info, None, diffrax.RESULTS.successful
+        return y1, y_error, dense_info, solver_state, diffrax.RESULTS.successful
 
     def func(self, terms, t0, y0, args):
         return terms.vf(t0, y0, args)

@@ -9,6 +9,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import diffrax
+import equinox as eqx
 from abcmb.main import Model
 from abcmb import species
 import abcmb.perturbations as _P
@@ -24,15 +25,12 @@ ap.add_argument("--chunk", default="", help="lo:hi k indices timed as one engine
 ap.add_argument("--tile", type=int, default=4)
 ap.add_argument("--out", default="", help="npz of the final states (accuracy between solvers)")
 ap.add_argument("--spec", action="append", default=[], help="extra Model spec key=value (int, float or bool)")
-ap.add_argument("--block", type=int, default=8)
-ap.add_argument("--nostruct", action="store_true")
 a = ap.parse_args()
 SAVE_TS = jnp.asarray([-7.3, -7.1, -6.9, -6.5, -5.0, -3.0, -1.0, 0.0])
 import os
 TIGHT = float(os.environ.get("PE_TIGHT", "1"))      # tolerances divided by this (reference runs)
 import ast
 SPEC = {k: ast.literal_eval(v) for k, v in (s.split("=") for s in a.spec)}
-BLOCK, NOSTRUCT = a.block, a.nostruct
 
 KW = dict(output_Cl=True, lensing=True, output_Pk=False, rtol_large_k_PE=1e-5 / TIGHT, atol_large_k_PE=1e-7 / TIGHT,
           rtol_limber_k_PE=1e-3 / TIGHT, atol_limber_k_PE=1e-5 / TIGHT,
@@ -50,9 +48,9 @@ P = {"omega_b": 0.022581, "omega_cdm": 0.12321, "h": 0.6624, "A_s": np.exp(3.049
 
 def build(solver):
     m = Model(**dict(KW, PE_solver=solver, **SPEC))
-    if solver == "kvaerno5_fixed" and not NOSTRUCT:
-        m = m.with_pe_structure(P, block=BLOCK)
     params, BG = m._build_one_bg(m.add_derived_parameters(P))
+    if solver == "kvaerno5_fixed":
+        m = eqx.tree_at(lambda m: m.PE, m, m.PE.with_structure_for((BG, params), batched=False))
     return m, params, BG
 
 

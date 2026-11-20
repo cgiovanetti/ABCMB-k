@@ -23,7 +23,6 @@ ap.add_argument("--B", type=int, default=32)
 ap.add_argument("--what", default="values,grad")
 ap.add_argument("--out", required=True)
 ap.add_argument("--spec", action="append", default=[], help="extra Model spec key=value (repeatable)")
-ap.add_argument("--block", type=int, default=8)
 a = ap.parse_args()
 
 FIXED = {"YHe": 0.2454, "TCMB0": 2.34865418e-4, "N_nu_massive": 1, "T_nu_massive": 0.71611, "m_nu_massive": 0.06,
@@ -36,9 +35,6 @@ KW = dict(user_species=(species.MassiveNeutrino,), output_Cl=True, l_max=2508, l
 import ast
 KW.update({k: ast.literal_eval(v) for k, v in (s.split("=") for s in a.spec)})
 model = Model(**KW)
-if a.solver == "kvaerno5_fixed":
-    model = model.with_pe_structure(dict(FIXED, omega_b=CEN[0], omega_cdm=CEN[1], h=CEN[2], A_s=np.exp(CEN[3]) / 1e10,
-                                         n_s=CEN[4], tau_reion=CEN[5]), block=a.block)
 ndev = len(jax.devices())
 
 
